@@ -5339,7 +5339,10 @@ const AppContent = () => {
   if (loading) return <div className="min-h-screen flex items-center justify-center font-serif">Đang khởi động...</div>;
 
   return (
-    <div className={cn("min-h-screen neo-bg", themeMode === 'dark' ? "text-slate-100" : "text-slate-100")}>
+    <div className={cn(
+      "min-h-screen",
+      themeMode === 'dark' ? "night-bg text-slate-100" : "day-bg text-slate-900"
+    )}>
       <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
       <AIGenerationModal 
         isOpen={showAIGen} 
