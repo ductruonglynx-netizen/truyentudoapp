@@ -34,8 +34,8 @@ import {
   splitSourceToSegments,
   translateWithGlossary,
 } from './translatorEngine';
-import { loadPhase1ApiConfig, maskKey, reorderProviders, savePhase1ApiConfig } from './apiConfig';
-import type { AiProvider } from '../phase0/aiGateway';
+import { loadPhase1ApiConfig, maskKey, reorderProviders, savePhase1ApiConfig, type ApiKeyProfile } from './apiConfig';
+import { detectApiProvider, getUsageSnapshot, testApiConnection, type AiProvider } from '../phase0/aiGateway';
 
 function newGlossaryRow(): Phase1GlossaryEntry {
   return {
@@ -47,6 +47,9 @@ function newGlossaryRow(): Phase1GlossaryEntry {
   };
 }
 
+const STORY_CONTEXT_KEY = 'story_context_v1';
+const GLOBAL_GLOSSARY_KEY = 'global_glossary_v1';
+
 export default function Phase1App() {
   const [state, setState] = useState<Phase1ProjectState>(() => loadPhase1State());
   const [apiConfig, setApiConfig] = useState(() => loadPhase1ApiConfig());
@@ -57,6 +60,32 @@ export default function Phase1App() {
   const [isTranslatingAll, setIsTranslatingAll] = useState(false);
   const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
   const [suggestions, setSuggestions] = useState<SegmentSuggestion[]>([]);
+  const [parallelComparisons, setParallelComparisons] = useState<Array<{ provider: string; model: string; text: string; latencyMs: number }>>([]);
+  const [failoverTrail, setFailoverTrail] = useState<string[]>([]);
+  const [usage, setUsage] = useState(() => getUsageSnapshot());
+  const [connectionStatus, setConnectionStatus] = useState<{ state: 'idle' | 'testing' | 'live' | 'dead'; message: string }>({
+    state: 'idle',
+    message: 'Chưa test kết nối',
+  });
+
+  const [profileName, setProfileName] = useState('Default API');
+  const [profileKey, setProfileKey] = useState('');
+  const [profileCountry, setProfileCountry] = useState('');
+  const [profileModel, setProfileModel] = useState('');
+  const [profilePros, setProfilePros] = useState('');
+  const [profileCons, setProfileCons] = useState('');
+
+  const [storyContext, setStoryContext] = useState(() => localStorage.getItem(STORY_CONTEXT_KEY) || '');
+  const [globalGlossaryText, setGlobalGlossaryText] = useState(() => {
+    try {
+      const raw = localStorage.getItem(GLOBAL_GLOSSARY_KEY);
+      if (!raw) return '';
+      const rows = JSON.parse(raw) as Array<{ source?: string; target?: string }>;
+      return rows.map((row) => `${row.source || ''} => ${row.target || ''}`).join('\n');
+    } catch {
+      return '';
+    }
+  });
 
   useEffect(() => {
     savePhase1State(state);
@@ -65,6 +94,33 @@ export default function Phase1App() {
   useEffect(() => {
     savePhase1ApiConfig(apiConfig);
   }, [apiConfig]);
+
+  useEffect(() => {
+    localStorage.setItem(STORY_CONTEXT_KEY, storyContext);
+  }, [storyContext]);
+
+  useEffect(() => {
+    const rows = globalGlossaryText
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [source, target] = line.split(/\s*=>\s*/);
+        return {
+          source: (source || '').trim(),
+          target: (target || '').trim(),
+        };
+      })
+      .filter((row) => row.source && row.target);
+    localStorage.setItem(GLOBAL_GLOSSARY_KEY, JSON.stringify(rows));
+  }, [globalGlossaryText]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setUsage(getUsageSnapshot());
+    }, 1200);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const segments = useMemo(() => splitSourceToSegments(state.sourceDocument), [state.sourceDocument]);
 
@@ -134,9 +190,13 @@ export default function Phase1App() {
         sourceText: selectedSegment.text,
         glossary: state.glossary,
         tone: state.tone,
+        parallelMode: apiConfig.parallelMode,
       });
 
       setProvider(result.provider);
+      setParallelComparisons(result.comparisons);
+      setFailoverTrail(result.failoverTrail);
+      if (result.usage) setUsage(result.usage);
       const mapped: SegmentSuggestion[] = result.alternatives.map((text, idx) => ({
         text,
         provider: result.provider,
@@ -150,6 +210,103 @@ export default function Phase1App() {
       }
     } finally {
       setIsTranslating(false);
+    }
+  };
+
+  const onAddApiProfile = () => {
+    const key = profileKey.trim();
+    if (!key) return;
+    const detected = detectApiProvider(key);
+    const provider: ApiKeyProfile['provider'] = detected === 'unknown' || detected === 'mock' ? 'unknown' : detected;
+    const profile: ApiKeyProfile = {
+      id: `profile-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: profileName.trim() || `API ${apiConfig.keyProfiles.length + 1}`,
+      key,
+      provider,
+      country: profileCountry.trim(),
+      model: profileModel.trim(),
+      pros: profilePros.trim(),
+      cons: profileCons.trim(),
+      baseUrl: apiConfig.relayBaseUrl,
+      isActive: true,
+    };
+
+    const nextProfiles = [profile, ...apiConfig.keyProfiles.map((p) => ({ ...p, isActive: false }))];
+    const nextConfig = {
+      ...apiConfig,
+      keyProfiles: nextProfiles,
+    };
+    if (provider === 'openai') nextConfig.openaiKey = key;
+    if (provider === 'anthropic') nextConfig.anthropicKey = key;
+    if (provider === 'gemini') nextConfig.geminiKey = key;
+    setApiConfig(nextConfig);
+
+    const storedApiKeys = nextProfiles.map((item) => ({
+      id: item.id,
+      key: item.key,
+      isActive: item.isActive,
+      provider: item.provider,
+      model: item.model,
+      name: item.name,
+      baseUrl: item.baseUrl,
+    }));
+    localStorage.setItem('api_keys', JSON.stringify(storedApiKeys));
+
+    setProfileKey('');
+    setProfileModel('');
+    setProfileCountry('');
+    setProfilePros('');
+    setProfileCons('');
+  };
+
+  const onSetActiveProfile = (profile: ApiKeyProfile) => {
+    const nextProfiles = apiConfig.keyProfiles.map((item) => ({ ...item, isActive: item.id === profile.id }));
+    const nextConfig = {
+      ...apiConfig,
+      keyProfiles: nextProfiles,
+    };
+
+    if (profile.provider === 'openai') {
+      nextConfig.openaiKey = profile.key;
+    } else if (profile.provider === 'anthropic') {
+      nextConfig.anthropicKey = profile.key;
+    } else if (profile.provider === 'gemini') {
+      nextConfig.geminiKey = profile.key;
+    }
+
+    setApiConfig(nextConfig);
+    localStorage.setItem(
+      'api_keys',
+      JSON.stringify(
+        nextProfiles.map((item) => ({
+          id: item.id,
+          key: item.key,
+          isActive: item.isActive,
+          provider: item.provider,
+          model: item.model,
+          name: item.name,
+          baseUrl: item.baseUrl,
+        })),
+      ),
+    );
+  };
+
+  const onTestConnection = async () => {
+    const activeProfile = apiConfig.keyProfiles.find((p) => p.isActive) || apiConfig.keyProfiles[0];
+    if (!activeProfile || activeProfile.provider === 'unknown') {
+      setConnectionStatus({ state: 'dead', message: 'Chưa có key hợp lệ để test.' });
+      return;
+    }
+    setConnectionStatus({ state: 'testing', message: 'Đang test kết nối...' });
+    const result = await testApiConnection({
+      provider: activeProfile.provider,
+      key: activeProfile.key,
+      baseUrl: apiConfig.relayBaseUrl,
+    });
+    if (result.ok) {
+      setConnectionStatus({ state: 'live', message: `Live (${result.latencyMs}ms)` });
+    } else {
+      setConnectionStatus({ state: 'dead', message: `Dead: ${result.message}` });
     }
   };
 
@@ -187,6 +344,7 @@ export default function Phase1App() {
           sourceText: seg.text,
           glossary: state.glossary,
           tone: state.tone,
+          parallelMode: apiConfig.parallelMode,
         });
 
         const options = result.alternatives.map((text, idx) => ({
@@ -210,6 +368,7 @@ export default function Phase1App() {
         }
 
         setBulkProgress({ done: i + 1, total: segments.length });
+        if (result.usage) setUsage(result.usage);
       }
     } finally {
       setIsTranslatingAll(false);
@@ -410,16 +569,134 @@ export default function Phase1App() {
                 ))}
                 {suggestions.length === 0 && <div className="phase1-box text-sm text-slate-500">No suggestions yet.</div>}
               </div>
+              {parallelComparisons.length > 0 ? (
+                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Parallel Comparison</p>
+                  <div className="mt-2 grid gap-2 md:grid-cols-3">
+                    {parallelComparisons.map((row, idx) => (
+                      <div key={`${row.provider}-${idx}`} className="rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-700">
+                        <p><b>{row.provider}</b> · {row.model}</p>
+                        <p>Latency: {row.latencyMs}ms</p>
+                        <p className="mt-1 line-clamp-4">{row.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {failoverTrail.length > 0 ? (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+                  <p className="font-semibold mb-1">Failover trail</p>
+                  {failoverTrail.slice(-6).map((row, idx) => (
+                    <p key={`trail-${idx}`}>• {row}</p>
+                  ))}
+                </div>
+              ) : null}
             </section>
           </main>
 
           <aside className="space-y-3">
             <section className="phase1-card p-3">
               <div className="mb-2 flex items-center justify-between">
-                <h2 className="phase1-section-title">API Sources</h2>
-                <span className="text-xs text-slate-500">Multi-provider fallback</span>
+                <h2 className="phase1-section-title">API Control Panel</h2>
+                <span className="text-xs text-slate-500">Smart routing + failover</span>
               </div>
               <div className="space-y-2">
+                <label className="text-xs font-semibold text-slate-600">Relay / Base URL</label>
+                <input
+                  className="phase1-input"
+                  value={apiConfig.relayBaseUrl}
+                  onChange={(e) => setApiConfig((prev) => ({ ...prev, relayBaseUrl: e.target.value }))}
+                  placeholder="https://relay-web.com/v1?code="
+                />
+                <div className="flex items-center gap-2">
+                  <button className="phase1-primary-btn" onClick={onTestConnection} disabled={connectionStatus.state === 'testing'}>
+                    {connectionStatus.state === 'testing' ? 'Testing...' : 'Test Connection'}
+                  </button>
+                  <span
+                    className={`rounded-full px-2 py-1 text-xs font-semibold ${
+                      connectionStatus.state === 'live'
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : connectionStatus.state === 'dead'
+                          ? 'bg-rose-100 text-rose-700'
+                          : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    {connectionStatus.message}
+                  </span>
+                </div>
+
+                <div className="phase1-box text-xs text-slate-700">
+                  <p><b>Usage Counter (session)</b></p>
+                  <p>Requests: {usage.sessionRequests}</p>
+                  <p>Estimated Tokens: {usage.estimatedTokens}</p>
+                  <p>By Provider: {Object.entries(usage.byProvider).map(([k, v]) => `${k}=${v}`).join(' | ') || 'N/A'}</p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2">
+                  <input
+                    className="phase1-input"
+                    value={profileName}
+                    onChange={(e) => setProfileName(e.target.value)}
+                    placeholder="Tên API (ví dụ: OpenAI Chính)"
+                  />
+                  <input
+                    className="phase1-input"
+                    value={profileKey}
+                    onChange={(e) => setProfileKey(e.target.value.trim())}
+                    placeholder="Nhập API key (auto nhận diện provider)"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      className="phase1-input"
+                      value={profileCountry}
+                      onChange={(e) => setProfileCountry(e.target.value)}
+                      placeholder="Quốc gia / vùng"
+                    />
+                    <input
+                      className="phase1-input"
+                      value={profileModel}
+                      onChange={(e) => setProfileModel(e.target.value)}
+                      placeholder="Model gợi ý (tuỳ chọn)"
+                    />
+                  </div>
+                  <input
+                    className="phase1-input"
+                    value={profilePros}
+                    onChange={(e) => setProfilePros(e.target.value)}
+                    placeholder="Ưu điểm"
+                  />
+                  <input
+                    className="phase1-input"
+                    value={profileCons}
+                    onChange={(e) => setProfileCons(e.target.value)}
+                    placeholder="Nhược điểm"
+                  />
+                  <button className="phase1-primary-btn" onClick={onAddApiProfile} disabled={!profileKey.trim()}>
+                    <Plus className="h-4 w-4" /> Add API Profile
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  {apiConfig.keyProfiles.map((row) => (
+                    <div key={row.id} className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-semibold">{row.name} · {row.provider}</p>
+                        <button className="phase1-ghost-btn" onClick={() => onSetActiveProfile(row)}>
+                          {row.isActive ? 'Active' : 'Set Active'}
+                        </button>
+                      </div>
+                      <p>Key: {maskKey(row.key)}</p>
+                      <p>Country: {row.country || 'N/A'}</p>
+                      <p>Model: {row.model || 'Auto route'}</p>
+                      <p>Pros: {row.pros || '-'}</p>
+                      <p>Cons: {row.cons || '-'}</p>
+                    </div>
+                  ))}
+                  {apiConfig.keyProfiles.length === 0 ? (
+                    <div className="phase1-box text-sm text-slate-500">Chưa có API profile nào.</div>
+                  ) : null}
+                </div>
+
                 <input
                   className="phase1-input"
                   type="password"
@@ -441,6 +718,14 @@ export default function Phase1App() {
                   onChange={(e) => setApiConfig((prev) => ({ ...prev, geminiKey: e.target.value.trim() }))}
                   placeholder="Gemini API Key"
                 />
+                <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={apiConfig.parallelMode}
+                    onChange={(e) => setApiConfig((prev) => ({ ...prev, parallelMode: e.target.checked }))}
+                  />
+                  Parallel mode (gọi 2-3 API cùng lúc để so sánh)
+                </label>
                 <div className="phase1-box space-y-2 text-xs text-slate-600">
                   <p className="font-semibold text-slate-700">Provider Priority</p>
                   {[0, 1, 2].map((idx) => (
@@ -501,6 +786,27 @@ export default function Phase1App() {
                     </button>
                   </div>
                 ))}
+              </div>
+            </section>
+
+            <section className="phase1-card p-3">
+              <h2 className="phase1-section-title mb-2">Long-term Context</h2>
+              <div className="space-y-2">
+                <textarea
+                  className="phase1-input min-h-24"
+                  value={storyContext}
+                  onChange={(e) => setStoryContext(e.target.value)}
+                  placeholder="Story context: tóm tắt cốt truyện, mốc timeline, vai trò nhân vật..."
+                />
+                <textarea
+                  className="phase1-input min-h-24"
+                  value={globalGlossaryText}
+                  onChange={(e) => setGlobalGlossaryText(e.target.value)}
+                  placeholder={'Global Glossary mỗi dòng: term => bản dịch\\nví dụ: Thanh Long => Rồng Xanh'}
+                />
+                <div className="phase1-box text-xs text-slate-600">
+                  Mọi request dịch sẽ tự đính kèm hai khối dữ liệu này vào system prompt để giữ nhất quán toàn bộ chương.
+                </div>
               </div>
             </section>
 
