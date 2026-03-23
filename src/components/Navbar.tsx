@@ -37,7 +37,7 @@ export function Navbar({
   profile,
 }: NavbarProps) {
   const [showDataMenu, setShowDataMenu] = useState(false);
-  const [showQuickActions, setShowQuickActions] = useState(true);
+  const [showQuickActions, setShowQuickActions] = useState(false);
 
   const isDark = themeMode === 'dark';
   const navItems = useMemo(
@@ -48,6 +48,17 @@ export function Navbar({
       { key: 'tools', label: 'Công cụ', icon: Settings, action: () => setView('tools') },
     ] as const,
     [onHome, setView],
+  );
+  const quickActions = useMemo(
+    () => [
+      { key: 'create', label: 'Viết truyện mới', icon: Plus, action: onCreateStory, tone: 'brand' as const },
+      { key: 'api', label: 'Mở thiết lập AI', icon: Zap, action: () => setView('api'), tone: 'neutral' as const },
+      { key: 'help', label: 'Xem hướng dẫn', icon: Info, action: onShowHelp, tone: 'neutral' as const },
+      { key: 'theme', label: isDark ? 'Chuyển nền sáng' : 'Chuyển nền tối', icon: isDark ? Sun : Moon, action: onToggleTheme, tone: 'neutral' as const },
+      { key: 'backup', label: 'Sao lưu dữ liệu', icon: Download, action: handleExport, tone: 'neutral' as const },
+      { key: 'restore', label: 'Khôi phục dữ liệu', icon: Upload, action: handleImport, tone: 'neutral' as const },
+    ],
+    [handleExport, handleImport, isDark, onCreateStory, onShowHelp, onToggleTheme, setView],
   );
 
   const surfaceClass = isDark
@@ -78,11 +89,11 @@ export function Navbar({
   const titleClass = isDark ? 'text-slate-100' : 'text-slate-900';
   const subTextClass = isDark ? 'text-slate-400' : 'text-slate-400';
 
-  const handleExport = () => {
+  function handleExport() {
     storage.exportData();
-  };
+  }
 
-  const handleImport = () => {
+  function handleImport() {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
@@ -102,20 +113,20 @@ export function Navbar({
       reader.readAsText(file);
     };
     input.click();
-  };
+  }
 
   return (
     <>
-      <div className="fixed left-4 top-24 z-[60] flex items-start gap-3">
+      <div className="fixed left-4 top-24 bottom-4 z-[60] flex items-start gap-3">
         <div
           className={cn(
-            'origin-left transition-all duration-300 ease-out overflow-hidden',
-            showQuickActions ? 'w-60 opacity-100 translate-x-0' : 'w-0 opacity-0 -translate-x-4',
+            'origin-left h-full transition-all duration-300 ease-out overflow-hidden',
+            showQuickActions ? 'w-64 opacity-100 translate-x-0' : 'w-0 opacity-0 -translate-x-4',
           )}
         >
           <div
             className={cn(
-              'rounded-[24px] border backdrop-blur-xl p-3',
+              'h-full rounded-[28px] border backdrop-blur-xl p-3 flex flex-col',
               isDark
                 ? 'border-cyan-400/15 bg-slate-950/72 shadow-[0_16px_48px_rgba(6,182,212,0.18)]'
                 : 'border-white/70 bg-white/78 shadow-[0_20px_60px_rgba(99,102,241,0.18)]',
@@ -124,38 +135,34 @@ export function Navbar({
             <div className="mb-3 flex items-center justify-between px-2">
               <div>
                 <p className={cn('text-[11px] font-bold uppercase tracking-[0.25em]', isDark ? 'text-cyan-300/70' : 'text-indigo-500/70')}>
-                  Tác vụ nhanh
+                  Bảng nhanh
                 </p>
-                <p className={cn('text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>Mở nhanh các khu chính</p>
+                <p className={cn('text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>Các thao tác hay dùng</p>
               </div>
             </div>
-            <div className="space-y-2">
-              {navItems.map(({ key, label, icon: Icon, action }) => (
+            <div className="space-y-2 flex-1 overflow-y-auto pr-1">
+              {quickActions.map(({ key, label, icon: Icon, action, tone }) => (
                 <button
                   key={key}
                   onClick={action}
                   className={cn(
                     'flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-all duration-300 hover:-translate-y-0.5',
-                    currentView === key ? activeButtonClass : inactiveButtonClass,
-                    currentView === key ? '' : isDark ? 'bg-white/5' : 'bg-white/70',
+                    tone === 'brand'
+                      ? isDark
+                        ? 'bg-gradient-to-r from-cyan-500/88 to-blue-500/88 text-slate-950 shadow-lg shadow-cyan-500/25 hover:shadow-cyan-400/35'
+                        : 'bg-gradient-to-r from-teal-500 to-sky-500 text-white shadow-lg shadow-cyan-500/25 hover:shadow-cyan-400/35'
+                      : isDark
+                        ? 'bg-white/5 text-slate-200 hover:text-white hover:bg-cyan-500/12'
+                        : 'bg-white/70 text-slate-700 hover:text-slate-900 hover:bg-white',
                   )}
                 >
                   <Icon className="h-4 w-4" />
                   <span>{label}</span>
                 </button>
               ))}
-              <button
-                onClick={onCreateStory}
-                className={cn(
-                  'flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-all duration-300 hover:-translate-y-0.5',
-                  isDark
-                    ? 'bg-gradient-to-r from-cyan-500/88 to-blue-500/88 text-slate-950 shadow-lg shadow-cyan-500/25 hover:shadow-cyan-400/35'
-                    : 'bg-gradient-to-r from-teal-500 to-sky-500 text-white shadow-lg shadow-cyan-500/25 hover:shadow-cyan-400/35',
-                )}
-              >
-                <Plus className="h-4 w-4" />
-                <span>Viết truyện mới</span>
-              </button>
+            </div>
+            <div className={cn('mt-3 rounded-2xl px-4 py-3 text-xs leading-relaxed', isDark ? 'bg-white/5 text-slate-400' : 'bg-slate-50 text-slate-500')}>
+              Mở khi cần, đóng khi không dùng để giao diện chính gọn hơn.
             </div>
           </div>
         </div>

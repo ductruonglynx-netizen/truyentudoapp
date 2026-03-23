@@ -16,8 +16,8 @@ export function HelpModal({ isOpen, onClose }: HelpModalProps) {
       icon: <Link2 className="w-5 h-5 text-indigo-600" />,
     },
     {
-      title: 'Trang Relay',
-      desc: 'Mở relay để đăng nhập Google và lấy khóa truy cập, rồi quay lại ứng dụng.',
+      title: 'Trạm trung chuyển',
+      desc: 'Mở trang trung chuyển để đăng nhập Google và nối phiên AI, rồi quay lại ứng dụng.',
       icon: <Link2 className="w-5 h-5 text-fuchsia-600" />,
     },
     {

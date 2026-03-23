@@ -26,11 +26,11 @@ export interface ApiModelOption {
 }
 
 export const PROVIDER_LABELS: Record<ApiProvider, string> = {
-  gemini: 'Gemini trực tiếp',
-  gcli: 'Gemini trực tiếp (GCLI token)',
+  gemini: 'Gemini (API key)',
+  gcli: 'Gemini (đăng nhập Google)',
   openai: 'OpenAI',
   anthropic: 'Anthropic',
-  custom: 'Endpoint riêng (không phải Relay)',
+  custom: 'Máy chủ AI riêng',
   unknown: 'Không rõ',
 };
 
@@ -41,9 +41,9 @@ export const PROVIDER_MODEL_OPTIONS: Record<Exclude<ApiProvider, 'unknown'>, Api
     { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro', description: 'Ưu tiên chất lượng cho viết dài và xử lý phức tạp.' },
   ],
   gcli: [
-    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', description: 'Dùng access token từ GCLI/gcloud để gọi model Gemini nhanh.' },
-    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', description: 'Cân bằng giữa tốc độ và chất lượng cho token GCLI.' },
-    { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro', description: 'Ưu tiên chất lượng khi dùng bearer token từ GCLI.' },
+    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', description: 'Dùng mã truy cập Google `ya29...` để gọi Gemini nhanh.' },
+    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', description: 'Cân bằng giữa tốc độ và chất lượng khi dùng đăng nhập Google.' },
+    { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro', description: 'Ưu tiên chất lượng khi dùng mã truy cập Google.' },
   ],
   openai: [
     { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini', description: 'Nhanh, gọn, hợp thao tác hàng ngày.' },
@@ -56,7 +56,7 @@ export const PROVIDER_MODEL_OPTIONS: Record<Exclude<ApiProvider, 'unknown'>, Api
     { value: 'claude-3-7-sonnet-latest', label: 'Claude 3.7 Sonnet', description: 'Mạnh hơn cho văn dài và lập kế hoạch nội dung.' },
   ],
   custom: [
-    { value: 'custom-model', label: 'Custom model', description: 'Tự nhập model khi dùng endpoint tương thích OpenAI hoặc gateway riêng.' },
+    { value: 'custom-model', label: 'Model tự nhập', description: 'Tự nhập model khi dùng máy chủ AI riêng hoặc gateway tương thích OpenAI.' },
   ],
 };
 

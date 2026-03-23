@@ -1425,7 +1425,7 @@ const ToolsManager = ({
     }
 
     if (updates === 0) {
-      setQuickImportResult(`Chưa nhận diện được thông tin phù hợp. Hãy dán API key, token GCLI, endpoint riêng hoặc URL relay dạng ${RELAY_SOCKET_BASE}1234.`);
+      setQuickImportResult(`Chưa nhận diện được thông tin phù hợp. Hãy dán API key, mã truy cập Google, địa chỉ máy chủ AI riêng hoặc URL trung chuyển dạng ${RELAY_SOCKET_BASE}1234.`);
     } else {
       setQuickImportResult(`Đã cập nhật ${updates} mục thông tin.`);
       setQuickImportText('');
@@ -2052,23 +2052,23 @@ const ToolsManager = ({
         <div className="flex items-center gap-4">
           <button onClick={onBack} className="p-2 rounded-full hover:bg-slate-100 transition-colors"><ChevronLeft /></button>
           <div>
-            <h2 className="text-3xl font-serif font-bold">API & Kết nối AI</h2>
-              <p className="text-sm text-slate-500">Quản lý kho API, model đang dùng và Relay trong một nơi riêng.</p>
+            <h2 className="text-3xl font-serif font-bold">Thiết lập AI</h2>
+              <p className="text-sm text-slate-500">Lưu kết nối AI, chọn model đang dùng và đổi cách kết nối tại một nơi.</p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="phase1-stat">
             <p>Nhà cung cấp</p>
-            <strong>{apiMode === 'relay' ? 'Relay / Gemini' : PROVIDER_LABELS[currentApiEntry?.provider || selectedProvider || 'gemini']}</strong>
+            <strong>{apiMode === 'relay' ? 'Trạm trung chuyển' : PROVIDER_LABELS[currentApiEntry?.provider || selectedProvider || 'gemini']}</strong>
           </div>
           <div className="phase1-stat">
             <p>Model hiện tại</p>
             <strong>{apiMode === 'relay' ? (selectedModel || getProfileModel('quality', 'gemini')) : (currentApiEntry?.model || selectedModel || 'Chưa chọn')}</strong>
           </div>
           <div className="phase1-stat">
-            <p>Kho API</p>
-            <strong>{apiVault.length.toLocaleString('vi-VN')} mục</strong>
+            <p>Đã lưu</p>
+            <strong>{apiVault.length.toLocaleString('vi-VN')} kết nối</strong>
           </div>
           <div className="phase1-stat">
             <p>Trạng thái</p>
@@ -2083,7 +2083,7 @@ const ToolsManager = ({
             </div>
             <div>
               <h3 className="text-xl font-serif font-bold">Kết nối AI</h3>
-              <p className="text-sm text-slate-500">Quản lý kết nối trực tiếp, token GCLI, endpoint riêng và relay mà không trộn lẫn.</p>
+              <p className="text-sm text-slate-500">Tách rõ khóa API, mã đăng nhập Google, máy chủ AI riêng và trạm trung chuyển để không bị lẫn cách dùng.</p>
             </div>
           </div>
 
@@ -2095,7 +2095,7 @@ const ToolsManager = ({
               }}
               className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'manual' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
             >
-              API trực tiếp
+              Gọi trực tiếp
             </button>
             <button
               onClick={() => {
@@ -2104,17 +2104,17 @@ const ToolsManager = ({
               }}
               className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'relay' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
             >
-              Dùng Relay
+              Qua trung chuyển
             </button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-slate-600">
-              <p className="font-bold text-slate-900 mb-1">API trực tiếp</p>
-              <p>Dùng API key Gemini/OpenAI/Anthropic, token GCLI `ya29...`, hoặc endpoint riêng do bạn nhập. Không đi qua relay.</p>
+              <p className="font-bold text-slate-900 mb-1">Gọi trực tiếp</p>
+              <p>Dùng API key Gemini/OpenAI/Anthropic, mã truy cập Google <code>ya29...</code>, hoặc địa chỉ máy chủ AI riêng do bạn nhập. Ứng dụng gọi thẳng, không qua trung chuyển.</p>
             </div>
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
-              <p className="font-bold mb-1">Dùng Relay</p>
-              <p>App chỉ kết nối tới relay `relay2026...`; relay của bạn giữ hoặc cấp token rồi gọi AI thay app.</p>
+              <p className="font-bold mb-1">Qua trung chuyển</p>
+              <p>Ứng dụng chỉ nối vào máy chủ trung chuyển <code>relay2026...</code>; phía trung chuyển giữ khóa hoặc tự gọi AI thay cho trình duyệt.</p>
             </div>
           </div>
 
@@ -2122,8 +2122,8 @@ const ToolsManager = ({
             <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_1.35fr] gap-6">
               <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 space-y-4">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Thêm API mới</p>
-                  <h4 className="text-lg font-bold text-slate-900 mt-1">Một form duy nhất cho mọi provider</h4>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Thêm kết nối mới</p>
+                  <h4 className="text-lg font-bold text-slate-900 mt-1">Một biểu mẫu cho mọi kiểu gọi trực tiếp</h4>
                 </div>
                 <input
                   value={apiEntryName}
@@ -2135,13 +2135,13 @@ const ToolsManager = ({
                   value={apiEntryText}
                   onChange={(e) => setApiEntryText(e.target.value)}
                   className="w-full min-h-28 px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
-                  placeholder="Dán API key hoặc token GCLI `ya29...`. Nếu dùng endpoint riêng không cần auth thì có thể để trống."
+                  placeholder="Dán API key hoặc mã truy cập Google `ya29...`. Nếu dùng máy chủ AI riêng không cần xác thực thì có thể để trống."
                 />
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Nhận diện</p>
                     <p className="mt-1 font-bold text-slate-900">{PROVIDER_LABELS[effectiveDraftProvider]}</p>
-                    {effectiveDraftProvider === 'gcli' ? <p className="text-[11px] text-slate-500 mt-1">Token GCLI được dùng trong nhóm Gemini trực tiếp.</p> : null}
+                    {effectiveDraftProvider === 'gcli' ? <p className="text-[11px] text-slate-500 mt-1">Mã <code>ya29...</code> được hiểu là đăng nhập Google trực tiếp cho Gemini.</p> : null}
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Mode mặc định</p>
@@ -2154,10 +2154,10 @@ const ToolsManager = ({
                     onChange={(e) => setApiEntryProvider(e.target.value as ApiProvider)}
                     className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
                   >
-                    <option value="gemini">Gemini trực tiếp</option>
+                    <option value="gemini">Gemini (API key)</option>
                     <option value="openai">OpenAI</option>
                     <option value="anthropic">Anthropic</option>
-                    <option value="custom">Endpoint riêng</option>
+                    <option value="custom">Máy chủ AI riêng</option>
                   </select>
                   {effectiveDraftProvider === 'custom' ? (
                     <input
@@ -2182,17 +2182,17 @@ const ToolsManager = ({
                   value={apiEntryBaseUrl}
                   onChange={(e) => setApiEntryBaseUrl(e.target.value)}
                   className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                  placeholder={effectiveDraftProvider === 'custom' ? 'Endpoint riêng, ví dụ: http://127.0.0.1:11434/v1/chat/completions' : 'Base URL tùy chỉnh (để trống nếu dùng mặc định)'}
+                  placeholder={effectiveDraftProvider === 'custom' ? 'Địa chỉ máy chủ AI riêng, ví dụ: http://127.0.0.1:11434/v1/chat/completions' : 'Base URL tùy chỉnh (để trống nếu dùng mặc định)'}
                 />
                 <button
                   onClick={handleSaveApiEntry}
                   disabled={!apiEntryText.trim() && !(effectiveDraftProvider === 'custom' && apiEntryBaseUrl.trim())}
                   className="w-full px-6 py-3 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 disabled:opacity-50"
                 >
-                  Thêm vào kho API
+                  Lưu vào kho kết nối
                 </button>
                 <p className="text-xs text-slate-500">
-                  GCLI được gộp vào nhánh Gemini trực tiếp: chỉ cần dán token `ya29...` hoặc `Bearer ...`. Endpoint riêng là URL bạn tự nhập, không phải relay.
+                  Mã <code>ya29...</code> hoặc <code>Bearer ...</code> được xếp vào nhóm Gemini gọi trực tiếp. Máy chủ AI riêng là URL bạn tự nhập, không phải trạm trung chuyển.
                 </p>
               </div>
 
@@ -2200,8 +2200,8 @@ const ToolsManager = ({
                 <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Kho API</p>
-                      <h4 className="text-lg font-bold text-slate-900 mt-1">Tất cả key đã lưu</h4>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Kho kết nối</p>
+                      <h4 className="text-lg font-bold text-slate-900 mt-1">Các kết nối đã lưu</h4>
                     </div>
                     <span className="text-xs px-3 py-1 rounded-full bg-white border border-slate-200 text-slate-600 font-semibold">
                       Hiện tại: {currentApiEntry?.name || 'Chưa có'}
@@ -2210,7 +2210,7 @@ const ToolsManager = ({
                   <div className="space-y-3 max-h-[30rem] overflow-y-auto pr-1">
                     {apiVault.length === 0 ? (
                       <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
-                        Chưa có API nào trong kho. Dán key ở form bên trái để bắt đầu.
+                        Chưa có kết nối nào trong kho. Dán khóa hoặc địa chỉ máy chủ ở form bên trái để bắt đầu.
                       </div>
                     ) : apiVault.map((entry) => (
                       <div key={entry.id} className={cn(
@@ -2244,7 +2244,7 @@ const ToolsManager = ({
                                 entry.isActive ? "bg-slate-900 text-white" : "bg-emerald-600 text-white hover:bg-emerald-700"
                               )}
                             >
-                              {entry.isActive ? 'Đang chọn' : 'Chọn key'}
+                              {entry.isActive ? 'Đang chọn' : 'Dùng kết nối này'}
                             </button>
                             <button
                               onClick={() => handleDeleteApiEntry(entry.id)}
@@ -2260,7 +2260,7 @@ const ToolsManager = ({
                               value={entry.model}
                               onChange={(e) => handleApiModelChange(entry.id, e.target.value)}
                               className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                              placeholder="Custom model"
+                              placeholder="Tên model tự nhập"
                             />
                           ) : (
                             <select
@@ -2277,11 +2277,11 @@ const ToolsManager = ({
                             value={entry.baseUrl}
                             onChange={(e) => handleApiBaseUrlChange(entry.id, e.target.value)}
                             className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                            placeholder="Base URL"
+                            placeholder="Base URL hoặc địa chỉ máy chủ"
                           />
                         </div>
                         <p className="text-xs text-slate-500">
-                          {PROVIDER_MODEL_OPTIONS[(entry.provider === 'unknown' ? 'gemini' : entry.provider) as 'gemini' | 'gcli' | 'openai' | 'anthropic' | 'custom'].find((item) => item.value === entry.model)?.description || 'Model hoặc endpoint tùy chỉnh.'}
+                          {PROVIDER_MODEL_OPTIONS[(entry.provider === 'unknown' ? 'gemini' : entry.provider) as 'gemini' | 'gcli' | 'openai' | 'anthropic' | 'custom'].find((item) => item.value === entry.model)?.description || 'Model hoặc địa chỉ tùy chỉnh.'}
                         </p>
                       </div>
                     ))}
@@ -2300,7 +2300,7 @@ const ToolsManager = ({
                     {relayStatus === 'connected' ? (
                       <span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Tạm ngắt kết nối</span>
                     ) : (
-                      <span className="inline-flex items-center gap-2"><Wifi className="w-4 h-4" /> Kết nối Relay</span>
+                      <span className="inline-flex items-center gap-2"><Wifi className="w-4 h-4" /> Kết nối trung chuyển</span>
                     )}
                   </button>
                   <a
@@ -2309,7 +2309,7 @@ const ToolsManager = ({
                     rel="noreferrer"
                     className="px-4 py-3 rounded-2xl bg-fuchsia-600 text-white font-bold hover:bg-fuchsia-700 text-center"
                   >
-                    Trang Relay
+                    Mở trang trung chuyển
                   </a>
                 </div>
                 <input
@@ -2332,11 +2332,11 @@ const ToolsManager = ({
               </div>
 
               <details className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                <summary className="cursor-pointer text-sm font-semibold text-amber-900">Không kết nối được relay? Dùng Gemini trực tiếp tạm thời</summary>
+                <summary className="cursor-pointer text-sm font-semibold text-amber-900">Không vào được trung chuyển? Tạm dùng Gemini trực tiếp</summary>
                 <div className="mt-3 space-y-3">
                   <div className="text-xs text-amber-900 leading-relaxed space-y-1">
                     <p>1. Lấy API key tại <a className="text-indigo-600 underline" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Google AI Studio</a>.</p>
-                    <p>2. Nếu dùng relay OAuth: bật <a className="text-indigo-600 underline" href="https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com" target="_blank" rel="noreferrer">Generative Language API</a>.</p>
+                    <p>2. Nếu dùng đăng nhập Google qua trung chuyển: bật <a className="text-indigo-600 underline" href="https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com" target="_blank" rel="noreferrer">Generative Language API</a>.</p>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
                     <input
@@ -2350,7 +2350,7 @@ const ToolsManager = ({
                       onClick={handleSaveManualRelayToken}
                       className="px-5 py-3 rounded-2xl bg-amber-600 text-white font-bold hover:bg-amber-700"
                     >
-                      Lưu khóa relay
+                      Lưu khóa tạm
                     </button>
                   </div>
                 </div>
@@ -2489,12 +2489,12 @@ const ToolsManager = ({
           </div>
           <div>
             <h3 className="text-xl font-serif font-bold">Cấu hình AI</h3>
-            <p className="text-sm text-slate-500">Thiết lập API, model và Relay trong mục API.</p>
+            <p className="text-sm text-slate-500">Thiết lập kết nối AI và model trong mục API.</p>
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4 items-center">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-            <p>Kết nối hiện tại: <b>{currentApiEntry?.name || (apiMode === 'relay' ? 'Relay / Gemini' : 'Chưa cấu hình')}</b></p>
+            <p>Kết nối hiện tại: <b>{currentApiEntry?.name || (apiMode === 'relay' ? 'Trạm trung chuyển' : 'Chưa cấu hình')}</b></p>
             <p className="mt-1">Model hiện tại: <b>{currentApiEntry?.model || selectedModel || 'Chưa chọn'}</b></p>
           </div>
           <p className="px-5 py-3 rounded-2xl bg-emerald-600 text-white font-bold text-center">Mở mục API</p>
@@ -5969,7 +5969,7 @@ const AppContent = () => {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                   <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
                     <p className="font-bold text-slate-800 mb-1">1. Chuẩn bị trong API</p>
-                    <p className="text-slate-600">Mở <b>API</b>, thêm key hoặc relay rồi chọn model bạn muốn dùng.</p>
+                    <p className="text-slate-600">Mở <b>API</b>, thêm khóa, mã đăng nhập Google hoặc kết nối trung chuyển rồi chọn model bạn muốn dùng.</p>
                   </div>
                   <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
                     <p className="font-bold text-slate-800 mb-1">2. Chọn workflow AI</p>
