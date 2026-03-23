@@ -95,7 +95,7 @@ function inferDefaultName(provider: ApiProvider, index: number): string {
 
 export function normalizeStoredApiKeys(input: unknown, profile: AiProfileMode = 'balanced'): StoredApiKeyRecord[] {
   if (!Array.isArray(input)) return [];
-  return input
+  const normalized: Array<StoredApiKeyRecord | null> = input
     .map((row, index) => {
       const item = row as Partial<StoredApiKeyRecord> & { usage?: Partial<StoredApiKeyRecord['usage']> };
       const key = readText(item.key);
@@ -121,8 +121,10 @@ export function normalizeStoredApiKeys(input: unknown, profile: AiProfileMode = 
           limit: Number(item.usage?.limit || 1500),
         },
       } satisfies StoredApiKeyRecord;
-    })
-    .filter((item): item is StoredApiKeyRecord => Boolean(item))
+    });
+
+  return normalized
+    .filter((item): item is StoredApiKeyRecord => item !== null)
     .map((item, index, all) => {
       if (all.some((row) => row.isActive)) return item;
       return index === 0 ? { ...item, isActive: true } : item;
