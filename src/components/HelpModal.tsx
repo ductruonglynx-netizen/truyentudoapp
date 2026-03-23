@@ -16,8 +16,8 @@ export function HelpModal({ isOpen, onClose }: HelpModalProps) {
       icon: <Link2 className="w-5 h-5 text-indigo-600" />,
     },
     {
-      title: 'Mở trang đăng nhập',
-      desc: 'Mở trang relay để đăng nhập Google và lấy khóa truy cập, sau đó quay lại để tiếp tục.',
+      title: 'Trang Relay',
+      desc: 'Mở relay để đăng nhập Google và lấy khóa truy cập, rồi quay lại ứng dụng.',
       icon: <Link2 className="w-5 h-5 text-fuchsia-600" />,
     },
     {
@@ -27,7 +27,7 @@ export function HelpModal({ isOpen, onClose }: HelpModalProps) {
     },
     {
       title: 'Hồ sơ cá nhân',
-      desc: 'Bạn có thể đổi tên hiển thị và ảnh đại diện ngay trong mục Công cụ.',
+      desc: 'Đổi tên hiển thị và ảnh đại diện trong mục Công cụ.',
       icon: <ImagePlus className="w-5 h-5 text-emerald-600" />,
     },
     {
@@ -66,7 +66,7 @@ export function HelpModal({ isOpen, onClose }: HelpModalProps) {
             onClick={onClose}
             className="w-full mt-8 py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-all"
           >
-            Đã hiểu
+            Đóng
           </button>
         </div>
       </motion.div>

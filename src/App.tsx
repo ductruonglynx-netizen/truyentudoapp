@@ -1175,7 +1175,7 @@ const ToolsManager = ({
     if (current.length > 10) {
       setMaskedGeminiKey(`${current.slice(0, 6)}...${current.slice(-4)}`);
     } else {
-      setMaskedGeminiKey(current ? 'Đã cấu hình' : 'Chưa cấu hình');
+      setMaskedGeminiKey(current ? 'Sẵn sàng' : 'Chưa cấu hình');
     }
     setApiVault(vault);
     setApiMode(runtime.mode);
@@ -1317,7 +1317,7 @@ const ToolsManager = ({
     setApiEntryBaseUrl('');
     setApiEntryProvider(provider);
     setApiEntryModel(model);
-    setQuickImportResult('Đã lưu API vào kho và đặt làm cấu hình đang dùng.');
+    setQuickImportResult('API đã được lưu và chọn làm kết nối hiện tại.');
   };
 
   const handleDeleteApiEntry = (id: string) => {
@@ -1427,7 +1427,7 @@ const ToolsManager = ({
     if (updates === 0) {
       setQuickImportResult(`Chưa nhận diện được thông tin phù hợp. Hãy dán API key, token GCLI, endpoint riêng hoặc URL relay dạng ${RELAY_SOCKET_BASE}1234.`);
     } else {
-      setQuickImportResult(`Đã nhận diện và lưu ${updates} mục thông tin.`);
+      setQuickImportResult(`Đã cập nhật ${updates} mục thông tin.`);
       setQuickImportText('');
     }
   };
@@ -1524,7 +1524,7 @@ const ToolsManager = ({
 
       relaySocketRef.current = ws;
       setRelayStatus('connected');
-      setRelayStatusText(`Đã kết nối thành công (${connectedUrl}), đang chờ khóa truy cập...`);
+      setRelayStatusText(`Kết nối thành công (${connectedUrl}), đang chờ khóa truy cập...`);
       relayRequestReadyRef.current = true;
       setRelaySender((payload) => {
         if (ws.readyState === WebSocket.OPEN) {
@@ -1576,7 +1576,7 @@ const ToolsManager = ({
           localStorage.setItem(RELAY_TOKEN_CACHE_KEY, token);
           setRelayMatchedLong(payload.longId || expectedLong);
           setRelayMaskedToken(maskSensitive(token));
-          setRelayStatusText(`Đã nhận khóa truy cập thành công (mã: ${payload.codeId || expectedCode || 'n/a'}).`);
+          setRelayStatusText(`Đã nhận khóa truy cập (mã: ${payload.codeId || expectedCode || 'n/a'}).`);
           persistRuntimeConfig({
             mode: 'relay',
             relayUrl: buildRelaySocketUrl(expectedCode || inferredCode),
@@ -1598,7 +1598,7 @@ const ToolsManager = ({
           return;
         }
         if (expectedLong && payload.longId && payload.longId !== expectedLong) {
-          setRelayStatusText(`Đã nhận dữ liệu nhưng chưa đúng phiên làm việc hiện tại.`);
+          setRelayStatusText(`Đã nhận dữ liệu nhưng chưa khớp phiên hiện tại.`);
         }
       };
 
@@ -1617,7 +1617,7 @@ const ToolsManager = ({
         setRelaySender(null);
         notifyRelayDisconnected('Relay socket closed');
         setRelayStatus('disconnected');
-        setRelayStatusText('Đã ngắt kết nối');
+        setRelayStatusText('Ngắt kết nối');
         if (relayShouldReconnectRef.current) {
           if (relayReconnectRef.current) {
             window.clearTimeout(relayReconnectRef.current);
@@ -1651,7 +1651,7 @@ const ToolsManager = ({
     setRelaySender(null);
     notifyRelayDisconnected('Người dùng ngắt kết nối relay');
     setRelayStatus('disconnected');
-    setRelayStatusText('Đã ngắt kết nối');
+    setRelayStatusText('Ngắt kết nối');
   };
 
   const handleSaveManualRelayToken = () => {
@@ -1668,7 +1668,7 @@ const ToolsManager = ({
     setRelayMaskedToken(maskSensitive(token));
     setManualRelayTokenInput('');
     setRelayStatus('connected');
-    setRelayStatusText('Đã lưu khóa thủ công. Bạn có thể tiếp tục sử dụng ngay.');
+    setRelayStatusText('Khóa thủ công đã được lưu.');
     persistRuntimeConfig({
       mode: 'relay',
       relayUrl,
@@ -1774,7 +1774,7 @@ const ToolsManager = ({
   const handleResetAiUsage = () => {
     writeMainAiUsage({ requests: 0, estTokens: 0 });
     setAiUsageStats({ requests: 0, estTokens: 0 });
-    setAiCheckStatus('Đã đặt lại thống kê phiên hiện tại.');
+    setAiCheckStatus('Thống kê phiên đã được đặt lại.');
   };
 
   const handleExportJSON = async () => {
@@ -1926,7 +1926,7 @@ const ToolsManager = ({
       displayName: cleanedName,
       avatarUrl: cleanedAvatar,
     });
-    alert('Đã cập nhật hồ sơ hiển thị.');
+    alert('Đã lưu hồ sơ hiển thị.');
   };
 
   const handlePickAvatarFile = () => {
@@ -2053,7 +2053,7 @@ const ToolsManager = ({
           <button onClick={onBack} className="p-2 rounded-full hover:bg-slate-100 transition-colors"><ChevronLeft /></button>
           <div>
             <h2 className="text-3xl font-serif font-bold">API & Kết nối AI</h2>
-            <p className="text-sm text-slate-500">Quản lý kho API, chọn model đang dùng và cấu hình Relay riêng khỏi Công cụ.</p>
+              <p className="text-sm text-slate-500">Quản lý kho API, model đang dùng và Relay trong một nơi riêng.</p>
           </div>
         </div>
 
@@ -2072,7 +2072,7 @@ const ToolsManager = ({
           </div>
           <div className="phase1-stat">
             <p>Trạng thái</p>
-            <strong>{apiMode === 'relay' ? relayStatusText : (currentApiEntry ? `Đang dùng ${currentApiEntry.name}` : 'Chưa cấu hình')}</strong>
+            <strong>{apiMode === 'relay' ? relayStatusText : (currentApiEntry ? currentApiEntry.name : 'Chưa cấu hình')}</strong>
           </div>
         </div>
 
@@ -2095,7 +2095,7 @@ const ToolsManager = ({
               }}
               className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'manual' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
             >
-              Kết nối trực tiếp
+              API trực tiếp
             </button>
             <button
               onClick={() => {
@@ -2104,16 +2104,16 @@ const ToolsManager = ({
               }}
               className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'relay' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
             >
-              Qua Relay của bạn
+              Dùng Relay
             </button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-slate-600">
-              <p className="font-bold text-slate-900 mb-1">Kết nối trực tiếp</p>
+              <p className="font-bold text-slate-900 mb-1">API trực tiếp</p>
               <p>Dùng API key Gemini/OpenAI/Anthropic, token GCLI `ya29...`, hoặc endpoint riêng do bạn nhập. Không đi qua relay.</p>
             </div>
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
-              <p className="font-bold mb-1">Qua Relay của bạn</p>
+              <p className="font-bold mb-1">Dùng Relay</p>
               <p>App chỉ kết nối tới relay `relay2026...`; relay của bạn giữ hoặc cấp token rồi gọi AI thay app.</p>
             </div>
           </div>
@@ -2141,7 +2141,7 @@ const ToolsManager = ({
                   <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Nhận diện</p>
                     <p className="mt-1 font-bold text-slate-900">{PROVIDER_LABELS[effectiveDraftProvider]}</p>
-                    {effectiveDraftProvider === 'gcli' ? <p className="text-[11px] text-slate-500 mt-1">Tự nhận diện đây là token GCLI, nhưng vẫn thuộc nhánh Gemini trực tiếp.</p> : null}
+                    {effectiveDraftProvider === 'gcli' ? <p className="text-[11px] text-slate-500 mt-1">Token GCLI được dùng trong nhóm Gemini trực tiếp.</p> : null}
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Mode mặc định</p>
@@ -2204,7 +2204,7 @@ const ToolsManager = ({
                       <h4 className="text-lg font-bold text-slate-900 mt-1">Tất cả key đã lưu</h4>
                     </div>
                     <span className="text-xs px-3 py-1 rounded-full bg-white border border-slate-200 text-slate-600 font-semibold">
-                      Đang dùng: {currentApiEntry?.name || 'Chưa có'}
+                      Hiện tại: {currentApiEntry?.name || 'Chưa có'}
                     </span>
                   </div>
                   <div className="space-y-3 max-h-[30rem] overflow-y-auto pr-1">
@@ -2226,7 +2226,7 @@ const ToolsManager = ({
                               </span>
                               {entry.status === 'valid' ? <span className="text-[11px] px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 font-semibold">OK</span> : null}
                               {entry.status === 'invalid' ? <span className="text-[11px] px-2 py-1 rounded-full bg-rose-100 text-rose-700 font-semibold">Lỗi</span> : null}
-                              {entry.isActive ? <span className="text-[11px] px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 font-semibold">Đang dùng</span> : null}
+                              {entry.isActive ? <span className="text-[11px] px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 font-semibold">Hiện tại</span> : null}
                             </div>
                             <p className="text-xs text-slate-500 font-mono mt-1">{maskSensitive(entry.key, 6, 4)}</p>
                           </div>
@@ -2244,7 +2244,7 @@ const ToolsManager = ({
                                 entry.isActive ? "bg-slate-900 text-white" : "bg-emerald-600 text-white hover:bg-emerald-700"
                               )}
                             >
-                              {entry.isActive ? 'Đang dùng' : 'Dùng key này'}
+                              {entry.isActive ? 'Đang chọn' : 'Chọn key'}
                             </button>
                             <button
                               onClick={() => handleDeleteApiEntry(entry.id)}
@@ -2300,7 +2300,7 @@ const ToolsManager = ({
                     {relayStatus === 'connected' ? (
                       <span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Tạm ngắt kết nối</span>
                     ) : (
-                      <span className="inline-flex items-center gap-2"><Wifi className="w-4 h-4" /> Bắt đầu kết nối</span>
+                      <span className="inline-flex items-center gap-2"><Wifi className="w-4 h-4" /> Kết nối Relay</span>
                     )}
                   </button>
                   <a
@@ -2309,7 +2309,7 @@ const ToolsManager = ({
                     rel="noreferrer"
                     className="px-4 py-3 rounded-2xl bg-fuchsia-600 text-white font-bold hover:bg-fuchsia-700 text-center"
                   >
-                    Mở trang relay
+                    Trang Relay
                   </a>
                 </div>
                 <input
@@ -2488,16 +2488,16 @@ const ToolsManager = ({
             <Zap className="w-6 h-6 text-emerald-600" />
           </div>
           <div>
-            <h3 className="text-xl font-serif font-bold">Trung tâm API đã tách riêng</h3>
-            <p className="text-sm text-slate-500">Quản lý key, chọn provider/model và relay hiện nằm ở tab API để giao diện gọn hơn.</p>
+            <h3 className="text-xl font-serif font-bold">Cấu hình AI</h3>
+            <p className="text-sm text-slate-500">Thiết lập API, model và Relay trong mục API.</p>
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4 items-center">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-            <p>API đang dùng: <b>{currentApiEntry?.name || (apiMode === 'relay' ? 'Relay / Gemini' : 'Chưa cấu hình')}</b></p>
+            <p>Kết nối hiện tại: <b>{currentApiEntry?.name || (apiMode === 'relay' ? 'Relay / Gemini' : 'Chưa cấu hình')}</b></p>
             <p className="mt-1">Model hiện tại: <b>{currentApiEntry?.model || selectedModel || 'Chưa chọn'}</b></p>
           </div>
-          <p className="px-5 py-3 rounded-2xl bg-emerald-600 text-white font-bold text-center">Mở tab API ở thanh điều hướng để chỉnh</p>
+          <p className="px-5 py-3 rounded-2xl bg-emerald-600 text-white font-bold text-center">Mở mục API</p>
         </div>
       </div>
 
@@ -2513,7 +2513,7 @@ const ToolsManager = ({
             <h3 className="text-xl font-serif font-bold">Nhập dữ liệu</h3>
           </div>
           <p className="text-slate-500 text-sm mb-8 leading-relaxed">
-            Bạn có thể nhập truyện từ tệp <b>.docx</b>, <b>.txt</b> hoặc khôi phục dữ liệu từ tệp sao lưu.
+            Nhập truyện từ tệp <b>.docx</b>, <b>.txt</b> hoặc khôi phục từ tệp sao lưu.
           </p>
           <label className="block w-full py-4 px-6 bg-slate-900 text-white text-center rounded-2xl font-bold cursor-pointer hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/20">
             {isImporting ? 'Đang xử lý...' : 'Chọn file để nhập'}
@@ -5994,7 +5994,7 @@ const AppContent = () => {
               <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                   <h3 className="text-xl font-serif font-bold text-slate-900">Bắt đầu nhanh</h3>
-                  <span className="text-xs px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 font-semibold">Dành cho người mới bắt đầu</span>
+                  <span className="text-xs px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 font-semibold">Hướng dẫn nhanh</span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                   <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">

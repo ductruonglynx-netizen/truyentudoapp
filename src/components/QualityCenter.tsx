@@ -30,7 +30,7 @@ export function QualityCenter({ onRun }: Props) {
       const result = await onRun(input.trim());
       setIssues(result);
       setStatus('done');
-      setMessage(result.length ? `Đã tìm thấy ${result.length} vấn đề.` : 'Không phát hiện vấn đề nào.');
+      setMessage(result.length ? `Phát hiện ${result.length} vấn đề.` : 'Không phát hiện vấn đề nào.');
     } catch (err) {
       setStatus('error');
       setMessage(err instanceof Error ? err.message : 'Lỗi không xác định');
