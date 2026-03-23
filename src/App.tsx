@@ -195,14 +195,10 @@ function buildRelayConnectUrl(rawInput: string, code: string): string {
   }
 }
 
-<<<<<<< HEAD
-=======
 function extractGeminiKeyFromText(input: string): string {
   const found = String(input || '').match(/AIza[0-9A-Za-z\-_]{20,}/);
   return found?.[0] || '';
 }
-
->>>>>>> 21849d53 (fix: add manual relay token fallback when websocket handshake fails)
 function maskSensitive(value: string, head = 8, tail = 6): string {
   const v = String(value || '').trim();
   if (!v) return '';
