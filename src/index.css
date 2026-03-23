@@ -5,6 +5,56 @@
   --font-serif: "Arial", serif;
 }
 
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+:root[data-theme="dark"] body {
+  background: #020617;
+  color: #e2e8f0;
+}
+
+:root[data-theme="dark"] .bg-white {
+  background-color: #0f172a !important;
+  color: #e2e8f0 !important;
+}
+
+:root[data-theme="dark"] .bg-slate-50,
+:root[data-theme="dark"] .bg-slate-100 {
+  background-color: #0b1220 !important;
+}
+
+:root[data-theme="dark"] .border-slate-200 {
+  border-color: #1e293b !important;
+}
+
+:root[data-theme="dark"] .text-slate-900 {
+  color: #f1f5f9 !important;
+}
+
+:root[data-theme="dark"] .text-slate-800,
+:root[data-theme="dark"] .text-slate-700 {
+  color: #e2e8f0 !important;
+}
+
+:root[data-theme="dark"] .text-slate-600,
+:root[data-theme="dark"] .text-slate-500,
+:root[data-theme="dark"] .text-slate-400 {
+  color: #94a3b8 !important;
+}
+
+:root[data-theme="dark"] .hover\:bg-slate-100:hover {
+  background-color: #111827 !important;
+}
+
+:root[data-theme="dark"] .markdown-body {
+  color: #e2e8f0;
+}
+
 /* Markdown Styles */
 .markdown-body {
   @apply text-stone-800 leading-relaxed;
