@@ -1,0 +1,193 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: {userId}
+// Fields:
+//   - uid: string (required)
+//   - displayName: string
+//   - email: string (required)
+//   - photoURL: string
+//   - createdAt: timestamp
+//   - role: string (admin/user)
+//
+// Collection: stories
+// Document ID: {storyId}
+// Fields:
+//   - authorId: string (required)
+//   - title: string (required)
+//   - content: string (required)
+//   - type: string (original/translated/continued)
+//   - genre: string
+//   - introduction: string
+//   - expectedChapters: number
+//   - expectedWordCount: number
+//   - isPublic: boolean
+//   - isAdult: boolean
+//   - isAI: boolean
+//   - chapters: list of maps
+//   - createdAt: timestamp
+//   - updatedAt: timestamp
+//
+// Collection: characters
+// Document ID: {characterId}
+// Fields:
+//   - authorId: string (required)
+//   - storyId: string
+//   - name: string (required)
+//   - appearance: string
+//   - personality: string
+//   - createdAt: timestamp
+//
+// Collection: ai_rules
+// Document ID: {aiRuleId}
+// Fields:
+//   - authorId: string (required)
+//   - name: string (required)
+//   - content: string (required)
+//   - createdAt: timestamp
+//
+// Collection: style_references
+// Document ID: {styleReferenceId}
+// Fields:
+//   - authorId: string (required)
+//   - name: string (required)
+//   - content: string (required)
+//   - createdAt: timestamp
+//
+// Collection: translation_names
+// Document ID: {translationNameId}
+// Fields:
+//   - authorId: string (required)
+//   - original: string (required)
+//   - translation: string (required)
+//   - createdAt: timestamp
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner(authorId) {
+      return isAuthenticated() && request.auth.uid == authorId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "emtrai2k4@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.email is string && data.email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$") &&
+             (!('role' in data) || data.role in ['admin', 'user']);
+    }
+
+    function isValidStory(data) {
+      return data.keys().hasAll(['authorId', 'title', 'content']) &&
+             data.authorId is string && data.authorId == request.auth.uid &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 500 &&
+             data.content is string && data.content.size() < 2000000 &&
+             (!('type' in data) || data.type in ['original', 'translated', 'continued']) &&
+             (!('genre' in data) || (data.genre is string && data.genre.size() < 200)) &&
+             (!('introduction' in data) || (data.introduction is string && data.introduction.size() < 5000)) &&
+             (!('expectedChapters' in data) || data.expectedChapters is int) &&
+             (!('expectedWordCount' in data) || data.expectedWordCount is int) &&
+             (!('isPublic' in data) || data.isPublic is bool) &&
+             (!('isAdult' in data) || data.isAdult is bool) &&
+             (!('isAI' in data) || data.isAI is bool) &&
+             (!('chapters' in data) || data.chapters is list);
+    }
+
+    function isValidCharacter(data) {
+      return data.keys().hasAll(['authorId', 'name']) &&
+             data.authorId is string && data.authorId == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             (!('appearance' in data) || (data.appearance is string && data.appearance.size() < 5000)) &&
+             (!('personality' in data) || (data.personality is string && data.personality.size() < 5000)) &&
+             (!('storyId' in data) || (data.storyId == null || data.storyId is string));
+    }
+
+    function isValidAIRule(data) {
+      return data.keys().hasAll(['authorId', 'name', 'content']) &&
+             data.authorId is string && data.authorId == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.content is string && data.content.size() > 0 && data.content.size() < 10000;
+    }
+
+    function isValidStyleReference(data) {
+      return data.keys().hasAll(['authorId', 'name', 'content']) &&
+             data.authorId is string && data.authorId == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.content is string && data.content.size() > 0 && data.content.size() < 100000;
+    }
+
+    function isValidTranslationName(data) {
+      return data.keys().hasAll(['authorId', 'original', 'translation']) &&
+             data.authorId is string && data.authorId == request.auth.uid &&
+             data.original is string && data.original.size() > 0 && data.original.size() < 500 &&
+             data.translation is string && data.translation.size() > 0 && data.translation.size() < 500;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'user' || isAdmin());
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role || isAdmin());
+    }
+
+    match /stories/{storyId} {
+      allow read: if resource.data.isPublic == true || isDocOwner(resource.data.authorId) || isAdmin();
+      allow create: if isAuthenticated() && isValidStory(request.resource.data);
+      allow update: if (isDocOwner(resource.data.authorId) || isAdmin()) && isValidStory(request.resource.data);
+      allow delete: if isDocOwner(resource.data.authorId) || isAdmin();
+    }
+
+    match /characters/{characterId} {
+      allow read: if isDocOwner(resource.data.authorId) || isAdmin();
+      allow create: if isAuthenticated() && isValidCharacter(request.resource.data);
+      allow update: if (isDocOwner(resource.data.authorId) || isAdmin()) && isValidCharacter(request.resource.data);
+      allow delete: if isDocOwner(resource.data.authorId) || isAdmin();
+    }
+
+    match /ai_rules/{aiRuleId} {
+      allow read: if isDocOwner(resource.data.authorId) || isAdmin();
+      allow create: if isAuthenticated() && isValidAIRule(request.resource.data);
+      allow update: if (isDocOwner(resource.data.authorId) || isAdmin()) && isValidAIRule(request.resource.data);
+      allow delete: if isDocOwner(resource.data.authorId) || isAdmin();
+    }
+
+    match /style_references/{styleReferenceId} {
+      allow read: if isDocOwner(resource.data.authorId) || isAdmin();
+      allow create: if isAuthenticated() && isValidStyleReference(request.resource.data);
+      allow update: if (isDocOwner(resource.data.authorId) || isAdmin()) && isValidStyleReference(request.resource.data);
+      allow delete: if isDocOwner(resource.data.authorId) || isAdmin();
+    }
+
+    match /translation_names/{translationNameId} {
+      allow read: if isDocOwner(resource.data.authorId) || isAdmin();
+      allow create: if isAuthenticated() && isValidTranslationName(request.resource.data);
+      allow update: if (isDocOwner(resource.data.authorId) || isAdmin()) && isValidTranslationName(request.resource.data);
+      allow delete: if isDocOwner(resource.data.authorId) || isAdmin();
+    }
+  }
+}

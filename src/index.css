@@ -1,0 +1,398 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Arial", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Arial", serif;
+}
+
+/* Markdown Styles */
+.markdown-body {
+  @apply text-stone-800 leading-relaxed;
+}
+
+.markdown-body h1 { @apply text-3xl font-serif font-bold mb-6 mt-8; }
+.markdown-body h2 { @apply text-2xl font-serif font-bold mb-4 mt-6; }
+.markdown-body h3 { @apply text-xl font-serif font-bold mb-3 mt-4; }
+.markdown-body p { @apply mb-4; }
+.markdown-body ul { @apply list-disc pl-6 mb-4; }
+.markdown-body ol { @apply list-decimal pl-6 mb-4; }
+.markdown-body blockquote { @apply border-l-4 border-stone-200 pl-4 italic text-stone-600 mb-4; }
+.markdown-body code { @apply bg-stone-100 px-1 rounded font-mono text-sm; }
+.markdown-body pre { @apply bg-stone-900 text-stone-100 p-4 rounded-lg overflow-x-auto mb-4; }
+.markdown-body pre code { @apply bg-transparent p-0 text-stone-100; }
+.markdown-body a { @apply text-emerald-600 underline hover:text-emerald-700; }
+.markdown-body img { @apply rounded-lg max-w-full h-auto my-6; }
+
+/* Phase 0 demo styles */
+:root {
+  --phase0-bg: #f6f7f4;
+  --phase0-card: #ffffff;
+  --phase0-text: #1f2933;
+  --phase0-muted: #52606d;
+  --phase0-primary: #0f766e;
+  --phase0-accent: #c2410c;
+  --phase0-border: #d9e2ec;
+}
+
+.phase0-shell {
+  background:
+    radial-gradient(circle at 5% 10%, rgba(15, 118, 110, 0.12), transparent 30%),
+    radial-gradient(circle at 90% 20%, rgba(194, 65, 12, 0.12), transparent 35%),
+    var(--phase0-bg);
+}
+
+.phase0-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+@media (min-width: 1024px) {
+  .phase0-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.phase0-card {
+  border: 1px solid var(--phase0-border);
+  border-radius: 1rem;
+  background: var(--phase0-card);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+}
+
+.phase0-eyebrow {
+  margin: 0;
+  color: var(--phase0-muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.phase0-title {
+  margin: 0.25rem 0 0;
+  color: var(--phase0-text);
+  font-size: clamp(1.2rem, 2.2vw, 1.9rem);
+  font-weight: 700;
+}
+
+.phase0-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--phase0-border);
+  border-radius: 999px;
+  padding: 0.4rem 0.7rem;
+  color: var(--phase0-muted);
+  background: #fff;
+}
+
+.phase0-input,
+.phase0-textarea {
+  width: 100%;
+  border: 1px solid var(--phase0-border);
+  border-radius: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  outline: none;
+  color: var(--phase0-text);
+  background: #fff;
+}
+
+.phase0-input:focus,
+.phase0-textarea:focus {
+  border-color: var(--phase0-primary);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.15);
+}
+
+.phase0-textarea {
+  min-height: 18rem;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.phase0-primary-btn,
+.phase0-ghost-btn,
+.phase0-danger-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: 0.75rem;
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+
+.phase0-primary-btn {
+  background: var(--phase0-primary);
+  color: #fff;
+  border: 1px solid var(--phase0-primary);
+  padding: 0.7rem 1rem;
+}
+
+.phase0-primary-btn:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.phase0-primary-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.phase0-ghost-btn {
+  border: 1px solid var(--phase0-border);
+  background: #fff;
+  color: var(--phase0-text);
+  padding: 0.55rem 0.8rem;
+}
+
+.phase0-ghost-btn:hover {
+  border-color: var(--phase0-primary);
+  color: var(--phase0-primary);
+}
+
+.phase0-danger-btn {
+  border: 1px solid #fecaca;
+  background: #fff5f5;
+  color: #b91c1c;
+  padding: 0.5rem 0.65rem;
+}
+
+.phase0-alt {
+  text-align: left;
+  border: 1px solid var(--phase0-border);
+  background: #fff;
+  border-radius: 0.85rem;
+  padding: 0.85rem;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.phase0-alt:hover {
+  border-color: var(--phase0-primary);
+  transform: translateY(-1px);
+}
+
+/* Phase 1 MVP styles */
+.phase1-shell {
+  background:
+    radial-gradient(circle at 8% 10%, rgba(15, 118, 110, 0.1), transparent 30%),
+    radial-gradient(circle at 95% 20%, rgba(194, 65, 12, 0.09), transparent 30%),
+    #f6f7f4;
+}
+
+.phase1-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+}
+
+@media (min-width: 1200px) {
+  .phase1-layout {
+    grid-template-columns: 320px minmax(0, 1fr) 360px;
+  }
+}
+
+.phase1-card {
+  border: 1px solid #d9e2ec;
+  border-radius: 0.95rem;
+  background: #fff;
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.05);
+}
+
+.phase1-eyebrow {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #52606d;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.phase1-title {
+  margin: 0.2rem 0 0;
+  font-size: clamp(1.1rem, 2vw, 1.65rem);
+  color: #1f2933;
+  font-weight: 700;
+}
+
+.phase1-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid #d9e2ec;
+  border-radius: 999px;
+  padding: 0.35rem 0.68rem;
+  background: #fff;
+  color: #52606d;
+}
+
+.phase1-section-title {
+  font-size: 0.84rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #52606d;
+  font-weight: 700;
+}
+
+.phase1-input {
+  width: 100%;
+  border: 1px solid #d9e2ec;
+  border-radius: 0.7rem;
+  padding: 0.62rem 0.75rem;
+  color: #1f2933;
+  background: #fff;
+  outline: none;
+}
+
+.phase1-input:focus {
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.15);
+}
+
+.phase1-segment-list {
+  display: grid;
+  gap: 0.45rem;
+  max-height: 530px;
+  overflow: auto;
+}
+
+.phase1-segment {
+  text-align: left;
+  border: 1px solid #d9e2ec;
+  border-radius: 0.7rem;
+  padding: 0.55rem 0.65rem;
+  background: #fff;
+}
+
+.phase1-segment:hover {
+  border-color: #0f766e;
+}
+
+.phase1-segment.is-active {
+  border-color: #0f766e;
+  background: #ecfdf5;
+}
+
+.phase1-primary-btn,
+.phase1-ghost-btn,
+.phase1-danger-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.38rem;
+  border-radius: 0.7rem;
+  font-weight: 600;
+  padding: 0.58rem 0.85rem;
+}
+
+.phase1-primary-btn {
+  background: #0f766e;
+  border: 1px solid #0f766e;
+  color: #fff;
+}
+
+.phase1-primary-btn:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.phase1-primary-btn:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+.phase1-ghost-btn {
+  background: #fff;
+  border: 1px solid #d9e2ec;
+  color: #1f2933;
+}
+
+.phase1-ghost-btn:hover {
+  border-color: #0f766e;
+  color: #0f766e;
+}
+
+.phase1-danger-btn {
+  background: #fff5f5;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+}
+
+.phase1-box {
+  border: 1px solid #d9e2ec;
+  border-radius: 0.7rem;
+  padding: 0.65rem 0.75rem;
+  background: #fff;
+}
+
+.phase1-alt {
+  text-align: left;
+  border: 1px solid #d9e2ec;
+  border-radius: 0.74rem;
+  padding: 0.7rem;
+  background: #fff;
+  transition: all 0.15s ease;
+}
+
+.phase1-alt:hover {
+  border-color: #0f766e;
+  transform: translateY(-1px);
+}
+
+.phase1-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+@media (min-width: 900px) {
+  .phase1-stats-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.phase1-stat {
+  border: 1px solid #d9e2ec;
+  border-radius: 0.65rem;
+  padding: 0.55rem 0.65rem;
+  background: #fff;
+}
+
+.phase1-stat p {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #52606d;
+}
+
+.phase1-stat strong {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 1.2rem;
+  color: #1f2933;
+}
+
+.phase1-chip {
+  display: inline-block;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  padding: 0.12rem 0.5rem;
+  border: 1px solid #d9e2ec;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.phase1-chip-pending {
+  background: #fff7ed;
+  color: #9a3412;
+  border-color: #fdba74;
+}
+
+.phase1-chip-translated {
+  background: #ecfeff;
+  color: #0f766e;
+  border-color: #99f6e4;
+}
+
+.phase1-chip-reviewed {
+  background: #ecfdf5;
+  color: #166534;
+  border-color: #86efac;
+}

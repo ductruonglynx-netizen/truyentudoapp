@@ -1,0 +1,134 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Information about the user",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Story": {
+      "title": "Story",
+      "description": "A story written by a user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "authorId": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "type": { "type": "string", "enum": ["original", "translated", "continued"] },
+        "genre": { "type": "string" },
+        "introduction": { "type": "string" },
+        "expectedChapters": { "type": "integer" },
+        "expectedWordCount": { "type": "integer" },
+        "isPublic": { "type": "boolean" },
+        "isAdult": { "type": "boolean" },
+        "isAI": { "type": "boolean" },
+        "chapters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" },
+              "content": { "type": "string" },
+              "order": { "type": "integer" },
+              "aiInstructions": { "type": "string" },
+              "script": { "type": "string" },
+              "createdAt": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "title", "content"]
+    },
+    "TranslationName": {
+      "title": "Translation Name",
+      "description": "A name dictionary entry for translation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "authorId": { "type": "string" },
+        "original": { "type": "string" },
+        "translation": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "original", "translation"]
+    },
+    "Character": {
+      "title": "Character",
+      "description": "A character defined for a story",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "authorId": { "type": "string" },
+        "storyId": { "type": "string" },
+        "name": { "type": "string" },
+        "appearance": { "type": "string" },
+        "personality": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "name"]
+    },
+    "AIRule": {
+      "title": "AI Rule",
+      "description": "A rule for AI generation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "authorId": { "type": "string" },
+        "name": { "type": "string" },
+        "content": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "name", "content"]
+    },
+    "StyleReference": {
+      "title": "Style Reference",
+      "description": "A style reference text for AI generation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "authorId": { "type": "string" },
+        "name": { "type": "string" },
+        "content": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "name", "content"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/stories/{storyId}": {
+      "schema": "Story",
+      "description": "Stories collection"
+    },
+    "/characters/{characterId}": {
+      "schema": "Character",
+      "description": "Characters collection"
+    },
+    "/ai_rules/{aiRuleId}": {
+      "schema": "AIRule",
+      "description": "AI rules collection"
+    },
+    "/style_references/{styleReferenceId}": {
+      "schema": "StyleReference",
+      "description": "Style references collection"
+    },
+    "/translation_names/{translationNameId}": {
+      "schema": "TranslationName",
+      "description": "Translation name dictionary collection"
+    }
+  }
+}
