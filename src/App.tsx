@@ -376,7 +376,11 @@ async function generateGeminiText(
   // If in relay mode, send request through relay WebSocket; no token exposed to browser.
   if (runtime.mode === 'relay') {
     const body = {
-      contents,
+      contents: [
+        {
+          parts: [{ text: contents }],
+        },
+      ],
       generationConfig: config || {},
     };
     const raw = await relayGenerateContent(model, body, 25000);
@@ -401,7 +405,11 @@ async function generateGeminiText(
         Authorization: `Bearer ${auth.apiKey}`,
       },
       body: JSON.stringify({
-        contents,
+        contents: [
+          {
+            parts: [{ text: contents }],
+          },
+        ],
         generationConfig: config || {},
       }),
     });
@@ -1377,7 +1385,8 @@ const ToolsManager = ({
       const result = await generateGeminiText(
         ai,
         'fast',
-        'Trả về đúng một từ: OK',
+        'Chỉ trả về đúng một từ OK (chữ hoa), không thêm ký tự khác.',
+        { temperature: 0, responseMimeType: 'text/plain' },
       );
       const ok = String(result || '').trim().toUpperCase().includes('OK');
       setAiUsageStats(readMainAiUsage());
