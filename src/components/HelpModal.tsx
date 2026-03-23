@@ -11,18 +11,18 @@ export function HelpModal({ isOpen, onClose }: HelpModalProps) {
 
   const features = [
     {
-      title: 'Relay Base URL 1 ô duy nhất',
-      desc: 'Nhập đúng dạng wss://relay2026.up.railway.app/?code=18101412 (code 4-8 số) để kết nối realtime.',
+      title: 'Nhập mã kết nối nhanh',
+      desc: 'Dán đường dẫn theo mẫu gợi ý, nhập mã 4-8 số và bấm Kết nối để dùng ngay.',
       icon: <Link2 className="w-5 h-5 text-indigo-600" />,
     },
     {
-      title: 'Web relay để đăng nhập',
-      desc: 'Mở https://relay2026.vercel.app/ để đăng nhập Google và nhận token. Railway không xử lý OAuth.',
+      title: 'Mở trang đăng nhập',
+      desc: 'Mở trang relay để đăng nhập Google và lấy khóa truy cập, sau đó quay lại để tiếp tục.',
       icon: <Link2 className="w-5 h-5 text-fuchsia-600" />,
     },
     {
-      title: 'AI từ file (gộp)',
-      desc: 'Một luồng nhập file dùng chung, sau đó chọn Dịch truyện hoặc Viết tiếp.',
+      title: 'Làm việc từ tệp',
+      desc: 'Tải tệp lên một lần, rồi chọn dịch truyện hoặc viết tiếp theo nhu cầu.',
       icon: <Upload className="w-5 h-5 text-amber-600" />,
     },
     {

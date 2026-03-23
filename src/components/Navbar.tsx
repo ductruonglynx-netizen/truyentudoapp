@@ -131,7 +131,7 @@ export function Navbar({
                 className="w-full text-left px-3 py-2 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-100"
               >
                 <Download className="w-4 h-4 inline mr-2" />
-                Sao lưu JSON
+                Sao lưu dữ liệu
               </button>
               <button
                 onClick={() => {
@@ -141,7 +141,7 @@ export function Navbar({
                 className="w-full text-left px-3 py-2 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-100"
               >
                 <Upload className="w-4 h-4 inline mr-2" />
-                Khôi phục JSON
+                Khôi phục dữ liệu
               </button>
             </div>
           ) : null}

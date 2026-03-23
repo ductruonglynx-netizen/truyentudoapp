@@ -372,9 +372,9 @@ function createGeminiClient(): GoogleGenAI {
   if (!apiKey) {
     const mode = getApiRuntimeConfig().mode;
     if (mode === 'relay') {
-      throw new Error('Chưa nhận được token từ Relay. Vào Công cụ > Cấu hình API > Relay để kết nối websocket.');
+        throw new Error('Chưa có khóa truy cập từ Relay. Vào Công cụ > Thiết lập AI để kết nối.');
     }
-    throw new Error('Chưa cấu hình Gemini API key. Vào Công cụ > Cấu hình API để thêm key.');
+      throw new Error('Bạn chưa thiết lập khóa truy cập. Vào Công cụ > Thiết lập AI để bắt đầu.');
   }
   return new GoogleGenAI({ apiKey });
 }
@@ -969,7 +969,7 @@ const ToolsManager = ({
     setGeminiKeyInput('');
     setApiMode('manual');
     persistRuntimeConfig({ mode: 'manual' });
-    alert('Đã lưu Gemini API key.');
+    alert('Đã lưu khóa truy cập.');
   };
 
   const handleQuickImportKeys = () => {
@@ -1024,9 +1024,9 @@ const ToolsManager = ({
     }
 
     if (updates === 0) {
-      setQuickImportResult(`Không phát hiện được key/mã hợp lệ. Gợi ý: dán AIza..., sk-..., sk-ant-..., hoặc link relay dạng ${RELAY_SOCKET_BASE}1234.`);
+      setQuickImportResult(`Chưa nhận diện được thông tin phù hợp. Hãy dán khóa truy cập hoặc đường dẫn dạng ${RELAY_SOCKET_BASE}1234.`);
     } else {
-      setQuickImportResult(`Đã nhận ${updates} nguồn cấu hình.`);
+      setQuickImportResult(`Đã cập nhật ${updates} mục thông tin.`);
       setQuickImportText('');
     }
   };
@@ -1082,7 +1082,7 @@ const ToolsManager = ({
     const inferredCode = parseRelayCodeFromText(relayUrl);
     if (!/^\d{4,8}$/.test(inferredCode)) {
       setRelayStatus('error');
-      setRelayStatusText(`Base URL phải đúng dạng ${RELAY_SOCKET_BASE}1234 (code 4-8 số).`);
+      setRelayStatusText(`Vui lòng nhập đúng mẫu ${RELAY_SOCKET_BASE}1234 (mã 4-8 số).`);
       return;
     }
     const wsCandidates = buildRelayCandidateUrls(relayUrl, inferredCode);
@@ -1100,7 +1100,7 @@ const ToolsManager = ({
         relayPingRef.current = null;
       }
       setRelayStatus('connecting');
-      setRelayStatusText(`Đang kết nối websocket... (${wsCandidates[0]})`);
+      setRelayStatusText(`Đang mở kết nối... (${wsCandidates[0]})`);
 
       let ws: WebSocket | null = null;
       let connectedUrl = '';
@@ -1123,7 +1123,7 @@ const ToolsManager = ({
 
       relaySocketRef.current = ws;
       setRelayStatus('connected');
-      setRelayStatusText(`Đã kết nối proxy relay (${connectedUrl}), đang chờ token...`);
+      setRelayStatusText(`Đã kết nối thành công (${connectedUrl}), đang chờ khóa truy cập...`);
       persistRuntimeConfig({
         mode: 'relay',
         relayUrl: buildRelaySocketUrl(inferredCode),
@@ -1154,7 +1154,7 @@ const ToolsManager = ({
           localStorage.setItem(RELAY_TOKEN_CACHE_KEY, token);
           setRelayMatchedLong(payload.longId || expectedLong);
           setRelayMaskedToken(maskSensitive(token));
-          setRelayStatusText(`Nhận token thành công (code=${payload.codeId || expectedCode || 'n/a'})`);
+          setRelayStatusText(`Đã nhận khóa truy cập thành công (mã: ${payload.codeId || expectedCode || 'n/a'}).`);
           persistRuntimeConfig({
             mode: 'relay',
             relayUrl: buildRelaySocketUrl(expectedCode || inferredCode),
@@ -1169,17 +1169,17 @@ const ToolsManager = ({
         }
 
         if (expectedCode && payload.codeId && payload.codeId !== expectedCode) {
-          setRelayStatusText(`Đã nhận code=${payload.codeId} nhưng không khớp code=${expectedCode}`);
+          setRelayStatusText(`Mã nhận được (${payload.codeId}) chưa trùng với mã bạn đã nhập (${expectedCode}).`);
           return;
         }
         if (expectedLong && payload.longId && payload.longId !== expectedLong) {
-          setRelayStatusText(`Đã nhận long=${payload.longId} nhưng không khớp long=${expectedLong}`);
+          setRelayStatusText(`Đã nhận dữ liệu nhưng chưa đúng phiên làm việc hiện tại.`);
         }
       };
 
       ws.onerror = () => {
         setRelayStatus('error');
-        setRelayStatusText('Lỗi websocket relay');
+        setRelayStatusText('Kết nối tạm thời gián đoạn. Vui lòng thử lại.');
       };
 
       ws.onclose = () => {
@@ -1200,7 +1200,7 @@ const ToolsManager = ({
       };
     } catch (error) {
       setRelayStatus('error');
-      setRelayStatusText(`Không thể kết nối relay: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setRelayStatusText(`Chưa thể kết nối lúc này: ${error instanceof Error ? error.message : 'Lỗi không xác định'}`);
     }
   };
 
@@ -1225,18 +1225,18 @@ const ToolsManager = ({
   const handleSaveManualRelayToken = () => {
     const token = extractGeminiKeyFromText(manualRelayTokenInput.trim()) || manualRelayTokenInput.trim();
     if (!token) {
-      setRelayStatusText('Token trống. Hãy dán API key bắt đầu bằng AIza...');
+      setRelayStatusText('Bạn chưa dán khóa truy cập. Vui lòng thử lại.');
       return;
     }
     if (!/^AIza[0-9A-Za-z\-_]{20,}$/.test(token)) {
-      setRelayStatusText('Token không đúng định dạng Gemini (AIza...).');
+      setRelayStatusText('Khóa truy cập chưa đúng định dạng.');
       return;
     }
     localStorage.setItem(RELAY_TOKEN_CACHE_KEY, token);
     setRelayMaskedToken(maskSensitive(token));
     setManualRelayTokenInput('');
     setRelayStatus('connected');
-    setRelayStatusText('Đã lưu token thủ công. Có thể dùng AI ngay cả khi WS relay lỗi.');
+    setRelayStatusText('Đã lưu khóa thủ công. Bạn có thể tiếp tục sử dụng ngay.');
     persistRuntimeConfig({
       mode: 'relay',
       relayUrl,
@@ -1580,8 +1580,8 @@ const ToolsManager = ({
             <Zap className="w-6 h-6 text-emerald-600" />
           </div>
           <div>
-            <h3 className="text-xl font-serif font-bold">Cấu hình API</h3>
-            <p className="text-sm text-slate-500">Thiết lập Gemini API key để dùng các tính năng AI.</p>
+            <h3 className="text-xl font-serif font-bold">Thiết lập AI</h3>
+            <p className="text-sm text-slate-500">Kết nối nhanh để dùng các tính năng viết, dịch và gợi ý nội dung.</p>
           </div>
         </div>
 
@@ -1593,7 +1593,7 @@ const ToolsManager = ({
             }}
             className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'manual' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
           >
-            Tự nhập API
+            Tự nhập khóa truy cập
           </button>
           <button
             onClick={() => {
@@ -1602,114 +1602,118 @@ const ToolsManager = ({
             }}
             className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'relay' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
           >
-            Relay WebSocket
+            Kết nối qua Relay
           </button>
         </div>
 
         {apiMode === 'manual' ? (
           <>
-            <p className="text-xs text-slate-500 mb-3">Key hiện tại: <b>{maskedGeminiKey || 'Chưa cấu hình'}</b></p>
+            <p className="text-xs text-slate-500 mb-3">Khóa hiện tại: <b>{maskedGeminiKey || 'Chưa thiết lập'}</b></p>
             <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
               <input
                 type="password"
                 value={geminiKeyInput}
                 onChange={(e) => setGeminiKeyInput(e.target.value)}
                 className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
-                placeholder="Nhập Gemini API key (AIza...)"
+                placeholder="Nhập khóa truy cập (AIza...)"
               />
               <button
                 onClick={handleSaveGeminiKey}
                 disabled={!geminiKeyInput.trim()}
                 className="px-6 py-3 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 disabled:opacity-50"
               >
-                Lưu API Key
+                Lưu khóa truy cập
               </button>
             </div>
           </>
         ) : (
         <div className="space-y-3">
-            <p className="text-xs text-slate-500">
-              Dùng đúng định dạng WebSocket relay: <b>{RELAY_SOCKET_BASE}1234</b> (code 4-8 số). Đây là kênh kết nối realtime.
-            </p>
-            <p className="text-[11px] text-amber-600">
-              Đăng nhập Google/lấy token thực hiện trên web relay: <b>{RELAY_WEB_BASE}</b>. Railway chỉ làm nhiệm vụ chuyển tiếp WebSocket.
-            </p>
-            <div className="grid grid-cols-1 gap-3">
-              <input
-                type="text"
-                value={relayUrl}
-                onChange={(e) => {
-                  setRelayUrl(e.target.value);
-                  setRelayIdentityHint(e.target.value);
-                  persistRuntimeConfig({ relayUrl: e.target.value, identityHint: e.target.value });
-                }}
-                className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                placeholder={`${RELAY_SOCKET_BASE}18101412`}
-              />
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3">
-              <button
-                onClick={relayStatus === 'connected' ? handleDisconnectRelay : handleConnectRelay}
-                className={`px-6 py-3 rounded-2xl text-white font-bold ${relayStatus === 'connected' ? 'bg-slate-700 hover:bg-slate-800' : 'bg-indigo-600 hover:bg-indigo-700'}`}
-              >
-                {relayStatus === 'connected' ? (
-                  <span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Ngắt kết nối</span>
-                ) : (
-                  <span className="inline-flex items-center gap-2"><Wifi className="w-4 h-4" /> Kết nối Relay</span>
-                )}
-              </button>
-              <a
-                href={RELAY_WEB_BASE}
-                target="_blank"
-                rel="noreferrer"
-                className="px-6 py-3 rounded-2xl bg-fuchsia-600 text-white font-bold hover:bg-fuchsia-700 text-center"
-              >
-                Mở web relay
-              </a>
-            </div>
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 space-y-2">
-              <p className="text-xs font-semibold text-amber-800">
-                Dự phòng khi WebSocket relay lỗi: dán token Gemini (AIza...) lấy từ relay web.
-              </p>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-3">
               <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                <button
+                  onClick={relayStatus === 'connected' ? handleDisconnectRelay : handleConnectRelay}
+                  className={`px-6 py-3 rounded-2xl text-white font-bold ${relayStatus === 'connected' ? 'bg-slate-700 hover:bg-slate-800' : 'bg-indigo-600 hover:bg-indigo-700'}`}
+                >
+                  {relayStatus === 'connected' ? (
+                    <span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Tạm ngắt kết nối</span>
+                  ) : (
+                    <span className="inline-flex items-center gap-2"><Wifi className="w-4 h-4" /> Bắt đầu kết nối</span>
+                  )}
+                </button>
+                <a
+                  href={RELAY_WEB_BASE}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-4 py-3 rounded-2xl bg-fuchsia-600 text-white font-bold hover:bg-fuchsia-700 text-center"
+                >
+                  Mở trang relay
+                </a>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-slate-600">Đường dẫn kết nối</label>
+                <input
+                  type="text"
+                  value={relayUrl}
+                  onChange={(e) => {
+                    setRelayUrl(e.target.value);
+                    setRelayIdentityHint(e.target.value);
+                    persistRuntimeConfig({ relayUrl: e.target.value, identityHint: e.target.value });
+                  }}
+                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+                  placeholder={`${RELAY_SOCKET_BASE}18101412`}
+                />
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 space-y-1">
+                <p><Link2 className="inline w-3 h-3 mr-1" /> Mẫu đường dẫn: <b>{RELAY_SOCKET_BASE}1234</b> (mã 4-8 số)</p>
+                <p><Shield className="inline w-3 h-3 mr-1" /> Trang đăng nhập: <b>{RELAY_WEB_BASE}</b></p>
+                <p><Zap className="inline w-3 h-3 mr-1" /> Mẹo: khi kết nối thành công, bạn có thể dùng AI ngay.</p>
+              </div>
+            </div>
+
+            <details className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
+              <summary className="cursor-pointer text-xs font-semibold text-amber-800">Nếu chưa kết nối được: nhập khóa thủ công</summary>
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 mt-3">
                 <input
                   type="text"
                   value={manualRelayTokenInput}
                   onChange={(e) => setManualRelayTokenInput(e.target.value)}
                   className="w-full px-4 py-3 rounded-2xl border border-amber-300 focus:ring-2 focus:ring-amber-500"
-                  placeholder="Dán token hoặc đoạn text có chứa AIza..."
+                  placeholder="Dán khóa truy cập hoặc đoạn văn bản có chứa AIza..."
                 />
                 <button
                   onClick={handleSaveManualRelayToken}
                   className="px-5 py-3 rounded-2xl bg-amber-600 text-white font-bold hover:bg-amber-700"
                 >
-                  Lưu token thủ công
+                  Lưu khóa
                 </button>
               </div>
-            </div>
+            </details>
+
             <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 text-xs text-slate-600 space-y-1">
-              <p><Link2 className="inline w-3 h-3 mr-1" /> code từ URL: <b>{parseRelayCodeFromText(relayUrl) || 'chưa có'}</b></p>
-              <p><Zap className="inline w-3 h-3 mr-1" /> long đã match: <b>{relayMatchedLong || 'chưa match'}</b></p>
-              <p><Shield className="inline w-3 h-3 mr-1" /> token relay: <b>{relayMaskedToken}</b></p>
-              <p>Trạng thái: <b>{relayStatus}</b> - {relayStatusText}</p>
+              <p><Link2 className="inline w-3 h-3 mr-1" /> Mã kết nối: <b>{parseRelayCodeFromText(relayUrl) || 'chưa có'}</b></p>
+              <p><Zap className="inline w-3 h-3 mr-1" /> Mã đã nhận diện: <b>{relayMatchedLong || 'chưa có'}</b></p>
+              <p><Shield className="inline w-3 h-3 mr-1" /> Khóa hiện tại: <b>{relayMaskedToken}</b></p>
+              <p>Tiến trình: <b>{relayStatusText}</b></p>
             </div>
           </div>
         )}
 
         <div className="mt-4 border-t border-slate-100 pt-4 space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Nhập Nhanh Từ Nhiều Nguồn</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Nhập Nhanh Thông Tin Kết Nối</p>
           <textarea
             value={quickImportText}
             onChange={(e) => setQuickImportText(e.target.value)}
             className="w-full min-h-24 px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
-            placeholder={`Dán chuỗi bất kỳ: AIza..., sk-..., sk-ant-..., hoặc relay ${RELAY_SOCKET_BASE}1234`}
+            placeholder={`Dán khóa truy cập hoặc đường dẫn kết nối: ${RELAY_SOCKET_BASE}1234`}
           />
           <div className="flex flex-wrap gap-2">
             <button
               onClick={handleQuickImportKeys}
               className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700"
             >
-              Tự nhận dạng & Lưu
+              Tự nhận diện & Lưu
             </button>
             <button
               onClick={async () => {
@@ -1717,19 +1721,19 @@ const ToolsManager = ({
                   const text = await navigator.clipboard.readText();
                   setQuickImportText(text);
                 } catch {
-                  setQuickImportResult('Không đọc được clipboard. Hãy dán thủ công.');
+                  setQuickImportResult('Không đọc được nội dung vừa sao chép. Bạn hãy dán thủ công nhé.');
                 }
               }}
               className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-bold hover:bg-slate-200"
             >
-              Dán từ Clipboard
+              Dán nhanh
             </button>
           </div>
           {quickImportResult ? <p className="text-xs text-slate-600">{quickImportResult}</p> : null}
         </div>
 
         <div className="mt-4 border-t border-slate-100 pt-4 space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tối Ưu Chi Phí / Tốc Độ</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ưu Tiên Tốc Độ Và Chất Lượng</p>
           <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
             <select
               value={aiProfile}
@@ -1740,9 +1744,9 @@ const ToolsManager = ({
               }}
               className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
             >
-              <option value="economy">Economy - ưu tiên nhanh và tiết kiệm token</option>
-              <option value="balanced">Balanced - cân bằng chất lượng/chi phí</option>
-              <option value="quality">Quality - ưu tiên chất lượng cao</option>
+              <option value="economy">Nhanh - phản hồi sớm, phù hợp thao tác thường xuyên</option>
+              <option value="balanced">Cân bằng - hài hòa tốc độ và chất lượng</option>
+              <option value="quality">Chất lượng cao - ưu tiên nội dung chỉn chu</option>
             </select>
             <label className="inline-flex items-center gap-2 px-4 py-3 rounded-2xl border border-slate-200 text-sm font-medium">
               <input
@@ -1753,7 +1757,7 @@ const ToolsManager = ({
                   persistRuntimeConfig({ enableCache: e.target.checked });
                 }}
               />
-              Bật cache kết quả AI
+              Lưu gợi ý để dùng lại nhanh hơn
             </label>
           </div>
         </div>
@@ -1769,7 +1773,7 @@ const ToolsManager = ({
             <h3 className="text-xl font-serif font-bold">Nhập dữ liệu</h3>
           </div>
           <p className="text-slate-500 text-sm mb-8 leading-relaxed">
-            Hỗ trợ nhập truyện từ các định dạng <b>.docx</b>, <b>.txt</b> hoặc khôi phục toàn bộ tiến trình từ file <b>.json</b>.
+            Bạn có thể nhập truyện từ tệp <b>.docx</b>, <b>.txt</b> hoặc khôi phục dữ liệu từ tệp sao lưu.
           </p>
           <label className="block w-full py-4 px-6 bg-slate-900 text-white text-center rounded-2xl font-bold cursor-pointer hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/20">
             {isImporting ? 'Đang xử lý...' : 'Chọn file để nhập'}
@@ -1786,14 +1790,14 @@ const ToolsManager = ({
             <h3 className="text-xl font-serif font-bold">Xuất dữ liệu</h3>
           </div>
           <p className="text-slate-500 text-sm mb-8 leading-relaxed">
-            Xuất toàn bộ truyện và nhân vật của bạn dưới dạng <b>JSON</b> để lưu trữ hoặc chuyển sang thiết bị khác.
+            Lưu toàn bộ truyện và nhân vật về máy để sao lưu hoặc chuyển sang thiết bị khác.
           </p>
           <button 
             onClick={handleExportJSON}
             disabled={isExporting}
             className="w-full py-4 px-6 bg-slate-100 text-slate-900 text-center rounded-2xl font-bold hover:bg-slate-200 transition-all"
           >
-            {isExporting ? 'Đang chuẩn bị...' : 'Tải xuống JSON'}
+            {isExporting ? 'Đang chuẩn bị...' : 'Tải xuống bản sao lưu'}
           </button>
         </div>
       </div>
@@ -1817,7 +1821,7 @@ const ToolsManager = ({
         </div>
         <ul className="text-sm text-slate-500 space-y-2 list-disc pl-5">
           <li>File <b>.docx</b> và <b>.txt</b> sẽ được nhập dưới dạng một truyện mới.</li>
-          <li>File <b>.json</b> phải được xuất từ ứng dụng này để đảm bảo tính tương thích.</li>
+              <li>Hãy dùng tệp sao lưu được tạo từ ứng dụng này để đảm bảo khôi phục đầy đủ.</li>
           <li>Tiến trình nhập có thể mất vài giây tùy thuộc vào dung lượng file.</li>
         </ul>
       </div>
@@ -5229,12 +5233,12 @@ const AppContent = () => {
               <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                   <h3 className="text-xl font-serif font-bold text-slate-900">Bắt đầu nhanh</h3>
-                  <span className="text-xs px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 font-semibold">Phiên bản Relay Base URL</span>
+                  <span className="text-xs px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 font-semibold">Dành cho người mới bắt đầu</span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                   <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
-                    <p className="font-bold text-slate-800 mb-1">1. Thiết lập API</p>
-                    <p className="text-slate-600">Vào <b>Công cụ</b>, nhập key hoặc Relay URL dạng <code>{RELAY_SOCKET_BASE}1234</code>.</p>
+                    <p className="font-bold text-slate-800 mb-1">1. Chuẩn bị trong Công cụ</p>
+                    <p className="text-slate-600">Mở <b>Công cụ</b>, điền thông tin kết nối theo mẫu gợi ý rồi bấm bắt đầu.</p>
                   </div>
                   <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
                     <p className="font-bold text-slate-800 mb-1">2. Chọn workflow AI</p>
