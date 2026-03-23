@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth, AuthProvider } from './AuthContext';
 import { storage } from './storage';
+import { loadPhase1ApiConfig, savePhase1ApiConfig } from './phase1/apiConfig';
 import { db, auth, googleProvider, signInWithPopup } from './firebase';
 import { collection, addDoc, getDocs, query, where, getDocFromServer, doc, Timestamp, updateDoc, orderBy, onSnapshot } from 'firebase/firestore';
 import { 
@@ -62,14 +63,18 @@ type ApiMode = 'manual' | 'relay';
 interface ApiRuntimeConfig {
   mode: ApiMode;
   relayUrl: string;
+  relayCode: string;
   identityHint: string;
   relayMatchedLong: string;
   relayToken: string;
   relayUpdatedAt: string;
+  aiProfile: 'economy' | 'balanced' | 'quality';
+  enableCache: boolean;
 }
 
 const API_RUNTIME_CONFIG_KEY = 'api_runtime_config_v1';
 const RELAY_TOKEN_CACHE_KEY = 'relay_token_cache_v1';
+const GEMINI_RESPONSE_CACHE_KEY = 'gemini_response_cache_v1';
 
 function parseLongIdFromText(input: string): string {
   const value = String(input || '').trim();
@@ -82,12 +87,45 @@ function parseLongIdFromText(input: string): string {
   return m3?.[1] || '';
 }
 
+function parseRelayCodeFromText(input: string): string {
+  const value = String(input || '').trim();
+  if (!value) return '';
+  const c1 = value.match(/[?&]code=(\d{4,8})/i);
+  if (c1?.[1]) return c1[1];
+  const c2 = value.match(/\/code=(\d{4,8})/i);
+  if (c2?.[1]) return c2[1];
+  const asLong = parseLongIdFromText(value);
+  if (/^\d{4,8}$/.test(asLong)) return asLong;
+  return '';
+}
+
+function maskSensitive(value: string, head = 8, tail = 6): string {
+  const v = String(value || '').trim();
+  if (!v) return '';
+  if (v.length <= head + tail + 2) return `${v.slice(0, 3)}...`;
+  return `${v.slice(0, head)}...${v.slice(-tail)}`;
+}
+
 function toWsUrl(url: string): string {
   const u = url.trim();
   if (u.startsWith('wss://') || u.startsWith('ws://')) return u;
   if (u.startsWith('https://')) return `wss://${u.slice('https://'.length)}`;
   if (u.startsWith('http://')) return `ws://${u.slice('http://'.length)}`;
   return `wss://${u.replace(/^\/+/, '')}`;
+}
+
+function buildRelayWsUrl(baseUrl: string, code: string): string {
+  const base = toWsUrl(baseUrl);
+  const cleanCode = code.trim();
+  if (!/^\d{4,8}$/.test(cleanCode)) return base;
+
+  if (base.includes('/code=')) {
+    return base.replace(/\/code=\d*$/i, '/code=').concat(cleanCode);
+  }
+
+  const urlObj = new URL(base);
+  urlObj.searchParams.set('code', cleanCode);
+  return urlObj.toString();
 }
 
 function getApiRuntimeConfig(): ApiRuntimeConfig {
@@ -97,19 +135,25 @@ function getApiRuntimeConfig(): ApiRuntimeConfig {
     return {
       mode: parsed.mode === 'relay' ? 'relay' : 'manual',
       relayUrl: parsed.relayUrl || 'wss://relay2026.vercel.app/',
+      relayCode: parsed.relayCode || '',
       identityHint: parsed.identityHint || '',
       relayMatchedLong: parsed.relayMatchedLong || '',
       relayToken: parsed.relayToken || '',
       relayUpdatedAt: parsed.relayUpdatedAt || '',
+      aiProfile: parsed.aiProfile === 'economy' || parsed.aiProfile === 'quality' ? parsed.aiProfile : 'balanced',
+      enableCache: parsed.enableCache !== false,
     };
   } catch {
     return {
       mode: 'manual',
       relayUrl: 'wss://relay2026.vercel.app/',
+      relayCode: '',
       identityHint: '',
       relayMatchedLong: '',
       relayToken: '',
       relayUpdatedAt: '',
+      aiProfile: 'balanced',
+      enableCache: true,
     };
   }
 }
@@ -151,6 +195,73 @@ function extractRelayPayload(rawMessage: string): { longId: string; token: strin
   }
 
   return { longId, token };
+}
+
+function getProfileModel(kind: 'fast' | 'quality'): string {
+  const profile = getApiRuntimeConfig().aiProfile;
+  if (profile === 'economy') return 'gemini-2.0-flash';
+  if (profile === 'quality') return kind === 'fast' ? 'gemini-2.0-flash' : 'gemini-3.1-pro-preview';
+  return kind === 'fast' ? 'gemini-2.0-flash' : 'gemini-2.5-flash';
+}
+
+function readGeminiCache(): Record<string, { text: string; ts: number }> {
+  try {
+    const raw = localStorage.getItem(GEMINI_RESPONSE_CACHE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, { text: string; ts: number }>) : {};
+    return parsed || {};
+  } catch {
+    return {};
+  }
+}
+
+function writeGeminiCache(cache: Record<string, { text: string; ts: number }>): void {
+  localStorage.setItem(GEMINI_RESPONSE_CACHE_KEY, JSON.stringify(cache));
+}
+
+function quickHash(input: string): string {
+  let h = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    h = (h << 5) - h + input.charCodeAt(i);
+    h |= 0;
+  }
+  return `${h}`;
+}
+
+async function generateGeminiText(
+  ai: GoogleGenAI,
+  kind: 'fast' | 'quality',
+  contents: string,
+  config?: Record<string, unknown>,
+): Promise<string> {
+  const runtime = getApiRuntimeConfig();
+  const model = getProfileModel(kind);
+  const reqFingerprint = quickHash(JSON.stringify({ model, contents, config: config || {} }));
+  const cacheKey = `v1:${reqFingerprint}`;
+
+  if (runtime.enableCache) {
+    const cache = readGeminiCache();
+    const cached = cache[cacheKey];
+    const maxAgeMs = 6 * 60 * 60 * 1000;
+    if (cached && Date.now() - cached.ts < maxAgeMs) {
+      return cached.text;
+    }
+  }
+
+  const response = await ai.models.generateContent({
+    model,
+    contents,
+    config,
+  });
+  const text = response.text || '';
+
+  if (runtime.enableCache && text) {
+    const cache = readGeminiCache();
+    cache[cacheKey] = { text, ts: Date.now() };
+    const entries = Object.entries(cache).sort((a, b) => b[1].ts - a[1].ts).slice(0, 120);
+    writeGeminiCache(Object.fromEntries(entries));
+  }
+
+  return text;
 }
 
 function getConfiguredGeminiApiKey(): string {
@@ -801,12 +912,20 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
   const [maskedGeminiKey, setMaskedGeminiKey] = useState('');
   const [apiMode, setApiMode] = useState<ApiMode>('manual');
   const [relayUrl, setRelayUrl] = useState('wss://relay2026.vercel.app/');
+  const [relayCode, setRelayCode] = useState('');
   const [relayIdentityHint, setRelayIdentityHint] = useState('');
   const [relayMatchedLong, setRelayMatchedLong] = useState('');
   const [relayMaskedToken, setRelayMaskedToken] = useState('Chưa nhận token');
   const [relayStatus, setRelayStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
   const [relayStatusText, setRelayStatusText] = useState('Chưa kết nối');
+  const [quickImportText, setQuickImportText] = useState('');
+  const [quickImportResult, setQuickImportResult] = useState('');
+  const [aiProfile, setAiProfile] = useState<'economy' | 'balanced' | 'quality'>('balanced');
+  const [enablePromptCache, setEnablePromptCache] = useState(true);
   const relaySocketRef = useRef<WebSocket | null>(null);
+  const relayPingRef = useRef<number | null>(null);
+  const relayReconnectRef = useRef<number | null>(null);
+  const relayShouldReconnectRef = useRef(false);
 
   useEffect(() => {
     const keys = storage.getApiKeys() as Array<{ key?: string; isActive?: boolean }>;
@@ -822,10 +941,13 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
     const runtime = getApiRuntimeConfig();
     setApiMode(runtime.mode);
     setRelayUrl(runtime.relayUrl);
+    setRelayCode(runtime.relayCode);
     setRelayIdentityHint(runtime.identityHint);
     setRelayMatchedLong(runtime.relayMatchedLong);
+    setAiProfile(runtime.aiProfile);
+    setEnablePromptCache(runtime.enableCache);
     const token = (localStorage.getItem(RELAY_TOKEN_CACHE_KEY) || runtime.relayToken || '').trim();
-    setRelayMaskedToken(token ? `${token.slice(0, 8)}...${token.slice(-6)}` : 'Chưa nhận token');
+    setRelayMaskedToken(token ? maskSensitive(token) : 'Chưa nhận token');
   }, []);
 
   useEffect(() => {
@@ -833,6 +955,14 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
       if (relaySocketRef.current) {
         relaySocketRef.current.close();
         relaySocketRef.current = null;
+      }
+      if (relayPingRef.current) {
+        window.clearInterval(relayPingRef.current);
+        relayPingRef.current = null;
+      }
+      if (relayReconnectRef.current) {
+        window.clearTimeout(relayReconnectRef.current);
+        relayReconnectRef.current = null;
       }
     };
   }, []);
@@ -868,14 +998,83 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
     alert('Đã lưu Gemini API key.');
   };
 
+  const handleQuickImportKeys = () => {
+    const text = quickImportText.trim();
+    if (!text) return;
+
+    const gemini = text.match(/AIza[0-9A-Za-z\-_]{20,}/g) || [];
+    const openai = text.match(/sk-[A-Za-z0-9_\-]{20,}/g) || [];
+    const anthropic = text.match(/sk-ant-[A-Za-z0-9_\-]{20,}/g) || [];
+    const relayDetectedCode = parseRelayCodeFromText(text);
+    const relayDetectedLong = parseLongIdFromText(text);
+    let updates = 0;
+
+    if (gemini[0]) {
+      const key = gemini[0];
+      const existing = storage.getApiKeys() as Array<{ id?: string; key?: string; name?: string; isActive?: boolean }>;
+      const updated = [
+        {
+          id: `api-${Date.now()}`,
+          key,
+          name: 'Gemini Quick Import',
+          isActive: true,
+          usage: { requests: 0, tokens: 0, limit: 1500 },
+        },
+        ...existing.map((k) => ({ ...k, isActive: false })),
+      ];
+      storage.saveApiKeys(updated);
+      setMaskedGeminiKey(maskSensitive(key, 6, 4));
+      updates += 1;
+    }
+
+    if (openai[0] || anthropic[0]) {
+      const cfg = loadPhase1ApiConfig();
+      savePhase1ApiConfig({
+        ...cfg,
+        openaiKey: openai[0] || cfg.openaiKey,
+        anthropicKey: anthropic[0] || cfg.anthropicKey,
+      });
+      updates += 1;
+    }
+
+    if (relayDetectedCode || relayDetectedLong) {
+      const nextCode = relayDetectedCode || relayDetectedLong;
+      setRelayCode(nextCode);
+      setRelayIdentityHint(text);
+      persistRuntimeConfig({
+        relayCode: nextCode,
+        identityHint: text,
+      });
+      updates += 1;
+    }
+
+    if (updates === 0) {
+      setQuickImportResult('Không phát hiện được key/mã hợp lệ. Gợi ý: dán chuỗi chứa AIza..., sk-..., sk-ant-..., hoặc code=1234.');
+    } else {
+      setQuickImportResult(`Đã nhận ${updates} nguồn cấu hình.`);
+      setQuickImportText('');
+    }
+  };
+
   const handleConnectRelay = () => {
-    const wsTarget = toWsUrl(relayUrl);
+    const inferredCode = relayCode.trim() || parseRelayCodeFromText(relayIdentityHint);
+    if (!/^\d{4,8}$/.test(inferredCode)) {
+      setRelayStatus('error');
+      setRelayStatusText('Relay code không hợp lệ. Mã phải gồm 4-8 chữ số.');
+      return;
+    }
+    const wsTarget = buildRelayWsUrl(relayUrl, inferredCode);
     const longFromInput = parseLongIdFromText(relayIdentityHint);
+    relayShouldReconnectRef.current = true;
 
     try {
       if (relaySocketRef.current) {
         relaySocketRef.current.close();
         relaySocketRef.current = null;
+      }
+      if (relayPingRef.current) {
+        window.clearInterval(relayPingRef.current);
+        relayPingRef.current = null;
       }
       setRelayStatus('connecting');
       setRelayStatusText('Đang kết nối websocket...');
@@ -889,11 +1088,21 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
         persistRuntimeConfig({
           mode: 'relay',
           relayUrl: wsTarget,
+          relayCode: inferredCode,
           identityHint: relayIdentityHint,
+          aiProfile,
+          enableCache: enablePromptCache,
         });
+        setRelayCode(inferredCode);
         if (longFromInput) {
           ws.send(JSON.stringify({ type: 'subscribe', long: longFromInput }));
         }
+        ws.send(JSON.stringify({ type: 'ping' }));
+        relayPingRef.current = window.setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 15000);
       };
 
       ws.onmessage = (event) => {
@@ -906,15 +1115,18 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
           if (!token) return;
           localStorage.setItem(RELAY_TOKEN_CACHE_KEY, token);
           setRelayMatchedLong(payload.longId || expectedLong);
-          setRelayMaskedToken(`${token.slice(0, 8)}...${token.slice(-6)}`);
+          setRelayMaskedToken(maskSensitive(token));
           setRelayStatusText(`Nhận token thành công (long=${payload.longId || expectedLong || 'n/a'})`);
           persistRuntimeConfig({
             mode: 'relay',
             relayUrl: wsTarget,
+            relayCode: inferredCode,
             identityHint: relayIdentityHint,
             relayMatchedLong: payload.longId || expectedLong,
             relayToken: token,
             relayUpdatedAt: new Date().toISOString(),
+            aiProfile,
+            enableCache: enablePromptCache,
           });
           return;
         }
@@ -930,8 +1142,20 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
       };
 
       ws.onclose = () => {
+        if (relayPingRef.current) {
+          window.clearInterval(relayPingRef.current);
+          relayPingRef.current = null;
+        }
         setRelayStatus('disconnected');
         setRelayStatusText('Đã ngắt kết nối');
+        if (relayShouldReconnectRef.current) {
+          if (relayReconnectRef.current) {
+            window.clearTimeout(relayReconnectRef.current);
+          }
+          relayReconnectRef.current = window.setTimeout(() => {
+            handleConnectRelay();
+          }, 5000);
+        }
       };
     } catch (error) {
       setRelayStatus('error');
@@ -940,6 +1164,15 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
   };
 
   const handleDisconnectRelay = () => {
+    relayShouldReconnectRef.current = false;
+    if (relayReconnectRef.current) {
+      window.clearTimeout(relayReconnectRef.current);
+      relayReconnectRef.current = null;
+    }
+    if (relayPingRef.current) {
+      window.clearInterval(relayPingRef.current);
+      relayPingRef.current = null;
+    }
     if (relaySocketRef.current) {
       relaySocketRef.current.close();
       relaySocketRef.current = null;
@@ -1186,7 +1419,7 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
             <p className="text-xs text-slate-500">
               Dán mã nhận dạng (ví dụ: <b>abcxyz.com/long=123</b>). Khi relay gửi token có <b>long=123</b> trùng, hệ thống sẽ tự nhận token.
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <input
                 type="text"
                 value={relayUrl}
@@ -1197,6 +1430,18 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
                 className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
                 placeholder="wss://relay2026.vercel.app/"
               />
+              <input
+                type="text"
+                value={relayCode}
+                onChange={(e) => {
+                  setRelayCode(e.target.value.replace(/\D/g, '').slice(0, 8));
+                  persistRuntimeConfig({ relayCode: e.target.value.replace(/\D/g, '').slice(0, 8) });
+                }}
+                className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+                placeholder="Relay code (4-8 số)"
+              />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
               <button
                 onClick={relayStatus === 'connected' ? handleDisconnectRelay : handleConnectRelay}
                 className={`px-6 py-3 rounded-2xl text-white font-bold ${relayStatus === 'connected' ? 'bg-slate-700 hover:bg-slate-800' : 'bg-indigo-600 hover:bg-indigo-700'}`}
@@ -1222,10 +1467,73 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
               <p><Link2 className="inline w-3 h-3 mr-1" /> long từ mã local: <b>{parseLongIdFromText(relayIdentityHint) || 'chưa có'}</b></p>
               <p><Zap className="inline w-3 h-3 mr-1" /> long đã match: <b>{relayMatchedLong || 'chưa match'}</b></p>
               <p><Shield className="inline w-3 h-3 mr-1" /> token relay: <b>{relayMaskedToken}</b></p>
+              <p>Relay code: <b>{relayCode || parseRelayCodeFromText(relayIdentityHint) || 'chưa có'}</b></p>
               <p>Trạng thái: <b>{relayStatus}</b> - {relayStatusText}</p>
             </div>
           </div>
         )}
+
+        <div className="mt-4 border-t border-slate-100 pt-4 space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Nhập Nhanh Từ Nhiều Nguồn</p>
+          <textarea
+            value={quickImportText}
+            onChange={(e) => setQuickImportText(e.target.value)}
+            className="w-full min-h-24 px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
+            placeholder="Dán chuỗi bất kỳ: AIza..., sk-..., sk-ant-..., URL có code=1234 hoặc long=123"
+          />
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={handleQuickImportKeys}
+              className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700"
+            >
+              Tự nhận dạng & Lưu
+            </button>
+            <button
+              onClick={async () => {
+                try {
+                  const text = await navigator.clipboard.readText();
+                  setQuickImportText(text);
+                } catch {
+                  setQuickImportResult('Không đọc được clipboard. Hãy dán thủ công.');
+                }
+              }}
+              className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-bold hover:bg-slate-200"
+            >
+              Dán từ Clipboard
+            </button>
+          </div>
+          {quickImportResult ? <p className="text-xs text-slate-600">{quickImportResult}</p> : null}
+        </div>
+
+        <div className="mt-4 border-t border-slate-100 pt-4 space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tối Ưu Chi Phí / Tốc Độ</p>
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
+            <select
+              value={aiProfile}
+              onChange={(e) => {
+                const next = e.target.value as 'economy' | 'balanced' | 'quality';
+                setAiProfile(next);
+                persistRuntimeConfig({ aiProfile: next });
+              }}
+              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="economy">Economy - ưu tiên nhanh và tiết kiệm token</option>
+              <option value="balanced">Balanced - cân bằng chất lượng/chi phí</option>
+              <option value="quality">Quality - ưu tiên chất lượng cao</option>
+            </select>
+            <label className="inline-flex items-center gap-2 px-4 py-3 rounded-2xl border border-slate-200 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={enablePromptCache}
+                onChange={(e) => {
+                  setEnablePromptCache(e.target.checked);
+                  persistRuntimeConfig({ enableCache: e.target.checked });
+                }}
+              />
+              Bật cache kết quả AI
+            </label>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -1630,9 +1938,10 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
     setIsSuggesting(true);
     try {
       const ai = createGeminiClient();
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `Dựa trên các thông tin sau:
+      const suggestionText = await generateGeminiText(
+        ai,
+        'fast',
+        `Dựa trên các thông tin sau:
         Tiêu đề: ${title}
         Thể loại: ${genre}
         Giới thiệu: ${introduction}
@@ -1646,10 +1955,10 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
         6. Các yếu tố đặc sắc khác.
         
         Trả về kết quả dưới dạng Markdown chuyên nghiệp, rõ ràng.`,
-      });
+      );
 
-      if (response.text) {
-        setContent(prev => prev ? prev + "\n\n" + response.text : response.text);
+      if (suggestionText) {
+        setContent(prev => prev ? prev + "\n\n" + suggestionText : suggestionText);
       }
     } catch (error) {
       console.error("Suggestion failed", error);
@@ -3224,25 +3533,26 @@ const AIGenerationModal = ({
     setIsGeneratingScript(true);
     try {
       const ai = createGeminiClient();
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `Dựa trên dàn ý sau, hãy xây dựng một kịch bản chi tiết cho chương này. 
+      const scriptText = await generateGeminiText(
+        ai,
+        'fast',
+        `Dựa trên dàn ý sau, hãy xây dựng một kịch bản chi tiết cho chương này. 
         Kịch bản nên bao gồm các cảnh chính, diễn biến tâm lý và các điểm mấu chốt.
         
         Dàn ý: ${outline}
         Chỉ dẫn thêm: ${aiInstructions}
         
         Trả về kịch bản dưới dạng văn bản Markdown.`,
-        config: {
+        {
           safetySettings: [
             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
           ]
-        }
-      });
-      setChapterScript(response.text || '');
+        },
+      );
+      setChapterScript(scriptText || '');
     } catch (error) {
       console.error("Script generation failed", error);
       alert("Không thể tạo kịch bản.");
@@ -3255,24 +3565,25 @@ const AIGenerationModal = ({
     setIsSuggestingOutline(true);
     try {
       const ai = createGeminiClient();
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `Dựa trên nội dung chương trước, hãy gợi ý một dàn ý ngắn gọn cho chương tiếp theo.
+      const outlineText = await generateGeminiText(
+        ai,
+        'fast',
+        `Dựa trên nội dung chương trước, hãy gợi ý một dàn ý ngắn gọn cho chương tiếp theo.
         
         Nội dung chương trước: ${previousContext || "Đây là chương đầu tiên."}
         Chỉ dẫn thêm: ${aiInstructions}
         
         Trả về dàn ý dưới dạng danh sách gạch đầu dòng ngắn gọn.`,
-        config: {
+        {
           safetySettings: [
             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
           ]
-        }
-      });
-      setOutline(response.text || '');
+        },
+      );
+      setOutline(outlineText || '');
     } catch (error) {
       console.error("Outline suggestion failed", error);
       alert("Không thể gợi ý dàn ý.");
@@ -3836,13 +4147,14 @@ const AppContent = () => {
         }
       `;
 
-      const analysisResponse = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: analysisPrompt,
-        config: { responseMimeType: "application/json" }
-      });
+      const analysisTextRaw = await generateGeminiText(
+        ai,
+        'quality',
+        analysisPrompt,
+        { responseMimeType: "application/json" },
+      );
 
-      const analysis = JSON.parse(analysisResponse.text || '{}');
+      const analysis = JSON.parse(analysisTextRaw || '{}');
       
       // 2. Create the story record
       const storyRef = await addDoc(collection(db, 'stories'), {
@@ -3892,10 +4204,11 @@ const AppContent = () => {
           }
         `;
 
-        const translateResponse = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
-          contents: translatePrompt,
-          config: { 
+        const translateTextRaw = await generateGeminiText(
+          ai,
+          'quality',
+          translatePrompt,
+          { 
             responseMimeType: "application/json",
             safetySettings: [
               { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -3903,10 +4216,10 @@ const AppContent = () => {
               { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
               { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
             ]
-          }
-        });
+          },
+        );
 
-        const translated = JSON.parse(translateResponse.text || '{}');
+        const translated = JSON.parse(translateTextRaw || '{}');
         translatedChapters.push({
           id: `tr-${Date.now()}-${i}`,
           title: String(translated.title || `Chương ${i + 1}`),
@@ -3997,13 +4310,12 @@ const AppContent = () => {
         }
       `;
 
-      const analysisResponse = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: analysisPrompt,
-        config: { responseMimeType: "application/json" }
-      });
-
-      const analysisText = analysisResponse.text || '{}';
+      const analysisText = await generateGeminiText(
+        ai,
+        'quality',
+        analysisPrompt,
+        { responseMimeType: "application/json" },
+      ) || '{}';
       const analysisMatch = analysisText.match(/\{[\s\S]*\}/);
       const analysis = JSON.parse(analysisMatch ? analysisMatch[0] : analysisText);
       setAILoadingMessage("Đang lập kế hoạch các chương tiếp theo...");
@@ -4024,13 +4336,12 @@ const AppContent = () => {
         }
       `;
 
-      const planResponse = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: planPrompt,
-        config: { responseMimeType: "application/json" }
-      });
-
-      const planText = planResponse.text || '{}';
+      const planText = await generateGeminiText(
+        ai,
+        'quality',
+        planPrompt,
+        { responseMimeType: "application/json" },
+      ) || '{}';
       const planMatch = planText.match(/\{[\s\S]*\}/);
       const plan = JSON.parse(planMatch ? planMatch[0] : planText);
       
@@ -4072,23 +4383,24 @@ const AppContent = () => {
           - Không tóm tắt, hãy viết chi tiết các hành động và lời thoại.
         `;
 
-        const chapterResponse = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
-          contents: chapterPrompt,
-          config: {
+        const chapterText = await generateGeminiText(
+          ai,
+          'quality',
+          chapterPrompt,
+          {
             safetySettings: [
               { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
               { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
               { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
               { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
             ]
-          }
-        });
+          },
+        );
 
         generatedChapters.push({
           id: `ch-${Date.now()}-${i}`,
           title: ch.title,
-          content: chapterResponse.text || '',
+          content: chapterText || '',
           order: i + 1,
           createdAt: Timestamp.now()
         });
@@ -4214,9 +4526,10 @@ const AppContent = () => {
         ? "AI TỰ DỰ ĐOÁN: Dựa trên dàn ý và nội dung THỰC TẾ của các chương trước (được cung cấp trong phần BỐI CẢNH THỰC TẾ), hãy tự sáng tạo và dự đoán các tình tiết tiếp theo một cách logic. LƯU Ý: Tuyệt đối không lặp lại các tình tiết đã xảy ra, hãy tập trung vào diễn biến MỚI."
         : "BÁM SÁT DÀN Ý: Hãy viết chính xác theo các tình tiết đã được cung cấp trong dàn ý, không tự ý thay đổi mạch truyện chính.";
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: `Bạn là một nhà văn chuyên nghiệp, nổi tiếng với khả năng viết lách chi tiết, giàu hình ảnh và cảm xúc. 
+      const generatedChapterBatchText = await generateGeminiText(
+        ai,
+        'quality',
+        `Bạn là một nhà văn chuyên nghiệp, nổi tiếng với khả năng viết lách chi tiết, giàu hình ảnh và cảm xúc. 
         Dựa trên dàn ý và bối cảnh được cung cấp, hãy viết tiếp ${chapterCount} chương MỚI cho câu chuyện. 
         
         ${adultContentInstruction}
@@ -4264,7 +4577,7 @@ const AppContent = () => {
         
         Trả về kết quả dưới dạng JSON array các chương: [ { "title": "Chương x: ...", "content": "..." }, ... ]
         Nội dung nên được định dạng Markdown.`,
-        config: {
+        {
           responseMimeType: "application/json",
           maxOutputTokens: 8192,
           safetySettings: [
@@ -4273,10 +4586,10 @@ const AppContent = () => {
             { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
           ]
-        }
-      });
+        },
+      );
 
-      const textResponse = response.text || '[]';
+      const textResponse = generatedChapterBatchText || '[]';
       const jsonMatch = textResponse.match(/\[[\s\S]*\]/);
       const newChaptersData = JSON.parse(jsonMatch ? jsonMatch[0] : textResponse);
 
@@ -4415,9 +4728,10 @@ const AppContent = () => {
         mystery: "Bí ẩn, hồi hộp"
       }[tone as keyof typeof toneDesc] || tone);
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: `Bạn là một biên tập viên văn học và nhà văn chuyên nghiệp. Hãy đọc nội dung sau đây (có thể là dàn ý, nháp hoặc dữ liệu thô) và chuyển nó thành một câu chuyện có cấu trúc hoàn chỉnh, giàu chi tiết và hấp dẫn.
+      const aiStoryText = await generateGeminiText(
+        ai,
+        'quality',
+        `Bạn là một biên tập viên văn học và nhà văn chuyên nghiệp. Hãy đọc nội dung sau đây (có thể là dàn ý, nháp hoặc dữ liệu thô) và chuyển nó thành một câu chuyện có cấu trúc hoàn chỉnh, giàu chi tiết và hấp dẫn.
         
         THÔNG TIN YÊU CẦU:
         - Thể loại: ${genre || 'Tự do'}
@@ -4442,7 +4756,7 @@ const AppContent = () => {
         
         Nội dung gốc:
         ${content}`,
-        config: {
+        {
           responseMimeType: "application/json",
           maxOutputTokens: 8192,
           safetySettings: [
@@ -4451,10 +4765,10 @@ const AppContent = () => {
             { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
           ]
-        }
-      });
+        },
+      );
 
-      const textResponse = response.text || '{}';
+      const textResponse = aiStoryText || '{}';
       const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
       const result = JSON.parse(jsonMatch ? jsonMatch[0] : textResponse);
       
