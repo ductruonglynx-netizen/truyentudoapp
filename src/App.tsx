@@ -5854,6 +5854,11 @@ const AppContent = () => {
           setEditingStory(null);
           setIsCreating(false);
         }}
+        onCreateStory={() => {
+          setSelectedStory(null);
+          setEditingStory(null);
+          setIsCreating(true);
+        }}
         themeMode={themeMode}
         onToggleTheme={handleToggleTheme}
         profile={profile}
@@ -5911,44 +5916,9 @@ const AppContent = () => {
               <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
                 <div>
                   <h2 className="text-5xl font-serif font-bold text-slate-900 mb-4 tracking-tight">Thư viện</h2>
-                  <div className="flex flex-wrap gap-2">
-                    <button 
-                      onClick={() => setView('stories')}
-                      className={cn(
-                        "flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all",
-                        view === 'stories' ? "bg-slate-900 text-white shadow-lg shadow-slate-900/20" : "bg-white border border-slate-200 text-slate-500 hover:border-slate-300"
-                      )}
-                    >
-                      <BookOpen className="w-4 h-4" /> Truyện
-                    </button>
-                    <button 
-                      onClick={() => setView('characters')}
-                      className={cn(
-                        "flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all",
-                        (view as string) === 'characters' ? "bg-slate-900 text-white shadow-lg shadow-slate-900/20" : "bg-white border border-slate-200 text-slate-500 hover:border-slate-300"
-                      )}
-                    >
-                      <Users className="w-4 h-4" /> Nhân vật
-                    </button>
-                    <button 
-                      onClick={() => setView('api')}
-                      className={cn(
-                        "flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all",
-                        (view as string) === 'api' ? "bg-slate-900 text-white shadow-lg shadow-slate-900/20" : "bg-white border border-slate-200 text-slate-500 hover:border-emerald-300"
-                      )}
-                    >
-                      <Zap className="w-4 h-4" /> API
-                    </button>
-                    <button 
-                      onClick={() => setView('tools')}
-                      className={cn(
-                        "flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all",
-                        (view as string) === 'tools' ? "bg-slate-900 text-white shadow-lg shadow-slate-900/20" : "bg-white border border-slate-200 text-slate-500 hover:border-stone-300"
-                      )}
-                    >
-                      <Settings className="w-4 h-4" /> Công cụ
-                    </button>
-                  </div>
+                  <p className="max-w-xl text-sm md:text-base text-slate-600">
+                    Điều hướng chính nằm trên thanh đầu trang. Dùng thanh tác vụ nhanh ở góc trái để mở ngay Trang chủ, Nhân vật, API hoặc Công cụ.
+                  </p>
                 </div>
                 <div className="flex flex-wrap gap-4">
                   <button 
