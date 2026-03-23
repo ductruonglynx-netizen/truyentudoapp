@@ -153,6 +153,22 @@ function buildRelaySocketUrl(code: string): string {
   return `${RELAY_SOCKET_BASE}${clean}`;
 }
 
+function buildRelayConnectUrl(rawInput: string, code: string): string {
+  const cleanCode = String(code || '').trim();
+  if (!cleanCode) return toWsUrl(rawInput || RELAY_SOCKET_BASE);
+  const raw = toWsUrl(rawInput || RELAY_SOCKET_BASE);
+  if (/relay2026\.vercel\.app/i.test(raw)) {
+    return `wss://relay2026.vercel.app/?code=${cleanCode}`;
+  }
+  try {
+    const url = new URL(raw);
+    url.searchParams.set('code', cleanCode);
+    return url.toString();
+  } catch {
+    return `wss://relay2026.vercel.app/?code=${cleanCode}`;
+  }
+}
+
 function maskSensitive(value: string, head = 8, tail = 6): string {
   const v = String(value || '').trim();
   if (!v) return '';
@@ -200,9 +216,10 @@ function saveApiRuntimeConfig(config: ApiRuntimeConfig): void {
   localStorage.setItem(API_RUNTIME_CONFIG_KEY, JSON.stringify(config));
 }
 
-function extractRelayPayload(rawMessage: string): { longId: string; token: string } {
+function extractRelayPayload(rawMessage: string): { longId: string; codeId: string; token: string } {
   const text = String(rawMessage || '').trim();
   let longId = parseLongIdFromText(text);
+  let codeId = parseRelayCodeFromText(text);
   let token = '';
 
   const possibleToken = text.match(/AIza[0-9A-Za-z\-_]{20,}/);
@@ -220,7 +237,16 @@ function extractRelayPayload(rawMessage: string): { longId: string; token: strin
         break;
       }
     }
-    const tokenCandidates = [parsed.token, parsed.apiKey, parsed.geminiKey, parsed.accessToken];
+    const codeCandidates = [parsed.code, parsed.channel, parsed.sessionCode, parsed.url];
+    for (const c of codeCandidates) {
+      const extracted = parseRelayCodeFromText(String(c || ''));
+      if (extracted) {
+        codeId = extracted;
+        break;
+      }
+    }
+    const nested = (parsed.data && typeof parsed.data === 'object') ? (parsed.data as Record<string, unknown>) : {};
+    const tokenCandidates = [parsed.token, parsed.apiKey, parsed.geminiKey, parsed.accessToken, nested.token, nested.apiKey, nested.accessToken];
     for (const t of tokenCandidates) {
       const value = String(t || '').trim();
       if (value) {
@@ -232,7 +258,7 @@ function extractRelayPayload(rawMessage: string): { longId: string; token: strin
     // Non-JSON payload is allowed.
   }
 
-  return { longId, token };
+  return { longId, codeId, token };
 }
 
 function getProfileModel(kind: 'fast' | 'quality'): string {
@@ -990,10 +1016,10 @@ const ToolsManager = ({
       setRelayStatusText('Base URL phải đúng dạng wss://relay2026.vercel.app/code=1234 (code 4-8 số).');
       return;
     }
-    const wsTarget = buildRelaySocketUrl(inferredCode);
+    const wsTarget = buildRelayConnectUrl(relayUrl, inferredCode);
     const longFromInput = parseLongIdFromText(relayUrl);
     relayShouldReconnectRef.current = true;
-    setRelayUrl(wsTarget);
+    setRelayUrl(buildRelaySocketUrl(inferredCode));
 
     try {
       if (relaySocketRef.current) {
@@ -1012,17 +1038,16 @@ const ToolsManager = ({
 
       ws.onopen = () => {
         setRelayStatus('connected');
-        setRelayStatusText('Đã kết nối, đang chờ token...');
+        setRelayStatusText('Đã kết nối proxy relay, đang chờ token...');
         persistRuntimeConfig({
           mode: 'relay',
-          relayUrl: wsTarget,
+          relayUrl: buildRelaySocketUrl(inferredCode),
           identityHint: relayUrl,
           aiProfile,
           enableCache: enablePromptCache,
         });
-        if (longFromInput) {
-          ws.send(JSON.stringify({ type: 'subscribe', long: longFromInput }));
-        }
+        ws.send(JSON.stringify({ type: 'subscribe', code: inferredCode, long: longFromInput || inferredCode }));
+        ws.send(JSON.stringify({ type: 'auth', code: inferredCode }));
         ws.send(JSON.stringify({ type: 'ping' }));
         relayPingRef.current = window.setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
@@ -1034,18 +1059,21 @@ const ToolsManager = ({
       ws.onmessage = (event) => {
         const payload = extractRelayPayload(String(event.data || ''));
         const expectedLong = parseLongIdFromText(relayUrl);
-        const isMatch = expectedLong ? payload.longId === expectedLong : Boolean(payload.longId);
+        const expectedCode = parseRelayCodeFromText(relayUrl);
+        const isCodeMatch = expectedCode ? payload.codeId === expectedCode || payload.longId === expectedCode : true;
+        const isLongMatch = expectedLong ? payload.longId === expectedLong : true;
+        const isMatch = isCodeMatch && isLongMatch;
 
-        if (payload.token && (isMatch || !expectedLong)) {
+        if (payload.token && isMatch) {
           const token = payload.token.trim();
           if (!token) return;
           localStorage.setItem(RELAY_TOKEN_CACHE_KEY, token);
           setRelayMatchedLong(payload.longId || expectedLong);
           setRelayMaskedToken(maskSensitive(token));
-          setRelayStatusText(`Nhận token thành công (long=${payload.longId || expectedLong || 'n/a'})`);
+          setRelayStatusText(`Nhận token thành công (code=${payload.codeId || expectedCode || 'n/a'})`);
           persistRuntimeConfig({
             mode: 'relay',
-            relayUrl: wsTarget,
+            relayUrl: buildRelaySocketUrl(expectedCode || inferredCode),
             identityHint: relayUrl,
             relayMatchedLong: payload.longId || expectedLong,
             relayToken: token,
@@ -1056,6 +1084,10 @@ const ToolsManager = ({
           return;
         }
 
+        if (expectedCode && payload.codeId && payload.codeId !== expectedCode) {
+          setRelayStatusText(`Đã nhận code=${payload.codeId} nhưng không khớp code=${expectedCode}`);
+          return;
+        }
         if (expectedLong && payload.longId && payload.longId !== expectedLong) {
           setRelayStatusText(`Đã nhận long=${payload.longId} nhưng không khớp long=${expectedLong}`);
         }
@@ -1489,6 +1521,9 @@ const ToolsManager = ({
         <div className="space-y-3">
             <p className="text-xs text-slate-500">
               Dùng đúng định dạng relay socket: <b>wss://relay2026.vercel.app/code=1234</b> (code 4-8 số). Hệ thống sẽ tự đọc code và chờ token từ proxy app.
+            </p>
+            <p className="text-[11px] text-amber-600">
+              Mẹo: relay server thực tế dùng chuẩn <b>?code=</b>, app sẽ tự chuyển đổi nội bộ khi kết nối nên bạn vẫn nhập <b>/code=</b> bình thường.
             </p>
             <div className="grid grid-cols-1 gap-3">
               <input
