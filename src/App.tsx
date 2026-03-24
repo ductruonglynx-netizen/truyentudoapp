@@ -4715,6 +4715,12 @@ const AppContent = () => {
     setViewportMode((prev) => (prev === 'desktop' ? 'mobile' : 'desktop'));
   };
 
+  const isFirestorePermissionError = (err: unknown): boolean => {
+    const message = err instanceof Error ? err.message : String(err || '');
+    const code = (err as { code?: string })?.code;
+    return code === 'permission-denied' || message.includes('Missing or insufficient permissions');
+  };
+
   const handleTranslateStory = async (options: {
     isAdult: boolean,
     additionalInstructions: string,
@@ -4731,12 +4737,24 @@ const AppContent = () => {
       
       let dictionaryContext = "";
       if (options.useDictionary) {
-        const q = query(collection(db, 'translation_names'), where('authorId', '==', user.uid));
-        const namesSnapshot = await getDocs(q);
-        const names = namesSnapshot.docs.map(doc => doc.data());
-        if (names.length > 0) {
-          dictionaryContext = "SỬ DỤNG TỪ ĐIỂN TÊN RIÊNG SAU ĐÂY (Ưu tiên tuyệt đối):\n" + 
-            names.map(n => `- ${n.original} -> ${n.translation}`).join('\n');
+        try {
+          const q = query(collection(db, 'translation_names'), where('authorId', '==', user.uid));
+          const namesSnapshot = await getDocs(q);
+          const names = namesSnapshot.docs.map(doc => doc.data());
+          if (names.length > 0) {
+            dictionaryContext = "SỬ DỤNG TỪ ĐIỂN TÊN RIÊNG SAU ĐÂY (Ưu tiên tuyệt đối):\n" +
+              names.map(n => `- ${n.original} -> ${n.translation}`).join('\n');
+          }
+        } catch (err) {
+          if (isFirestorePermissionError(err)) {
+            const names = storage.getTranslationNames();
+            if (names.length > 0) {
+              dictionaryContext = "SỬ DỤNG TỪ ĐIỂN TÊN RIÊNG SAU ĐÂY (Ưu tiên tuyệt đối):\n" +
+                names.map((n: { original: string; translation: string }) => `- ${n.original} -> ${n.translation}`).join('\n');
+            }
+          } else {
+            console.warn("Không thể tải từ điển tên riêng", err);
+          }
         }
       }
 
@@ -4769,19 +4787,28 @@ const AppContent = () => {
       const analysis = JSON.parse(analysisTextRaw || '{}');
       
       // 2. Create the story record
-      const storyRef = await addDoc(collection(db, 'stories'), {
-        authorId: user.uid,
-        title: String(translateFileName || "Truyện dịch").replace(/\.[^/.]+$/, "").substring(0, 480) + " (Bản dịch)",
-        content: String(translateFileContent || "").substring(0, 5000) + "...",
-        introduction: String(analysis.summary || "").substring(0, 4900),
-        genre: String(analysis.genre || "Dịch thuật").substring(0, 190),
-        type: 'translated',
-        isAdult: Boolean(options.isAdult),
-        isPublic: false,
-        createdAt: Timestamp.now(),
-        updatedAt: Timestamp.now(),
-        chapters: []
-      });
+      let storyRef: ReturnType<typeof doc> | null = null;
+      try {
+        storyRef = await addDoc(collection(db, 'stories'), {
+          authorId: user.uid,
+          title: String(translateFileName || "Truyện dịch").replace(/\.[^/.]+$/, "").substring(0, 480) + " (Bản dịch)",
+          content: String(translateFileContent || "").substring(0, 5000) + "...",
+          introduction: String(analysis.summary || "").substring(0, 4900),
+          genre: String(analysis.genre || "Dịch thuật").substring(0, 190),
+          type: 'translated',
+          isAdult: Boolean(options.isAdult),
+          isPublic: false,
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+          chapters: []
+        });
+      } catch (err) {
+        if (isFirestorePermissionError(err)) {
+          console.warn("Không có quyền Firestore, sẽ lưu cục bộ.", err);
+        } else {
+          throw err;
+        }
+      }
 
       // 3. Split content into chapters/chunks and translate
       // For simplicity in this demo, we'll split by common chapter markers or length
@@ -4841,14 +4868,24 @@ const AppContent = () => {
         });
       }
 
-      await updateDoc(storyRef, {
-        chapters: translatedChapters,
-        updatedAt: Timestamp.now()
-      });
+      if (storyRef) {
+        try {
+          await updateDoc(storyRef, {
+            chapters: translatedChapters,
+            updatedAt: Timestamp.now()
+          });
+        } catch (err) {
+          if (isFirestorePermissionError(err)) {
+            console.warn("Không có quyền Firestore khi cập nhật chương, đã lưu cục bộ.", err);
+          } else {
+            throw err;
+          }
+        }
+      }
 
       // Save to local storage so it shows up in the UI
       const newStory = {
-        id: storyRef.id,
+        id: storyRef ? storyRef.id : `local-${Date.now()}`,
         authorId: user.uid,
         title: String(translateFileName || "Truyện dịch").replace(/\.[^/.]+$/, "").substring(0, 480) + " (Bản dịch)",
         content: String(translateFileContent || "").substring(0, 5000) + "...",
