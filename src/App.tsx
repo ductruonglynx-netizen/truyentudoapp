@@ -2402,17 +2402,82 @@ const ToolsManager = ({
     setAiCheckStatus('Đang kiểm tra...');
     try {
       const ai = createGeminiClient();
-      const result = await generateGeminiText(
-        ai,
-        'fast',
-        'Chỉ trả về đúng một từ OK (chữ hoa), không thêm ký tự khác.',
-        { temperature: 0, responseMimeType: 'text/plain' },
-      );
-      const ok = String(result || '').trim().toUpperCase().includes('OK');
+      const tests: Array<{
+        name: string;
+        run: () => Promise<boolean>;
+      }> = [
+        {
+          name: 'Ping',
+          run: async () => {
+            const result = await generateGeminiText(
+              ai,
+              'fast',
+              'Chỉ trả về đúng một từ OK (chữ hoa), không thêm ký tự khác.',
+              { temperature: 0, responseMimeType: 'text/plain', maxOutputTokens: 32 },
+            );
+            return String(result || '').trim().toUpperCase().includes('OK');
+          },
+        },
+        {
+          name: 'JSON Story',
+          run: async () => {
+            const result = await generateGeminiText(
+              ai,
+              'fast',
+              'Trả về JSON: { "title": "Tiêu đề ngắn", "content": "Nội dung 1-2 câu." }',
+              { temperature: 0.2, responseMimeType: 'application/json', maxOutputTokens: 128 },
+            );
+            const parsed = tryParseJson<any>(result || '', 'object');
+            return Boolean(parsed && parsed.title && parsed.content);
+          },
+        },
+        {
+          name: 'Outline',
+          run: async () => {
+            const result = await generateGeminiText(
+              ai,
+              'fast',
+              'Trả về JSON array: [ { "title": "Chương 1", "content": "Tóm tắt 1 câu." } ]',
+              { temperature: 0.2, responseMimeType: 'application/json', maxOutputTokens: 128 },
+            );
+            const parsed = tryParseJson<any>(result || '', 'array');
+            return Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.content;
+          },
+        },
+        {
+          name: 'Dịch nhanh',
+          run: async () => {
+            const result = await generateGeminiText(
+              ai,
+              'fast',
+              'Dịch câu sau sang tiếng Việt ngắn gọn: "The sun rises over the quiet lake."',
+              { temperature: 0.3, responseMimeType: 'text/plain', maxOutputTokens: 64 },
+            );
+            return String(result || '').trim().length > 0;
+          },
+        },
+      ];
+
+      const results: Array<{ name: string; ok: boolean }> = [];
+      for (const test of tests) {
+        try {
+          const ok = await test.run();
+          results.push({ name: test.name, ok });
+        } catch {
+          results.push({ name: test.name, ok: false });
+        }
+      }
+
+      const passed = results.filter(r => r.ok);
+      const failed = results.filter(r => !r.ok);
       setAiUsageStats(readMainAiUsage());
-      setAiCheckStatus(ok ? `Hoạt động tốt: ${PROVIDER_LABELS[ai.provider]} / ${ai.model}` : `Có phản hồi nhưng chưa đúng mẫu: ${PROVIDER_LABELS[ai.provider]} / ${ai.model}`);
+      if (failed.length === 0) {
+        setAiCheckStatus(`Hoạt động tốt: ${passed.length}/${results.length} bước đạt · ${PROVIDER_LABELS[ai.provider]} / ${ai.model}`);
+      } else {
+        setAiCheckStatus(`Kiểm tra ${passed.length}/${results.length} bước đạt. Lỗi: ${failed.map(r => r.name).join(', ')} · ${PROVIDER_LABELS[ai.provider]} / ${ai.model}`);
+      }
     } catch (error) {
-      setAiCheckStatus('Không dùng được AI: quota, model hoặc key hiện tại chưa hợp lệ.');
+      setAiCheckStatus(`Không dùng được AI: ${error instanceof Error ? error.message : 'quota, model hoặc key hiện tại chưa hợp lệ.'}`);
     } finally {
       setIsCheckingAi(false);
     }
