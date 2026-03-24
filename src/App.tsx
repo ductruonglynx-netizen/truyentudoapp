@@ -108,6 +108,7 @@ const MAIN_AI_USAGE_KEY = 'main_ai_usage_v1';
 const UI_PROFILE_KEY = 'ui_profile_v1';
 const UI_THEME_KEY = 'ui_theme_v1';
 const UI_VIEWPORT_MODE_KEY = 'ui_viewport_mode_v1';
+const STORIES_UPDATED_EVENT = 'stories:updated';
 
 type ThemeMode = 'light' | 'dark';
 type ViewportMode = 'desktop' | 'mobile';
@@ -299,11 +300,16 @@ function normalizeDateValue(value: unknown): string {
   return new Date().toISOString();
 }
 
-function normalizeChaptersForLocal(chapters: Array<{ createdAt?: unknown } & Record<string, unknown>>) {
+function normalizeChaptersForLocal<T extends { createdAt?: unknown }>(chapters: T[]): T[] {
   return chapters.map((chapter) => ({
     ...chapter,
     createdAt: normalizeDateValue(chapter.createdAt),
-  }));
+  })) as T[];
+}
+
+function bumpStoriesVersion(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new Event(STORIES_UPDATED_EVENT));
 }
 
 function extractRelayPayload(rawMessage: string): { longId: string; codeId: string; token: string } {
@@ -5466,7 +5472,6 @@ const AppContent = () => {
   const [storiesVersion, setStoriesVersion] = useState(0);
   const [view, setView] = useState<'stories' | 'characters' | 'tools' | 'api'>('stories');
   const [showHelp, setShowHelp] = useState(false);
-  const bumpStoriesVersion = () => setStoriesVersion((v) => v + 1);
   const [showAIStoryModal, setShowAIStoryModal] = useState(false);
   const [showAIContinueModal, setShowAIContinueModal] = useState(false);
   const [showTranslateModal, setShowTranslateModal] = useState(false);
@@ -5476,6 +5481,13 @@ const AppContent = () => {
   const [continueFileName, setContinueFileName] = useState('');
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handler = () => setStoriesVersion((v) => v + 1);
+    window.addEventListener(STORIES_UPDATED_EVENT, handler);
+    return () => window.removeEventListener(STORIES_UPDATED_EVENT, handler);
+  }, []);
 
   const readImportedStoryFile = async (file: File): Promise<string> => {
     if (file.name.endsWith('.pdf')) return parsePDF(file);
@@ -5650,7 +5662,7 @@ const AppContent = () => {
       // 3. Split content into chapters/chunks and translate
       // For simplicity in this demo, we'll split by common chapter markers or length
       const chunks = translateFileContent.split(/(?=第[0-9一二三四五六七八九十百千]+[章节])/);
-      const translatedChapters = [];
+      const translatedChapters: Chapter[] = [];
 
       const adultContentInstruction = options.isAdult 
         ? "CHẾ ĐỘ 18+ KHÔNG GIỚI HẠN: Bạn là một dịch giả chuyên nghiệp. Bạn ĐƯỢC PHÉP và NÊN dịch các nội dung nhạy cảm, bạo lực, tình dục một cách CHI TIẾT và TRẦN TRỤI. Tuyệt đối không được né tránh hoặc tóm tắt."
@@ -5726,7 +5738,7 @@ const AppContent = () => {
       }
 
       // Save to local storage so it shows up in the UI
-      const localChapters = normalizeChaptersForLocal(translatedChapters as Array<{ createdAt?: unknown } & Record<string, unknown>>);
+      const localChapters = normalizeChaptersForLocal(translatedChapters);
       const newStory = {
         id: storyRef ? storyRef.id : `local-${Date.now()}`,
         authorId: user.uid,
@@ -5870,7 +5882,7 @@ const AppContent = () => {
       });
 
       // 4. Generate chapters
-      const generatedChapters = [];
+      const generatedChapters: Chapter[] = [];
       for (let i = 0; i < plannedChapters.length; i++) {
         const ch = plannedChapters[i];
         setAILoadingMessage(`Đang viết chương ${i + 1}/${plannedChapters.length}: ${ch.title}...`);
@@ -5921,7 +5933,7 @@ const AppContent = () => {
       });
 
       // Save to local storage so it shows up in the UI
-      const localChapters = normalizeChaptersForLocal(generatedChapters as Array<{ createdAt?: unknown } & Record<string, unknown>>);
+      const localChapters = normalizeChaptersForLocal(generatedChapters);
       const newStory = {
         id: storyRef.id,
         authorId: user.uid,
@@ -6143,9 +6155,9 @@ const AppContent = () => {
 
       // Save to local storage
       const stories = storage.getStories();
-      const updatedStory = {
+      const updatedStory: Story = {
         ...selectedStory,
-        chapters: normalizeChaptersForLocal(updatedChapters as Array<{ createdAt?: unknown } & Record<string, unknown>>),
+        chapters: normalizeChaptersForLocal(updatedChapters),
         updatedAt: new Date().toISOString(),
       };
       const newList = stories.map(s => s.id === selectedStory.id ? updatedStory : s);
@@ -6173,7 +6185,7 @@ const AppContent = () => {
       const updatedStory: Story = {
         ...editingStory,
         ...data,
-        chapters: normalizeChaptersForLocal((data.chapters || editingStory.chapters || []) as Array<{ createdAt?: unknown } & Record<string, unknown>>),
+        chapters: normalizeChaptersForLocal((data.chapters || editingStory.chapters || []) as Chapter[]),
         updatedAt: new Date().toISOString(),
       };
       newList = stories.map(s => s.id === editingStory.id ? updatedStory : s);
@@ -6185,7 +6197,7 @@ const AppContent = () => {
         content: data.content || '',
         introduction: data.introduction || '',
         genre: data.genre || 'Chưa phân loại',
-        chapters: normalizeChaptersForLocal((data.chapters || []) as Array<{ createdAt?: unknown } & Record<string, unknown>>),
+        chapters: normalizeChaptersForLocal((data.chapters || []) as Chapter[]),
         isAdult: data.isAdult || false,
         isPublic: data.isPublic || false,
         createdAt: new Date().toISOString(),

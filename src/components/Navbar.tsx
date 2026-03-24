@@ -41,7 +41,8 @@ export function Navbar({
   onToggleViewportMode,
   profile,
 }: NavbarProps) {
-  const isMobile = viewportMode === 'mobile';
+  const viewportModeValue: ViewportMode = viewportMode;
+  const isMobile = viewportModeValue === 'mobile';
   const computeAspectTag = () => {
     const w = window.innerWidth || 1;
     const h = window.innerHeight || 1;
@@ -83,11 +84,11 @@ export function Navbar({
       { key: 'api-settings', label: 'Mở thiết lập AI', icon: Zap, action: () => setView('api'), tone: 'neutral' as const },
       { key: 'help', label: 'Xem hướng dẫn', icon: Info, action: onShowHelp, tone: 'neutral' as const },
       { key: 'theme', label: isDark ? 'Chuyển nền sáng' : 'Chuyển nền tối', icon: isDark ? Sun : Moon, action: onToggleTheme, tone: 'neutral' as const },
-      { key: 'viewport', label: viewportMode === 'mobile' ? 'Chế độ máy tính' : 'Chế độ điện thoại', icon: viewportMode === 'mobile' ? Monitor : Smartphone, action: onToggleViewportMode, tone: 'neutral' as const },
+      { key: 'viewport', label: viewportModeValue === 'mobile' ? 'Chế độ máy tính' : 'Chế độ điện thoại', icon: viewportModeValue === 'mobile' ? Monitor : Smartphone, action: onToggleViewportMode, tone: 'neutral' as const },
       { key: 'backup', label: 'Sao lưu dữ liệu', icon: Download, action: handleExport, tone: 'neutral' as const },
       { key: 'restore', label: 'Khôi phục dữ liệu', icon: Upload, action: handleImport, tone: 'neutral' as const },
     ],
-    [handleExport, handleImport, isDark, isMobile, onCreateStory, onHome, onShowHelp, onToggleTheme, onToggleViewportMode, setView, viewportMode],
+    [handleExport, handleImport, isDark, isMobile, onCreateStory, onHome, onShowHelp, onToggleTheme, onToggleViewportMode, setView, viewportModeValue],
   );
 
   const surfaceClass = isDark
@@ -315,11 +316,11 @@ export function Navbar({
               'h-10 rounded-full border flex items-center justify-center gap-2 px-3 transition-all duration-300',
               utilityButtonClass,
             )}
-            title={viewportMode === 'mobile' ? 'Chuyển sang bố cục máy tính' : 'Chuyển sang bố cục điện thoại'}
+            title={viewportModeValue === 'mobile' ? 'Chuyển sang bố cục máy tính' : 'Chuyển sang bố cục điện thoại'}
           >
-            {viewportMode === 'mobile' ? <Monitor className="w-4 h-4" /> : <Smartphone className="w-4 h-4" />}
+            {viewportModeValue === 'mobile' ? <Monitor className="w-4 h-4" /> : <Smartphone className="w-4 h-4" />}
             <span className="hidden lg:inline text-xs font-bold">
-              {viewportMode === 'mobile' ? 'Máy tính' : 'Điện thoại'}
+              {viewportModeValue === 'mobile' ? 'Máy tính' : 'Điện thoại'}
             </span>
           </button>
           <button
