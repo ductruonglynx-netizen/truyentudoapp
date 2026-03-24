@@ -48,17 +48,12 @@ import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import * as mammoth from 'mammoth';
-import * as pdfjsLib from 'pdfjs-dist';
-import ePub from 'epubjs';
 import { Navbar } from './components/Navbar';
 import { HelpModal } from './components/HelpModal';
 import { ApiSectionPanel } from './components/tools/ApiSectionPanel';
 import { ProfileSettingsPanel } from './components/tools/ProfileSettingsPanel';
 import { DataManagementPanels } from './components/tools/DataManagementPanels';
 
-// Setup PDF worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
 import { QualityCenter, type QaIssue } from './components/QualityCenter';
@@ -79,6 +74,45 @@ import {
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+let mammothModulePromise: Promise<any> | null = null;
+let pdfjsModulePromise: Promise<any> | null = null;
+let epubModulePromise: Promise<any> | null = null;
+let pdfWorkerConfigured = false;
+
+async function loadMammothModule(): Promise<any> {
+  if (!mammothModulePromise) {
+    mammothModulePromise = import('mammoth');
+  }
+  return mammothModulePromise;
+}
+
+async function extractDocxText(arrayBuffer: ArrayBuffer): Promise<string> {
+  const mammoth = await loadMammothModule();
+  const result = await mammoth.extractRawText({ arrayBuffer });
+  return String(result?.value || '');
+}
+
+async function loadPdfJsModule(): Promise<any> {
+  if (!pdfjsModulePromise) {
+    pdfjsModulePromise = import('pdfjs-dist');
+  }
+  const module = await pdfjsModulePromise;
+  const api = module?.default || module;
+  if (!pdfWorkerConfigured && api?.GlobalWorkerOptions && api?.version) {
+    api.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${api.version}/pdf.worker.min.js`;
+    pdfWorkerConfigured = true;
+  }
+  return api;
+}
+
+async function loadEpubFactory(): Promise<(input: ArrayBuffer) => any> {
+  if (!epubModulePromise) {
+    epubModulePromise = import('epubjs');
+  }
+  const module = await epubModulePromise;
+  return (module?.default || module) as (input: ArrayBuffer) => any;
 }
 
 type ApiMode = 'manual' | 'relay';
@@ -1838,6 +1872,7 @@ const TranslationNameDictionary = () => {
 
 const parsePDF = async (file: File): Promise<string> => {
   const arrayBuffer = await file.arrayBuffer();
+  const pdfjsLib = await loadPdfJsModule();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   let text = '';
   for (let i = 1; i <= pdf.numPages; i++) {
@@ -1850,6 +1885,7 @@ const parsePDF = async (file: File): Promise<string> => {
 
 const parseEPUB = async (file: File): Promise<string> => {
   const arrayBuffer = await file.arrayBuffer();
+  const ePub = await loadEpubFactory();
   const book = ePub(arrayBuffer);
   await book.ready;
   let text = '';
@@ -3241,7 +3277,7 @@ const ToolsManager = ({
     if (!file || !user) return;
 
     console.log("Bắt đầu nhập file:", file.name, file.type, file.size);
-    console.log("Kiểm tra mammoth:", !!mammoth, typeof mammoth.extractRawText);
+    console.log("Sẵn sàng trích xuất DOCX theo cơ chế tải động.");
     setIsImporting(true);
     const fileName = file.name.toLowerCase();
 
@@ -3279,8 +3315,7 @@ const ToolsManager = ({
         console.log("Xử lý file DOCX...");
         const arrayBuffer = await file.arrayBuffer();
         console.log("Đã đọc arrayBuffer, đang giải nén văn bản...");
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        const text = result.value;
+        const text = await extractDocxText(arrayBuffer);
         console.log("Đã giải nén văn bản, độ dài:", text.length);
         
         if (!text.trim()) {
@@ -3817,8 +3852,7 @@ const StyleReferenceLibrary = ({
       let content = '';
       if (file.name.endsWith('.docx')) {
         const arrayBuffer = await file.arrayBuffer();
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        content = result.value;
+        content = await extractDocxText(arrayBuffer);
       } else {
         content = await file.text();
       }
@@ -5487,8 +5521,7 @@ const AIStoryCreationModal = ({
       let content = '';
       if (file.name.endsWith('.docx')) {
         const arrayBuffer = await file.arrayBuffer();
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        content = result.value;
+        content = await extractDocxText(arrayBuffer);
       } else {
         content = await file.text();
       }
@@ -5872,8 +5905,7 @@ const AIGenerationModal = ({
       let content = '';
       if (file.name.endsWith('.docx')) {
         const arrayBuffer = await file.arrayBuffer();
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        content = result.value;
+        content = await extractDocxText(arrayBuffer);
       } else {
         content = await file.text();
       }
@@ -6391,8 +6423,7 @@ const AppContent = () => {
     if (file.name.endsWith('.epub')) return parseEPUB(file);
     if (file.name.endsWith('.docx')) {
       const arrayBuffer = await file.arrayBuffer();
-      const result = await mammoth.extractRawText({ arrayBuffer });
-      return result.value;
+      return extractDocxText(arrayBuffer);
     }
     return file.text();
   };
@@ -7286,8 +7317,7 @@ const AppContent = () => {
 
       if (fileName.endsWith('.docx')) {
         const arrayBuffer = await file.arrayBuffer();
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        content = result.value;
+        content = await extractDocxText(arrayBuffer);
       } else if (fileName.endsWith('.txt')) {
         content = await file.text();
       } else if (fileName.endsWith('.json')) {
