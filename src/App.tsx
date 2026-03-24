@@ -1687,6 +1687,78 @@ ${trimForAi(wikiSource, 9000)}
   );
 };
 
+const PROMPT_VAULT_PREVIEW = [
+  {
+    title: 'Dịch truyện mượt, giữ văn phong',
+    content: 'Hãy dịch đoạn sau sang tiếng Việt mượt mà, giữ phong cách của bản gốc. Giữ tên riêng và thuật ngữ nhất quán.',
+  },
+  {
+    title: 'Tóm tắt chương nhanh',
+    content: 'Tóm tắt nội dung chương dưới đây trong 5-7 gạch đầu dòng, giữ các mốc quan trọng.',
+  },
+  {
+    title: 'Viết tiếp mạch truyện',
+    content: 'Viết tiếp đoạn truyện dưới đây khoảng 150-200 từ, giữ đúng giọng văn và mạch sự kiện.',
+  },
+];
+
+const PromptVaultPanel = () => {
+  const [copied, setCopied] = useState('');
+
+  const handleCopy = async (text: string, title: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(`Đã sao chép: ${title}`);
+      window.setTimeout(() => setCopied(''), 2000);
+    } catch {
+      setCopied('Không thể sao chép, hãy copy thủ công.');
+      window.setTimeout(() => setCopied(''), 2000);
+    }
+  };
+
+  return (
+    <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-indigo-50 rounded-2xl">
+            <Library className="w-6 h-6 text-indigo-600" />
+          </div>
+          <div>
+            <h3 className="text-xl font-serif font-bold">Kho Prompt mẫu</h3>
+            <p className="text-xs text-slate-500">Dùng nhanh cho dịch thuật và viết truyện</p>
+          </div>
+        </div>
+        {copied && <span className="text-xs text-slate-500">{copied}</span>}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {PROMPT_VAULT_PREVIEW.map((item) => (
+          <div key={item.title} className="p-4 rounded-2xl border border-slate-200 bg-slate-50 flex flex-col gap-3">
+            <div>
+              <p className="font-bold text-slate-800">{item.title}</p>
+              <p className="text-xs text-slate-500 mt-1 line-clamp-3">{item.content}</p>
+            </div>
+            <button
+              onClick={() => handleCopy(item.content, item.title)}
+              className="mt-auto px-3 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-all"
+            >
+              Sao chép prompt
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const SectionHeader = ({ title, subtitle }: { title: string; subtitle?: string }) => (
+  <div className="flex items-center justify-between">
+    <div>
+      <h2 className="text-2xl font-serif font-bold text-slate-900">{title}</h2>
+      {subtitle && <p className="text-sm text-slate-500 mt-1">{subtitle}</p>}
+    </div>
+  </div>
+);
+
 const ToolsManager = ({
   onBack,
   profile,
@@ -2707,52 +2779,68 @@ const ToolsManager = ({
         <h2 className="text-3xl font-serif font-bold">Công cụ & Thiết lập</h2>
       </div>
 
-      <ProfileSettingsPanel
-        profileName={profileName}
-        profileAvatar={profileAvatar}
-        onProfileNameChange={setProfileName}
-        onProfileAvatarChange={setProfileAvatar}
-        onSave={handleSaveProfileInfo}
-        onPickAvatarFile={handlePickAvatarFile}
-        onAvatarFileChange={handleAvatarFileChange}
-        avatarInputRef={avatarUploadInputRef}
-      />
-
-      <QualityCenter onRun={handleRunQa} />
-
-      <DataManagementPanels
-        isImporting={isImporting}
-        isExporting={isExporting}
-        onImportFile={handleImportFile}
-        onExportJson={handleExportJSON}
-      />
-
-      <div className="mt-12">
-        <TranslationNameDictionary />
-      </div>
-
-      <div className="mt-12">
-        <AIRulesManager />
-      </div>
-
-      <div className="mt-12">
-        <StyleReferenceLibrary />
-      </div>
-
-      <div className="mt-12">
-        <WriterProPanel />
-      </div>
-
-      <div className="mt-12 p-8 bg-slate-50 rounded-3xl border border-dashed border-slate-200">
-        <div className="flex items-center gap-3 mb-4">
-          <FileText className="w-5 h-5 text-slate-400" />
-          <h4 className="font-bold text-slate-700">Lưu ý về định dạng</h4>
+      <div className="space-y-12">
+        <div className="space-y-6">
+          <SectionHeader
+            title="Thiết lập cá nhân"
+            subtitle="Quản lý hồ sơ, avatar và các tùy chọn hiển thị."
+          />
+          <ProfileSettingsPanel
+            profileName={profileName}
+            profileAvatar={profileAvatar}
+            onProfileNameChange={setProfileName}
+            onProfileAvatarChange={setProfileAvatar}
+            onSave={handleSaveProfileInfo}
+            onPickAvatarFile={handlePickAvatarFile}
+            onAvatarFileChange={handleAvatarFileChange}
+            avatarInputRef={avatarUploadInputRef}
+          />
         </div>
-        <ul className="text-sm text-slate-500 space-y-2 list-disc pl-5">
-          <li>File <b>.docx</b> và <b>.txt</b> sẽ được nhập dưới dạng một truyện mới.</li>
-              <li>Hãy dùng tệp sao lưu được tạo từ ứng dụng này để đảm bảo khôi phục đầy đủ.</li>
-          <li>Tiến trình nhập có thể mất vài giây tùy thuộc vào dung lượng file.</li>
-        </ul>
+
+        <div className="space-y-6">
+          <SectionHeader
+            title="Kho dữ liệu"
+            subtitle="Nhập/xuất dữ liệu và quản lý các kho nội dung nền."
+          />
+          <DataManagementPanels
+            isImporting={isImporting}
+            isExporting={isExporting}
+            onImportFile={handleImportFile}
+            onExportJson={handleExportJSON}
+          />
+          <PromptVaultPanel />
+        </div>
+
+        <div className="space-y-6">
+          <SectionHeader
+            title="Hỗ trợ dịch"
+            subtitle="Công cụ dành riêng cho dịch thuật và hậu kỳ."
+          />
+          <TranslationNameDictionary />
+          <QualityCenter onRun={handleRunQa} />
+        </div>
+
+        <div className="space-y-6">
+          <SectionHeader
+            title="Hỗ trợ viết truyện"
+            subtitle="Co-writer, văn mẫu, quy tắc AI và công cụ sáng tác."
+          />
+          <WriterProPanel />
+          <AIRulesManager />
+          <StyleReferenceLibrary />
+        </div>
+
+        <div className="p-8 bg-slate-50 rounded-3xl border border-dashed border-slate-200">
+          <div className="flex items-center gap-3 mb-4">
+            <FileText className="w-5 h-5 text-slate-400" />
+            <h4 className="font-bold text-slate-700">Lưu ý về định dạng</h4>
+          </div>
+          <ul className="text-sm text-slate-500 space-y-2 list-disc pl-5">
+            <li>File <b>.docx</b> và <b>.txt</b> sẽ được nhập dưới dạng một truyện mới.</li>
+            <li>Hãy dùng tệp sao lưu được tạo từ ứng dụng này để đảm bảo khôi phục đầy đủ.</li>
+            <li>Tiến trình nhập có thể mất vài giây tùy thuộc vào dung lượng file.</li>
+          </ul>
+        </div>
       </div>
     </motion.div>
   );
