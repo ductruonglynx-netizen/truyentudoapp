@@ -271,9 +271,6 @@
     border-right: 1px solid rgba(148, 163, 184, 0.2);
   }
 
-  .app-shell--mobile .app-shell__quick-rail {
-    display: none;
-  }
 
   .app-shell--mobile nav.fixed {
     left: 50%;
@@ -798,9 +795,6 @@ body {
   border-color: rgba(240, 161, 65, 0.42);
 }
 
-.app-shell--mobile .app-shell__quick-rail {
-  display: none;
-}
 
 .app-navbar[data-density="compact"] {
   padding-left: 0.75rem;
@@ -916,10 +910,6 @@ body {
   .chapter-nav button {
     width: 100%;
     justify-content: center;
-  }
-
-  .app-shell__quick-rail {
-    display: none;
   }
 
   .app-navbar {

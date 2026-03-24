@@ -41,6 +41,7 @@ export function Navbar({
   onToggleViewportMode,
   profile,
 }: NavbarProps) {
+  const isMobile = viewportMode === 'mobile';
   const computeAspectTag = () => {
     const w = window.innerWidth || 1;
     const h = window.innerHeight || 1;
@@ -70,15 +71,23 @@ export function Navbar({
   );
   const quickActions = useMemo(
     () => [
+      ...(isMobile
+        ? [
+            { key: 'home', label: 'Trang chủ', icon: BookOpen, action: onHome, tone: 'neutral' as const },
+            { key: 'characters', label: 'Nhân vật', icon: Users, action: () => setView('characters'), tone: 'neutral' as const },
+            { key: 'api', label: 'API', icon: Zap, action: () => setView('api'), tone: 'neutral' as const },
+            { key: 'tools', label: 'Công cụ', icon: Settings, action: () => setView('tools'), tone: 'neutral' as const },
+          ]
+        : []),
       { key: 'create', label: 'Viết truyện mới', icon: Plus, action: onCreateStory, tone: 'brand' as const },
-      { key: 'api', label: 'Mở thiết lập AI', icon: Zap, action: () => setView('api'), tone: 'neutral' as const },
+      { key: 'api-settings', label: 'Mở thiết lập AI', icon: Zap, action: () => setView('api'), tone: 'neutral' as const },
       { key: 'help', label: 'Xem hướng dẫn', icon: Info, action: onShowHelp, tone: 'neutral' as const },
       { key: 'theme', label: isDark ? 'Chuyển nền sáng' : 'Chuyển nền tối', icon: isDark ? Sun : Moon, action: onToggleTheme, tone: 'neutral' as const },
       { key: 'viewport', label: viewportMode === 'mobile' ? 'Chế độ máy tính' : 'Chế độ điện thoại', icon: viewportMode === 'mobile' ? Monitor : Smartphone, action: onToggleViewportMode, tone: 'neutral' as const },
       { key: 'backup', label: 'Sao lưu dữ liệu', icon: Download, action: handleExport, tone: 'neutral' as const },
       { key: 'restore', label: 'Khôi phục dữ liệu', icon: Upload, action: handleImport, tone: 'neutral' as const },
     ],
-    [handleExport, handleImport, isDark, onCreateStory, onShowHelp, onToggleTheme, onToggleViewportMode, setView, viewportMode],
+    [handleExport, handleImport, isDark, isMobile, onCreateStory, onHome, onShowHelp, onToggleTheme, onToggleViewportMode, setView, viewportMode],
   );
 
   const surfaceClass = isDark
@@ -166,7 +175,7 @@ export function Navbar({
 
   return (
     <>
-      <div className="app-shell__quick-rail fixed left-4 top-24 bottom-4 z-[60] flex items-start gap-3">
+      <div className={cn('app-shell__quick-rail fixed left-4 z-[60] flex items-start gap-3', isMobile ? 'top-4 bottom-4' : 'top-24 bottom-4')}>
         <div
           className={cn(
             'origin-left h-full transition-all duration-300 ease-out overflow-hidden',
@@ -229,6 +238,7 @@ export function Navbar({
         </button>
       </div>
 
+      {!isMobile && (
       <nav ref={navRef} data-density={navDensity} className={cn('app-navbar fixed top-0 left-0 right-0 z-50 flex h-20 items-center justify-between border-b px-6 backdrop-blur-xl navbar-appear', surfaceClass)}>
         <div ref={leftRef} className="app-navbar__left flex items-center gap-5 lg:gap-8">
           <div className="flex items-center gap-3 cursor-pointer group transition-all duration-300" onClick={onHome}>
@@ -338,6 +348,7 @@ export function Navbar({
           </div>
         </div>
       </nav>
+      )}
     </>
   );
 }
