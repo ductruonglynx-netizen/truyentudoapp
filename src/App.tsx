@@ -4290,7 +4290,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
                     <img
                       src={coverImageUrl}
                       alt="Ảnh bìa truyện"
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-contain"
                       loading="lazy"
                     />
                   ) : (
@@ -4384,7 +4384,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
                 <img
                   src={coverImageUrl}
                   alt={`Bìa truyện ${title || ''}`}
-                  className="w-full aspect-[2/3] object-cover rounded-2xl border border-slate-200 shadow-sm"
+                  className="w-full aspect-[2/3] object-contain bg-slate-100 rounded-2xl border border-slate-200 shadow-sm"
                   loading="lazy"
                 />
               </div>
@@ -4731,7 +4731,7 @@ const StoryDetail = ({
                   <img
                     src={story.coverImageUrl}
                     alt={`Bìa truyện ${story.title}`}
-                    className="w-full aspect-[2/3] object-cover rounded-2xl border border-slate-200 shadow-sm"
+                    className="w-full aspect-[2/3] object-contain bg-slate-100 rounded-2xl border border-slate-200 shadow-sm"
                     loading="lazy"
                   />
                 </div>
@@ -4976,11 +4976,11 @@ const StoryList = ({ onView, refreshKey }: { onView: (story: Story) => void; ref
                     </button>
                   </div>
                   {story.coverImageUrl && (
-                    <div className="mb-4 rounded-xl overflow-hidden border border-slate-100 bg-slate-100 aspect-[16/9]">
+                    <div className="mb-4 rounded-xl overflow-hidden border border-slate-100 bg-slate-100 aspect-[2/3] max-w-[9rem] mx-auto">
                       <img
                         src={story.coverImageUrl}
                         alt={`Bìa truyện ${story.title}`}
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-contain"
                         loading="lazy"
                       />
                     </div>
