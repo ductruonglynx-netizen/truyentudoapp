@@ -742,6 +742,52 @@ function splitTextForTranslation(text: string, maxChars: number): string[] {
   return units.map((unit) => `${unit.title}\n${unit.source}`.trim());
 }
 
+function sanitizePromptForUrl(prompt: string): string {
+  const raw = String(prompt || '');
+  if (!raw) return '';
+  let safe = '';
+  for (let i = 0; i < raw.length; i += 1) {
+    const code = raw.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = raw.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        safe += raw[i] + raw[i + 1];
+        i += 1;
+      } else {
+        safe += ' ';
+      }
+      continue;
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      safe += ' ';
+      continue;
+    }
+    safe += raw[i];
+  }
+  return safe.replace(/\s+/g, ' ').trim().slice(0, 420);
+}
+
+async function probeImageUrl(url: string, timeoutMs = 18000): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.referrerPolicy = 'no-referrer';
+    let settled = false;
+    const done = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      image.onload = null;
+      image.onerror = null;
+      resolve(ok);
+    };
+    const timer = window.setTimeout(() => done(false), timeoutMs);
+    image.onload = () => done(true);
+    image.onerror = () => done(false);
+    image.src = url;
+  });
+}
+
 async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
@@ -3938,20 +3984,37 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
     }
     setIsGeneratingCover(true);
     try {
-      const prompt = String(coverPrompt || buildCoverPrompt()).trim();
+      const prompt = sanitizePromptForUrl(String(coverPrompt || buildCoverPrompt()).trim());
       if (!prompt) {
         alert('Không đủ dữ liệu để tạo ảnh bìa.');
         return;
       }
       const seed = Math.floor(Math.random() * 1000000000);
-      const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=896&height=1344&seed=${seed}&nologo=true&enhance=true&model=flux`;
+      const encoded = encodeURIComponent(prompt);
+      const candidates = [
+        `https://image.pollinations.ai/prompt/${encoded}?width=896&height=1344&seed=${seed}&nologo=true&enhance=true&model=flux`,
+        `https://image.pollinations.ai/prompt/${encoded}?width=896&height=1344&seed=${seed}&nologo=true&enhance=true`,
+        `https://image.pollinations.ai/prompt/${encoded}?width=768&height=1152&seed=${seed}&nologo=true`,
+      ];
+      let imageUrl = '';
+      for (const candidate of candidates) {
+        const ok = await probeImageUrl(candidate, 18000);
+        if (ok) {
+          imageUrl = candidate;
+          break;
+        }
+      }
+      if (!imageUrl) {
+        throw new Error('Dịch vụ ảnh AI đang bận hoặc tạm thời không phản hồi.');
+      }
       setCoverImageUrl(imageUrl);
       if (!coverPrompt.trim()) {
         setCoverPrompt(prompt);
       }
     } catch (error) {
       console.error('Không thể tạo ảnh bìa AI', error);
-      alert('Tạo ảnh bìa thất bại, vui lòng thử lại.');
+      const message = error instanceof Error ? error.message : String(error || '');
+      alert(`Tạo ảnh bìa thất bại. ${message}\nBạn có thể bấm thử lại hoặc tải ảnh từ thiết bị.`);
     } finally {
       setIsGeneratingCover(false);
     }
