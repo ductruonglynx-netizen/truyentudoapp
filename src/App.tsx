@@ -579,8 +579,24 @@ async function generateGeminiText(
       const raw = await relayGenerateContent(model, body, kind === 'fast' ? 18000 : 28000);
       try {
         const parsed = JSON.parse(raw);
-        text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      } catch (_) {
+        if (parsed?.error?.message) {
+          throw new Error(`AI lỗi: ${parsed.error.message}`);
+        }
+        const candidates = parsed?.candidates || parsed?.data?.candidates || parsed?.response?.candidates;
+        const first = Array.isArray(candidates) ? candidates[0] : undefined;
+        const partText = Array.isArray(first?.content?.parts)
+          ? first.content.parts.map((p: any) => p?.text || '').join('')
+          : '';
+        const directText = first?.content?.text || first?.text || first?.output || '';
+        const fallbackText = parsed?.text || parsed?.output || parsed?.result || parsed?.data?.text || '';
+        text = partText || directText || fallbackText || '';
+        if (!text && typeof raw === 'string') {
+          text = raw;
+        }
+      } catch (err) {
+        if (err instanceof Error && /AI lỗi:/i.test(err.message)) {
+          throw err;
+        }
         text = raw || '';
       }
     } else if (auth.provider === 'gemini' && auth.isApiKey && auth.client) {
@@ -6267,7 +6283,7 @@ const AppContent = () => {
 
         alert("AI đã tạo truyện thành công từ file của bạn!");
       } else {
-        throw new Error("AI không trả về nội dung hợp lệ để tạo truyện.");
+        throw new Error("Không nhận được phản hồi hợp lệ từ AI. Hãy kiểm tra kết nối Relay hoặc khóa API.");
       }
     } catch (error) {
       console.error("AI Creation failed", error);
