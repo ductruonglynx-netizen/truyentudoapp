@@ -309,7 +309,7 @@ export function Navbar({
               </div>
             ) : null}
           </div>
-          <div className={cn('h-8 w-[1px] mx-1 md:mx-2', dividerClass)} />
+          <div className={cn('app-navbar-divider h-8 w-[1px] mx-1 md:mx-2', dividerClass)} />
           <button
             onClick={onToggleViewportMode}
             className={cn(
@@ -335,7 +335,7 @@ export function Navbar({
           >
             <Info className="w-5 h-5" />
           </button>
-          <div className={cn('h-8 w-[1px] mx-1 md:mx-2', dividerClass)} />
+          <div className={cn('app-navbar-divider h-8 w-[1px] mx-1 md:mx-2', dividerClass)} />
           <div className="flex items-center gap-3">
             <div className="text-right hidden sm:block">
               <p className={cn('text-sm font-bold leading-none', titleClass)}>{profile.displayName}</p>

@@ -59,30 +59,72 @@ export async function translateWithGlossary(input: {
   failoverTrail: string[];
 }> {
   const glossaryTerms = glossaryToTerms(input.glossary);
-  const response = await translateSegment({
-    sourceText: input.sourceText,
-    sourceLang: 'zh-CN',
-    targetLang: 'vi-VN',
-    glossary: glossaryTerms,
-    tone: input.tone,
-    parallelProviders: input.parallelMode ? 3 : 1,
-  });
+  const normalizeAlternatives = (rows: string[]): string[] => {
+    const cleaned = rows
+      .map((option) => String(option || '').trim())
+      .filter(Boolean)
+      .map((option) => applyGlossaryAutoFix(input.sourceText, option, glossaryTerms));
+    if (!cleaned.length) return [];
+    while (cleaned.length < 3) {
+      cleaned.push(cleaned[cleaned.length - 1]);
+    }
+    return cleaned.slice(0, 3);
+  };
 
-  const alternatives = response.alternatives
-    .slice(0, 3)
-    .map((option) => applyGlossaryAutoFix(input.sourceText, option, glossaryTerms));
+  const runAttempt = async (tone: string, forceStrongModel = false, parallelProviders?: number) => {
+    const response = await translateSegment({
+      sourceText: input.sourceText,
+      sourceLang: 'zh-CN',
+      targetLang: 'vi-VN',
+      glossary: glossaryTerms,
+      tone,
+      parallelProviders,
+      forceStrongModel,
+    });
 
-  const violationsByOption = alternatives.map((option) =>
-    findGlossaryViolations(input.sourceText, option, glossaryTerms),
-  );
+    const alternatives = normalizeAlternatives(response.alternatives);
+    const violationsByOption = alternatives.map((option) =>
+      findGlossaryViolations(input.sourceText, option, glossaryTerms),
+    );
+
+    return {
+      provider: response.provider,
+      alternatives,
+      violationsByOption,
+      comparisons: response.comparisons || [],
+      usage: response.usage,
+      failoverTrail: response.failoverTrail || [],
+    };
+  };
+
+  const primary = await runAttempt(input.tone, false, input.parallelMode ? 3 : 1);
+  const hasCleanOption = primary.violationsByOption.some((list) => list.length === 0);
+  const mustUseTerms = glossaryTerms.filter((term) => input.sourceText.includes(term.source));
+
+  if (hasCleanOption || mustUseTerms.length === 0) {
+    return primary;
+  }
+
+  const correctiveTone = [
+    input.tone,
+    'Hard glossary correction mode:',
+    `Source contains MUST_USE terms: ${mustUseTerms.map((term) => `${term.source}=>${term.target}`).join(', ')}`,
+    'You must return alternatives that include every required target term exactly.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const retried = await runAttempt(correctiveTone, true, 1);
+  const retriedHasClean = retried.violationsByOption.some((list) => list.length === 0);
 
   return {
-    provider: response.provider,
-    alternatives,
-    violationsByOption,
-    comparisons: response.comparisons || [],
-    usage: response.usage,
-    failoverTrail: response.failoverTrail || [],
+    ...retried,
+    failoverTrail: [
+      ...primary.failoverTrail,
+      'glossary_retry:triggered',
+      ...retried.failoverTrail,
+      ...(retriedHasClean ? [] : ['glossary_retry:hard_fail']),
+    ],
   };
 }
 

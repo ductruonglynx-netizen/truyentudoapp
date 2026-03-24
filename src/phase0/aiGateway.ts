@@ -70,6 +70,16 @@ interface ApiHttpErrorLike extends Error {
 const USAGE_KEY = 'phase1_usage_counter_v1';
 const STORY_CONTEXT_KEY = 'story_context_v1';
 const GLOBAL_GLOSSARY_KEY = 'global_glossary_v1';
+const TRANSLATION_CACHE_KEY = 'phase1_translation_cache_v1';
+const TRANSLATION_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
+const TRANSLATION_CACHE_LIMIT = 400;
+
+interface TranslationCacheEntry {
+  provider: AiProvider;
+  routedModel?: string;
+  alternatives: string[];
+  cachedAt: number;
+}
 
 function makeHttpError(provider: string, status: number, body: string): ApiHttpErrorLike {
   const error = new Error(`${provider} error: ${status} ${body.slice(0, 140)}`) as ApiHttpErrorLike;
@@ -151,6 +161,88 @@ function normalizeProviderOrder(order?: AiProvider[]): Array<Exclude<AiProvider,
   });
 
   return result;
+}
+
+function hashText(input: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+  }
+  return `h-${(hash >>> 0).toString(16)}`;
+}
+
+function loadTranslationCache(): Record<string, TranslationCacheEntry> {
+  try {
+    const raw = sessionStorage.getItem(TRANSLATION_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, TranslationCacheEntry>;
+    return parsed || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveTranslationCache(next: Record<string, TranslationCacheEntry>): void {
+  sessionStorage.setItem(TRANSLATION_CACHE_KEY, JSON.stringify(next));
+}
+
+function compactTranslationCache(entries: Record<string, TranslationCacheEntry>): Record<string, TranslationCacheEntry> {
+  const now = Date.now();
+  const alive = Object.entries(entries).filter(([, value]) => now - Number(value.cachedAt || 0) <= TRANSLATION_CACHE_TTL_MS);
+  if (alive.length <= TRANSLATION_CACHE_LIMIT) {
+    return Object.fromEntries(alive);
+  }
+  alive.sort((a, b) => Number(b[1].cachedAt || 0) - Number(a[1].cachedAt || 0));
+  return Object.fromEntries(alive.slice(0, TRANSLATION_CACHE_LIMIT));
+}
+
+function normalizeGlossaryForCache(glossary: GlossaryTerm[]): string {
+  return glossary
+    .map((term) => ({
+      source: readText(term.source).toLowerCase(),
+      target: readText(term.target).toLowerCase(),
+    }))
+    .filter((term) => term.source && term.target)
+    .sort((a, b) => `${a.source}=>${a.target}`.localeCompare(`${b.source}=>${b.target}`))
+    .map((term) => `${term.source}=>${term.target}`)
+    .join('|');
+}
+
+function makeTranslateCacheKey(input: TranslateRequest, runtime: RuntimeApiConfig): string {
+  const payload = [
+    input.sourceLang,
+    input.targetLang,
+    readText(input.tone),
+    input.forceStrongModel ? '1' : '0',
+    String(Math.min(Math.max(1, input.parallelProviders || 1), 3)),
+    normalizeProviderOrder(runtime.providerOrder).join(','),
+    normalizeGlossaryForCache(input.glossary),
+    input.sourceText,
+  ].join('||');
+  return hashText(payload);
+}
+
+function getCachedTranslation(cacheKey: string): TranslationCacheEntry | null {
+  const cache = loadTranslationCache();
+  const row = cache[cacheKey];
+  if (!row) return null;
+  const age = Date.now() - Number(row.cachedAt || 0);
+  if (age > TRANSLATION_CACHE_TTL_MS) {
+    delete cache[cacheKey];
+    saveTranslationCache(cache);
+    return null;
+  }
+  return row;
+}
+
+function setCachedTranslation(cacheKey: string, row: Omit<TranslationCacheEntry, 'cachedAt'>): void {
+  const cache = loadTranslationCache();
+  cache[cacheKey] = {
+    ...row,
+    cachedAt: Date.now(),
+  };
+  saveTranslationCache(compactTranslationCache(cache));
 }
 
 function parseJsonFromText(text: string): { alternatives?: string[] } {
@@ -512,6 +604,17 @@ export async function translateSegment(input: TranslateRequest): Promise<Transla
   const runtime = loadRuntimeApiConfig();
   const candidates = selectCandidatesByOrder(runtime, loadCandidates(runtime));
   const failoverTrail: string[] = [];
+  const cacheKey = makeTranslateCacheKey(input, runtime);
+  const cached = getCachedTranslation(cacheKey);
+  if (cached?.alternatives?.length) {
+    return {
+      provider: cached.provider,
+      alternatives: cached.alternatives.slice(0, 3),
+      routedModel: cached.routedModel,
+      failoverTrail: ['cache_hit:translation'],
+      usage: getUsageSnapshot(),
+    };
+  }
 
   if (!candidates.length) {
     return {
@@ -542,7 +645,7 @@ export async function translateSegment(input: TranslateRequest): Promise<Transla
     );
 
     const comparisons: ProviderComparison[] = [];
-    let chosen: { provider: AiProvider; model: string; alternatives: string[] } | null = null;
+    let chosen: { provider: AiProvider; model: string; alternatives: string[]; latencyMs: number } | null = null;
 
     settled.forEach((result) => {
       if (result.status === 'fulfilled') {
@@ -553,11 +656,15 @@ export async function translateSegment(input: TranslateRequest): Promise<Transla
           text: first,
           latencyMs: result.value.latencyMs,
         });
-        if (!chosen && result.value.alternatives.length) {
+        if (
+          result.value.alternatives.length &&
+          (!chosen || result.value.latencyMs < chosen.latencyMs)
+        ) {
           chosen = {
             provider: result.value.provider,
             model: result.value.model,
             alternatives: result.value.alternatives,
+            latencyMs: result.value.latencyMs,
           };
         }
       } else {
@@ -566,9 +673,15 @@ export async function translateSegment(input: TranslateRequest): Promise<Transla
     });
 
     if (chosen) {
+      const alternatives = chosen.alternatives.slice(0, 3);
+      setCachedTranslation(cacheKey, {
+        provider: chosen.provider,
+        alternatives,
+        routedModel: chosen.model,
+      });
       return {
         provider: chosen.provider,
-        alternatives: chosen.alternatives.slice(0, 3),
+        alternatives,
         routedModel: chosen.model,
         comparisons,
         failoverTrail,
@@ -583,9 +696,15 @@ export async function translateSegment(input: TranslateRequest): Promise<Transla
       try {
         const alternatives = await runProvider(candidate, input, model);
         if (alternatives.length >= 1) {
+          const topAlternatives = alternatives.slice(0, 3);
+          setCachedTranslation(cacheKey, {
+            provider: candidate.provider,
+            alternatives: topAlternatives,
+            routedModel: model,
+          });
           return {
             provider: candidate.provider,
-            alternatives: alternatives.slice(0, 3),
+            alternatives: topAlternatives,
             routedModel: model,
             failoverTrail,
             usage: getUsageSnapshot(),

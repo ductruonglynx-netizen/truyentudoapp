@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 
 export interface QaIssue {
   id: string;
-  severity: 'low' | 'medium' | 'high';
+  severity: 'low' | 'medium' | 'high' | 'critical';
   problem: string;
   suggestion: string;
   quote?: string;
@@ -70,7 +70,9 @@ export function QualityCenter({ onRun }: Props) {
               <span className="font-semibold">{issue.problem || '(Không có mô tả)'}</span>
               <span
                 className={`px-2 py-1 rounded-full text-[11px] font-bold ${
-                  issue.severity === 'high'
+                  issue.severity === 'critical'
+                    ? 'bg-red-200 text-red-800'
+                    : issue.severity === 'high'
                     ? 'bg-rose-100 text-rose-700'
                     : issue.severity === 'low'
                     ? 'bg-emerald-100 text-emerald-700'

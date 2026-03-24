@@ -1,9 +1,13 @@
-import {StrictMode} from 'react';
-import {createRoot} from 'react-dom/client';
-import App from './App.tsx';
-import Phase0DemoApp from './phase0/Phase0DemoApp.tsx';
-import Phase1App from './phase1/Phase1App.tsx';
+import { StrictMode, Suspense, lazy } from 'react';
+import { createRoot } from 'react-dom/client';
 import './index.css';
+
+const App = lazy(() => import('./App.tsx'));
+const Phase0DemoApp = lazy(() => import('./phase0/Phase0DemoApp.tsx'));
+const Phase1App = lazy(() => import('./phase1/Phase1App.tsx'));
+const Phase3App = lazy(() => import('./phase3/Phase3App.tsx'));
+const Phase4App = lazy(() => import('./phase4/Phase4App.tsx'));
+const Phase5App = lazy(() => import('./phase5/Phase5App.tsx'));
 
 // Shim to prevent libraries from overwriting fetch and causing errors
 if (typeof window !== 'undefined') {
@@ -24,12 +28,24 @@ if (typeof window !== 'undefined') {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {new URLSearchParams(window.location.search).get('phase1') === '1' ? (
-      <Phase1App />
-    ) : new URLSearchParams(window.location.search).get('phase0') === '1' ? (
-      <Phase0DemoApp />
-    ) : (
-      <App />
-    )}
+    <Suspense
+      fallback={(
+        <div className="min-h-screen flex items-center justify-center bg-[#F6F7F4] text-[#1F2933]">
+          <div className="rounded-xl border border-[#D9E2EC] bg-white px-4 py-3 text-sm font-semibold">
+            Loading workspace...
+          </div>
+        </div>
+      )}
+    >
+      {(() => {
+        const query = new URLSearchParams(window.location.search);
+        if (query.get('phase5') === '1') return <Phase5App />;
+        if (query.get('phase4') === '1') return <Phase4App />;
+        if (query.get('phase3') === '1') return <Phase3App />;
+        if (query.get('phase1') === '1') return <Phase1App />;
+        if (query.get('phase0') === '1') return <Phase0DemoApp />;
+        return <App />;
+      })()}
+    </Suspense>
   </StrictMode>,
 );
