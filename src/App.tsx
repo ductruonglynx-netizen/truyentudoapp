@@ -455,6 +455,26 @@ function bumpMainAiUsage(inputText: string, outputText: string): { requests: num
   return next;
 }
 
+const inFlightAiRequests = new Map<string, Promise<string>>();
+
+const buildDefaultGenConfig = (kind: 'fast' | 'quality', config?: Record<string, unknown>) => {
+  const base = kind === 'fast'
+    ? { temperature: 0.6, topP: 0.9, maxOutputTokens: 512 }
+    : { temperature: 0.7, topP: 0.95, maxOutputTokens: 1200 };
+  return { ...base, ...(config || {}) };
+};
+
+const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit, timeoutMs: number) => {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(input, { ...init, signal: controller.signal });
+    return resp;
+  } finally {
+    window.clearTimeout(timer);
+  }
+};
+
 type AiAuth = {
   provider: ApiProvider;
   apiKey: string;
@@ -473,7 +493,8 @@ async function generateGeminiText(
 ): Promise<string> {
   const runtime = getApiRuntimeConfig();
   const model = auth.model || getProfileModel(kind, auth.provider);
-  const reqFingerprint = quickHash(JSON.stringify({ provider: auth.provider, model, contents, config: config || {} }));
+  const mergedConfig = buildDefaultGenConfig(kind, config);
+  const reqFingerprint = quickHash(JSON.stringify({ provider: auth.provider, model, contents, config: mergedConfig }));
   const cacheKey = `v1:${reqFingerprint}`;
 
   if (runtime.enableCache) {
@@ -485,121 +506,136 @@ async function generateGeminiText(
     }
   }
 
+  const inflight = inFlightAiRequests.get(cacheKey);
+  if (inflight) {
+    return inflight;
+  }
+
   let text = '';
 
-  // If in relay mode, send request through relay WebSocket; no token exposed to browser.
-  if (runtime.mode === 'relay') {
-    const body = {
-      contents: [
-        {
-          parts: [{ text: contents }],
-        },
-      ],
-      generationConfig: config || {},
-    };
-    const raw = await relayGenerateContent(model, body, 25000);
-    try {
-      const parsed = JSON.parse(raw);
-      text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    } catch (_) {
-      text = raw || '';
-    }
-  } else if (auth.provider === 'gemini' && auth.isApiKey && auth.client) {
-    const response = await auth.client.models.generateContent({
-      model,
-      contents,
-      config,
-    });
-    text = response.text || '';
-  } else if (auth.provider === 'gemini' || auth.provider === 'gcli') {
-    const geminiBase = auth.baseUrl || getProviderBaseUrl('gcli');
-    const geminiEndpoint = geminiBase.includes('/models/')
-      ? geminiBase
-      : `${geminiBase.replace(/\/+$/, '')}/models/${model}:generateContent`;
-    const resp = await fetch(geminiEndpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${auth.apiKey}`,
-      },
-      body: JSON.stringify({
+  const task = (async () => {
+    // If in relay mode, send request through relay WebSocket; no token exposed to browser.
+    if (runtime.mode === 'relay') {
+      const body = {
         contents: [
           {
             parts: [{ text: contents }],
           },
         ],
-        generationConfig: config || {},
-      }),
-    });
-    if (!resp.ok) {
-      const body = await resp.text();
-      throw new Error(`${auth.provider === 'gcli' ? 'GCLI' : 'Gemini'} (Bearer) error ${resp.status}: ${body.slice(0, 200)}`);
-    }
-    const data = await resp.json();
-    text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  } else if (auth.provider === 'openai' || auth.provider === 'custom') {
-    const openAiBase = auth.baseUrl || getProviderBaseUrl(auth.provider === 'custom' ? 'custom' : 'openai');
-    const completionEndpoint = /\/chat\/completions$/i.test(openAiBase)
-      ? openAiBase
-      : `${openAiBase.replace(/\/+$/, '')}/chat/completions`;
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (auth.apiKey.trim()) {
-      headers.Authorization = `Bearer ${auth.apiKey}`;
-    }
-    const resp = await fetch(completionEndpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
+        generationConfig: mergedConfig,
+      };
+      const raw = await relayGenerateContent(model, body, kind === 'fast' ? 18000 : 28000);
+      try {
+        const parsed = JSON.parse(raw);
+        text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      } catch (_) {
+        text = raw || '';
+      }
+    } else if (auth.provider === 'gemini' && auth.isApiKey && auth.client) {
+      const response = await auth.client.models.generateContent({
         model,
-        messages: [{ role: 'user', content: contents }],
-        temperature: typeof config?.temperature === 'number' ? config.temperature : 0.7,
-      }),
-    });
-    if (!resp.ok) {
-      const body = await resp.text();
-      throw new Error(`${auth.provider === 'custom' ? 'Custom endpoint' : 'OpenAI'} error ${resp.status}: ${body.slice(0, 220)}`);
-    }
-    const data = await resp.json();
-    text = data?.choices?.[0]?.message?.content || '';
-  } else if (auth.provider === 'anthropic') {
-    const resp = await fetch(`${auth.baseUrl || getProviderBaseUrl('anthropic')}/messages`, {
-      method: 'POST',
-      headers: {
+        contents,
+        config: mergedConfig,
+      });
+      text = response.text || '';
+    } else if (auth.provider === 'gemini' || auth.provider === 'gcli') {
+      const geminiBase = auth.baseUrl || getProviderBaseUrl('gcli');
+      const geminiEndpoint = geminiBase.includes('/models/')
+        ? geminiBase
+        : `${geminiBase.replace(/\/+$/, '')}/models/${model}:generateContent`;
+      const resp = await fetchWithTimeout(geminiEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${auth.apiKey}`,
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [{ text: contents }],
+            },
+          ],
+          generationConfig: mergedConfig,
+        }),
+      }, kind === 'fast' ? 15000 : 25000);
+      if (!resp.ok) {
+        const body = await resp.text();
+        throw new Error(`${auth.provider === 'gcli' ? 'GCLI' : 'Gemini'} (Bearer) error ${resp.status}: ${body.slice(0, 200)}`);
+      }
+      const data = await resp.json();
+      text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    } else if (auth.provider === 'openai' || auth.provider === 'custom') {
+      const openAiBase = auth.baseUrl || getProviderBaseUrl(auth.provider === 'custom' ? 'custom' : 'openai');
+      const completionEndpoint = /\/chat\/completions$/i.test(openAiBase)
+        ? openAiBase
+        : `${openAiBase.replace(/\/+$/, '')}/chat/completions`;
+      const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        'x-api-key': auth.apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: typeof config?.maxOutputTokens === 'number' ? config.maxOutputTokens : 4096,
-        temperature: typeof config?.temperature === 'number' ? config.temperature : 0.7,
-        messages: [{ role: 'user', content: contents }],
-      }),
-    });
-    if (!resp.ok) {
-      const body = await resp.text();
-      throw new Error(`Anthropic error ${resp.status}: ${body.slice(0, 220)}`);
+      };
+      if (auth.apiKey.trim()) {
+        headers.Authorization = `Bearer ${auth.apiKey}`;
+      }
+      const resp = await fetchWithTimeout(completionEndpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: contents }],
+          temperature: typeof mergedConfig.temperature === 'number' ? mergedConfig.temperature : 0.7,
+          max_tokens: typeof mergedConfig.maxOutputTokens === 'number' ? mergedConfig.maxOutputTokens : undefined,
+        }),
+      }, kind === 'fast' ? 15000 : 25000);
+      if (!resp.ok) {
+        const body = await resp.text();
+        throw new Error(`${auth.provider === 'custom' ? 'Custom endpoint' : 'OpenAI'} error ${resp.status}: ${body.slice(0, 220)}`);
+      }
+      const data = await resp.json();
+      text = data?.choices?.[0]?.message?.content || '';
+    } else if (auth.provider === 'anthropic') {
+      const resp = await fetchWithTimeout(`${auth.baseUrl || getProviderBaseUrl('anthropic')}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': auth.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: typeof mergedConfig.maxOutputTokens === 'number' ? mergedConfig.maxOutputTokens : 4096,
+          temperature: typeof mergedConfig.temperature === 'number' ? mergedConfig.temperature : 0.7,
+          messages: [{ role: 'user', content: contents }],
+        }),
+      }, kind === 'fast' ? 15000 : 25000);
+      if (!resp.ok) {
+        const body = await resp.text();
+        throw new Error(`Anthropic error ${resp.status}: ${body.slice(0, 220)}`);
+      }
+      const data = await resp.json();
+      text = Array.isArray(data?.content)
+        ? data.content.map((part: { text?: string }) => part?.text || '').join('\n').trim()
+        : '';
+    } else {
+      throw new Error('Nhà cung cấp hiện tại chưa được hỗ trợ.');
     }
-    const data = await resp.json();
-    text = Array.isArray(data?.content)
-      ? data.content.map((part: { text?: string }) => part?.text || '').join('\n').trim()
-      : '';
-  } else {
-    throw new Error('Nhà cung cấp hiện tại chưa được hỗ trợ.');
+
+    bumpMainAiUsage(contents, text);
+
+    if (runtime.enableCache && text) {
+      const cache = readGeminiCache();
+      cache[cacheKey] = { text, ts: Date.now() };
+      const entries = Object.entries(cache).sort((a, b) => b[1].ts - a[1].ts).slice(0, 120);
+      writeGeminiCache(Object.fromEntries(entries));
+    }
+
+    return text;
+  })();
+
+  inFlightAiRequests.set(cacheKey, task);
+  try {
+    return await task;
+  } finally {
+    inFlightAiRequests.delete(cacheKey);
   }
-
-  bumpMainAiUsage(contents, text);
-
-  if (runtime.enableCache && text) {
-    const cache = readGeminiCache();
-    cache[cacheKey] = { text, ts: Date.now() };
-    const entries = Object.entries(cache).sort((a, b) => b[1].ts - a[1].ts).slice(0, 120);
-    writeGeminiCache(Object.fromEntries(entries));
-  }
-
-  return text;
 }
 
 function getConfiguredGeminiApiKey(): string {
@@ -1146,6 +1182,509 @@ const parseEPUB = async (file: File): Promise<string> => {
     }
   }
   return text;
+};
+
+const WriterProPanel = () => {
+  const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState<'autocomplete' | 'plot' | 'tone' | 'context' | 'wiki'>('autocomplete');
+  const [isRunning, setIsRunning] = useState(false);
+  const [statusText, setStatusText] = useState('');
+
+  const [autoContext, setAutoContext] = useState('');
+  const [autoLength, setAutoLength] = useState(100);
+  const [autoVariants, setAutoVariants] = useState<Array<{ label: string; text: string }>>([]);
+
+  const [plotContext, setPlotContext] = useState('');
+  const [plotResult, setPlotResult] = useState<{ directions: string[]; twists: string[]; risks: string[] } | null>(null);
+
+  const [toneSource, setToneSource] = useState('');
+  const [toneTarget, setToneTarget] = useState('vanhoc');
+  const [toneResult, setToneResult] = useState('');
+
+  const [queryContext, setQueryContext] = useState('');
+  const [queryQuestion, setQueryQuestion] = useState('');
+  const [queryResult, setQueryResult] = useState('');
+
+  const [wikiSource, setWikiSource] = useState('');
+  const [wikiResult, setWikiResult] = useState<{
+    characters: Array<{ name: string; description?: string }>;
+    locations: Array<{ name: string; description?: string }>;
+    items: Array<{ name: string; description?: string }>;
+  } | null>(null);
+  const [wikiSavedNotice, setWikiSavedNotice] = useState('');
+
+  if (!user) {
+    return (
+      <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center text-slate-500">
+        Vui lòng đăng nhập để dùng Writer Pro.
+      </div>
+    );
+  }
+
+  const trimForAi = (text: string, max = 6000) => String(text || '').trim().slice(0, max);
+  const extractJson = (raw: string) => {
+    const match = raw.match(/\{[\s\S]*\}/);
+    const target = match ? match[0] : raw;
+    try {
+      return JSON.parse(target);
+    } catch {
+      return null;
+    }
+  };
+
+  const runAutocomplete = async () => {
+    if (!autoContext.trim()) return;
+    setIsRunning(true);
+    setStatusText('Đang tạo gợi ý viết tiếp...');
+    try {
+      const ai = createGeminiClient();
+      const prompt = `
+Bạn là đồng tác giả văn học. Hãy viết tiếp khoảng ${autoLength} từ, giữ văn phong và mạch truyện hiện tại.
+Trả về JSON đúng cấu trúc:
+{
+  "variants": [
+    { "label": "Conservative", "text": "..." },
+    { "label": "Balanced", "text": "..." },
+    { "label": "Bold", "text": "..." }
+  ]
+}
+NỘI DUNG TRƯỚC ĐÓ:
+${trimForAi(autoContext, 7000)}
+      `.trim();
+      const raw = await generateGeminiText(ai, 'fast', prompt, {
+        responseMimeType: 'application/json',
+        temperature: 0.7,
+        maxOutputTokens: 700,
+      });
+      const parsed = extractJson(raw);
+      const variants = Array.isArray(parsed?.variants)
+        ? parsed.variants.map((item: any, idx: number) => ({
+          label: String(item?.label || `Gợi ý ${idx + 1}`),
+          text: String(item?.text || ''),
+        })).filter((item: { text: string }) => item.text.trim())
+        : [{ label: 'Gợi ý', text: raw }];
+      setAutoVariants(variants);
+    } catch (err) {
+      setAutoVariants([{ label: 'Lỗi', text: err instanceof Error ? err.message : 'Không tạo được gợi ý.' }]);
+    } finally {
+      setIsRunning(false);
+      setStatusText('');
+    }
+  };
+
+  const runPlot = async () => {
+    if (!plotContext.trim()) return;
+    setIsRunning(true);
+    setStatusText('Đang phân tích plot...');
+    try {
+      const ai = createGeminiClient();
+      const prompt = `
+Bạn là cố vấn biên kịch. Dựa trên bối cảnh dưới đây, hãy đề xuất:
+1) 3 hướng phát triển tiếp theo,
+2) 3 plot twist khả thi,
+3) 3 rủi ro logic cần tránh.
+Trả về JSON:
+{
+  "directions": ["..."],
+  "twists": ["..."],
+  "risks": ["..."]
+}
+BỐI CẢNH:
+${trimForAi(plotContext, 7000)}
+      `.trim();
+      const raw = await generateGeminiText(ai, 'fast', prompt, {
+        responseMimeType: 'application/json',
+        temperature: 0.6,
+        maxOutputTokens: 700,
+      });
+      const parsed = extractJson(raw);
+      setPlotResult({
+        directions: Array.isArray(parsed?.directions) ? parsed.directions.map(String) : [],
+        twists: Array.isArray(parsed?.twists) ? parsed.twists.map(String) : [],
+        risks: Array.isArray(parsed?.risks) ? parsed.risks.map(String) : [],
+      });
+    } catch (err) {
+      setPlotResult({
+        directions: [],
+        twists: [],
+        risks: [err instanceof Error ? err.message : 'Không tạo được gợi ý plot.'],
+      });
+    } finally {
+      setIsRunning(false);
+      setStatusText('');
+    }
+  };
+
+  const runToneShift = async () => {
+    if (!toneSource.trim()) return;
+    setIsRunning(true);
+    setStatusText('Đang chuyển giọng văn...');
+    const toneMap: Record<string, string> = {
+      vanhoc: 'văn học, giàu hình ảnh',
+      langman: 'lãng mạn, mềm mại',
+      gaygon: 'ngắn gọn, dứt khoát',
+      noitam: 'nội tâm, sâu sắc',
+    };
+    try {
+      const ai = createGeminiClient();
+      const prompt = `
+Hãy viết lại đoạn văn sau theo giọng ${toneMap[toneTarget] || toneTarget}.
+Giữ nguyên ý chính, không thêm chi tiết mới.
+ĐOẠN GỐC:
+${trimForAi(toneSource, 6000)}
+      `.trim();
+      const raw = await generateGeminiText(ai, 'fast', prompt, {
+        temperature: 0.65,
+        maxOutputTokens: 700,
+      });
+      setToneResult(raw.trim());
+    } catch (err) {
+      setToneResult(err instanceof Error ? err.message : 'Không chuyển giọng được.');
+    } finally {
+      setIsRunning(false);
+      setStatusText('');
+    }
+  };
+
+  const runContextQuery = async () => {
+    if (!queryContext.trim() || !queryQuestion.trim()) return;
+    setIsRunning(true);
+    setStatusText('Đang truy vấn bối cảnh...');
+    try {
+      const ai = createGeminiClient();
+      const prompt = `
+Trả lời câu hỏi dựa trên bối cảnh sau. Nếu thiếu dữ liệu, nói rõ phần thiếu.
+CÂU HỎI: ${queryQuestion.trim()}
+BỐI CẢNH:
+${trimForAi(queryContext, 7000)}
+      `.trim();
+      const raw = await generateGeminiText(ai, 'fast', prompt, {
+        temperature: 0.3,
+        maxOutputTokens: 500,
+      });
+      setQueryResult(raw.trim());
+    } catch (err) {
+      setQueryResult(err instanceof Error ? err.message : 'Không truy vấn được.');
+    } finally {
+      setIsRunning(false);
+      setStatusText('');
+    }
+  };
+
+  const runWikiExtraction = async () => {
+    if (!wikiSource.trim()) return;
+    setIsRunning(true);
+    setStatusText('Đang trích xuất wiki...');
+    try {
+      const ai = createGeminiClient();
+      const prompt = `
+Hãy trích xuất dữ liệu wiki từ nội dung sau. Trả về JSON:
+{
+  "characters": [{"name":"", "description":""}],
+  "locations": [{"name":"", "description":""}],
+  "items": [{"name":"", "description":""}]
+}
+NỘI DUNG:
+${trimForAi(wikiSource, 9000)}
+      `.trim();
+      const raw = await generateGeminiText(ai, 'fast', prompt, {
+        responseMimeType: 'application/json',
+        temperature: 0.4,
+        maxOutputTokens: 900,
+      });
+      const parsed = extractJson(raw);
+      setWikiResult({
+        characters: Array.isArray(parsed?.characters) ? parsed.characters.map((c: any) => ({
+          name: String(c?.name || '').trim(),
+          description: String(c?.description || '').trim(),
+        })).filter((c: { name: string }) => c.name) : [],
+        locations: Array.isArray(parsed?.locations) ? parsed.locations.map((c: any) => ({
+          name: String(c?.name || '').trim(),
+          description: String(c?.description || '').trim(),
+        })).filter((c: { name: string }) => c.name) : [],
+        items: Array.isArray(parsed?.items) ? parsed.items.map((c: any) => ({
+          name: String(c?.name || '').trim(),
+          description: String(c?.description || '').trim(),
+        })).filter((c: { name: string }) => c.name) : [],
+      });
+      setWikiSavedNotice('');
+    } catch (err) {
+      setWikiResult({
+        characters: [],
+        locations: [],
+        items: [],
+      });
+      setWikiSavedNotice(err instanceof Error ? err.message : 'Không trích xuất được.');
+    } finally {
+      setIsRunning(false);
+      setStatusText('');
+    }
+  };
+
+  const handleSaveWikiCharacters = () => {
+    if (!wikiResult) return;
+    const existing = storage.getCharacters();
+    const existingNames = new Set(existing.map((c: Character) => c.name.toLowerCase()));
+    const newChars = wikiResult.characters
+      .filter((c) => !existingNames.has(c.name.toLowerCase()))
+      .map((c) => ({
+        id: `char-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        authorId: user.uid,
+        name: c.name,
+        appearance: c.description || '',
+        personality: '',
+        createdAt: new Date().toISOString(),
+      }));
+    if (newChars.length === 0) {
+      setWikiSavedNotice('Không có nhân vật mới để lưu.');
+      return;
+    }
+    storage.saveCharacters([...newChars, ...existing]);
+    setWikiSavedNotice(`Đã lưu ${newChars.length} nhân vật vào kho nhân vật.`);
+  };
+
+  return (
+    <div className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-indigo-50 rounded-2xl">
+            <Sparkles className="w-6 h-6 text-indigo-600" />
+          </div>
+          <div>
+            <h3 className="text-xl font-serif font-bold">Writer Pro (Phase 3)</h3>
+            <p className="text-xs text-slate-500 font-medium">Co-writer, plot, tone shift, context query, wiki</p>
+          </div>
+        </div>
+        <span className="text-xs text-slate-400">{statusText || 'Chế độ nhanh, phản hồi trong vài giây'}</span>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {[
+          { key: 'autocomplete', label: 'Viết tiếp', icon: Sparkles },
+          { key: 'plot', label: 'Plot Generator', icon: Target },
+          { key: 'tone', label: 'Đổi giọng', icon: Feather },
+          { key: 'context', label: 'Hỏi bối cảnh', icon: Info },
+          { key: 'wiki', label: 'Trích xuất Wiki', icon: Database },
+        ].map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key as typeof activeTab)}
+            className={cn(
+              'flex items-center gap-2 px-4 py-2 rounded-full text-sm font-bold transition-all',
+              activeTab === key
+                ? 'bg-slate-900 text-white shadow-lg shadow-slate-900/15'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+            )}
+          >
+            <Icon className="w-4 h-4" />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'autocomplete' && (
+        <div className="space-y-4">
+          <textarea
+            value={autoContext}
+            onChange={(e) => setAutoContext(e.target.value)}
+            placeholder="Dán đoạn truyện hiện tại để AI viết tiếp..."
+            className="w-full min-h-[160px] p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="text-sm font-bold text-slate-600">Độ dài:</label>
+            {[50, 100, 200].map((len) => (
+              <button
+                key={len}
+                onClick={() => setAutoLength(len)}
+                className={cn(
+                  'px-3 py-1 rounded-full text-xs font-bold transition-all',
+                  autoLength === len ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600',
+                )}
+              >
+                {len} từ
+              </button>
+            ))}
+            <button
+              onClick={runAutocomplete}
+              disabled={isRunning}
+              className="ml-auto px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold shadow-lg shadow-indigo-900/20 hover:bg-indigo-700 transition-all disabled:opacity-50"
+            >
+              {isRunning ? 'Đang xử lý...' : 'Tạo gợi ý'}
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {autoVariants.map((variant, idx) => (
+              <div key={`${variant.label}-${idx}`} className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
+                <p className="text-xs font-bold text-slate-500 mb-2">{variant.label}</p>
+                <p className="text-sm text-slate-700 whitespace-pre-wrap">{variant.text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'plot' && (
+        <div className="space-y-4">
+          <textarea
+            value={plotContext}
+            onChange={(e) => setPlotContext(e.target.value)}
+            placeholder="Tóm tắt nhanh truyện hoặc bối cảnh hiện tại..."
+            className="w-full min-h-[140px] p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+          />
+          <button
+            onClick={runPlot}
+            disabled={isRunning}
+            className="px-4 py-2 rounded-xl bg-slate-900 text-white font-bold shadow-lg shadow-slate-900/20 hover:bg-slate-800 transition-all disabled:opacity-50"
+          >
+            {isRunning ? 'Đang phân tích...' : 'Tạo hướng plot'}
+          </button>
+          {plotResult && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
+                <p className="text-xs font-bold text-slate-500 mb-2">Hướng phát triển</p>
+                <ul className="text-sm text-slate-700 space-y-1 list-disc pl-4">
+                  {plotResult.directions.map((item, idx) => <li key={`dir-${idx}`}>{item}</li>)}
+                </ul>
+              </div>
+              <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
+                <p className="text-xs font-bold text-slate-500 mb-2">Plot twist</p>
+                <ul className="text-sm text-slate-700 space-y-1 list-disc pl-4">
+                  {plotResult.twists.map((item, idx) => <li key={`tw-${idx}`}>{item}</li>)}
+                </ul>
+              </div>
+              <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
+                <p className="text-xs font-bold text-slate-500 mb-2">Rủi ro logic</p>
+                <ul className="text-sm text-slate-700 space-y-1 list-disc pl-4">
+                  {plotResult.risks.map((item, idx) => <li key={`risk-${idx}`}>{item}</li>)}
+                </ul>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'tone' && (
+        <div className="space-y-4">
+          <textarea
+            value={toneSource}
+            onChange={(e) => setToneSource(e.target.value)}
+            placeholder="Dán đoạn cần đổi giọng..."
+            className="w-full min-h-[140px] p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              value={toneTarget}
+              onChange={(e) => setToneTarget(e.target.value)}
+              className="px-4 py-2 rounded-xl border border-slate-200 bg-white text-sm font-bold"
+            >
+              <option value="vanhoc">Văn học</option>
+              <option value="langman">Lãng mạn</option>
+              <option value="gaygon">Gãy gọn</option>
+              <option value="noitam">Nội tâm</option>
+            </select>
+            <button
+              onClick={runToneShift}
+              disabled={isRunning}
+              className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold shadow-lg shadow-indigo-900/20 hover:bg-indigo-700 transition-all disabled:opacity-50"
+            >
+              {isRunning ? 'Đang xử lý...' : 'Chuyển giọng'}
+            </button>
+          </div>
+          {toneResult && (
+            <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50 text-sm text-slate-700 whitespace-pre-wrap">
+              {toneResult}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'context' && (
+        <div className="space-y-4">
+          <textarea
+            value={queryContext}
+            onChange={(e) => setQueryContext(e.target.value)}
+            placeholder="Dán bối cảnh truyện (có thể là tóm tắt chương gần nhất)..."
+            className="w-full min-h-[140px] p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+          />
+          <input
+            value={queryQuestion}
+            onChange={(e) => setQueryQuestion(e.target.value)}
+            placeholder="Câu hỏi về bối cảnh..."
+            className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+          />
+          <button
+            onClick={runContextQuery}
+            disabled={isRunning}
+            className="px-4 py-2 rounded-xl bg-slate-900 text-white font-bold shadow-lg shadow-slate-900/20 hover:bg-slate-800 transition-all disabled:opacity-50"
+          >
+            {isRunning ? 'Đang truy vấn...' : 'Trả lời'}
+          </button>
+          {queryResult && (
+            <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50 text-sm text-slate-700 whitespace-pre-wrap">
+              {queryResult}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'wiki' && (
+        <div className="space-y-4">
+          <textarea
+            value={wikiSource}
+            onChange={(e) => setWikiSource(e.target.value)}
+            placeholder="Dán nội dung truyện hoặc chương cần trích xuất..."
+            className="w-full min-h-[160px] p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={runWikiExtraction}
+              disabled={isRunning}
+              className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold shadow-lg shadow-indigo-900/20 hover:bg-indigo-700 transition-all disabled:opacity-50"
+            >
+              {isRunning ? 'Đang trích xuất...' : 'Trích xuất'}
+            </button>
+            {wikiResult && (
+              <button
+                onClick={handleSaveWikiCharacters}
+                className="px-4 py-2 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 transition-all"
+              >
+                Lưu nhân vật vào kho
+              </button>
+            )}
+            {wikiSavedNotice && <span className="text-xs text-slate-500">{wikiSavedNotice}</span>}
+          </div>
+          {wikiResult && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
+                <p className="text-xs font-bold text-slate-500 mb-2">Nhân vật</p>
+                <ul className="text-sm text-slate-700 space-y-1">
+                  {wikiResult.characters.map((c, idx) => (
+                    <li key={`char-${idx}`}><strong>{c.name}</strong>{c.description ? ` — ${c.description}` : ''}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
+                <p className="text-xs font-bold text-slate-500 mb-2">Địa điểm</p>
+                <ul className="text-sm text-slate-700 space-y-1">
+                  {wikiResult.locations.map((c, idx) => (
+                    <li key={`loc-${idx}`}><strong>{c.name}</strong>{c.description ? ` — ${c.description}` : ''}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
+                <p className="text-xs font-bold text-slate-500 mb-2">Vật phẩm</p>
+                <ul className="text-sm text-slate-700 space-y-1">
+                  {wikiResult.items.map((c, idx) => (
+                    <li key={`item-${idx}`}><strong>{c.name}</strong>{c.description ? ` — ${c.description}` : ''}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 };
 
 const ToolsManager = ({
@@ -2198,6 +2737,10 @@ const ToolsManager = ({
 
       <div className="mt-12">
         <StyleReferenceLibrary />
+      </div>
+
+      <div className="mt-12">
+        <WriterProPanel />
       </div>
 
       <div className="mt-12 p-8 bg-slate-50 rounded-3xl border border-dashed border-slate-200">
