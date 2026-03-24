@@ -557,13 +557,57 @@ function splitTextForTranslation(text: string, maxChars: number): string[] {
     chunks = [];
     let buffer = '';
     const parts = normalized.split(/\n{2,}/);
+    const pushSegment = (segment: string) => {
+      const trimmed = segment.trim();
+      if (!trimmed) return;
+      if (trimmed.length <= maxChars) {
+        chunks.push(trimmed);
+        return;
+      }
+      const sentences = trimmed
+        .split(/(?<=[.!?。！？])\s+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (!sentences.length) {
+        for (let i = 0; i < trimmed.length; i += maxChars) {
+          chunks.push(trimmed.slice(i, i + maxChars).trim());
+        }
+        return;
+      }
+      let sentenceBuffer = '';
+      for (const sentence of sentences) {
+        const nextSentence = sentenceBuffer ? `${sentenceBuffer} ${sentence}` : sentence;
+        if (nextSentence.length > maxChars) {
+          if (sentenceBuffer) chunks.push(sentenceBuffer.trim());
+          if (sentence.length > maxChars) {
+            for (let i = 0; i < sentence.length; i += maxChars) {
+              chunks.push(sentence.slice(i, i + maxChars).trim());
+            }
+            sentenceBuffer = '';
+          } else {
+            sentenceBuffer = sentence;
+          }
+        } else {
+          sentenceBuffer = nextSentence;
+        }
+      }
+      if (sentenceBuffer.trim()) chunks.push(sentenceBuffer.trim());
+    };
+
     for (const part of parts) {
       const trimmed = part.trim();
       if (!trimmed) continue;
       const next = buffer ? `${buffer}\n\n${trimmed}` : trimmed;
       if (next.length > maxChars) {
-        if (buffer) chunks.push(buffer.trim());
-        buffer = trimmed;
+        if (buffer) {
+          chunks.push(buffer.trim());
+          buffer = '';
+        }
+        if (trimmed.length > maxChars) {
+          pushSegment(trimmed);
+        } else {
+          buffer = trimmed;
+        }
       } else {
         buffer = next;
       }
@@ -571,6 +615,13 @@ function splitTextForTranslation(text: string, maxChars: number): string[] {
     if (buffer.trim()) chunks.push(buffer.trim());
   }
   return chunks;
+}
+
+function countWords(text: string): number {
+  return String(text || '')
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length > 0).length;
 }
 
 function buildFallbackChapters(raw: string, targetCount: number): Array<{ title: string; content: string }> {
@@ -626,10 +677,89 @@ const inFlightAiRequests = new Map<string, Promise<string>>();
 
 const buildDefaultGenConfig = (kind: 'fast' | 'quality', config?: Record<string, unknown>) => {
   const base = kind === 'fast'
-    ? { temperature: 0.6, topP: 0.9, maxOutputTokens: 512 }
-    : { temperature: 0.7, topP: 0.95, maxOutputTokens: 1200 };
+    ? { temperature: 0.55, topP: 0.92, maxOutputTokens: 1800 }
+    : { temperature: 0.65, topP: 0.95, maxOutputTokens: 4200 };
   return { ...base, ...(config || {}) };
 };
+
+function splitGenConfig(config?: Record<string, unknown>): {
+  providerConfig: Record<string, unknown>;
+  maxRetries: number;
+  minOutputChars: number;
+} {
+  const raw = { ...(config || {}) } as Record<string, unknown>;
+  const maxRetries =
+    typeof raw.maxRetries === 'number'
+      ? Math.min(3, Math.max(0, Math.round(raw.maxRetries)))
+      : undefined;
+  const minOutputChars =
+    typeof raw.minOutputChars === 'number'
+      ? Math.max(0, Math.round(raw.minOutputChars))
+      : undefined;
+
+  delete raw.maxRetries;
+  delete raw.minOutputChars;
+
+  return {
+    providerConfig: raw,
+    maxRetries: maxRetries ?? 1,
+    minOutputChars: minOutputChars ?? 0,
+  };
+}
+
+function extractTextFromModelPayload(payload: any): string {
+  if (!payload) return '';
+  const direct = [
+    payload?.text,
+    payload?.output,
+    payload?.result,
+    payload?.data?.text,
+    payload?.response?.text,
+  ]
+    .map((item) => String(item || '').trim())
+    .find(Boolean);
+  if (direct) return direct;
+
+  const candidates = payload?.candidates || payload?.data?.candidates || payload?.response?.candidates;
+  if (Array.isArray(candidates)) {
+    const combined = candidates
+      .map((candidate: any) => {
+        const partText = Array.isArray(candidate?.content?.parts)
+          ? candidate.content.parts.map((p: any) => String(p?.text || '').trim()).filter(Boolean).join('')
+          : '';
+        return (
+          partText ||
+          String(candidate?.content?.text || candidate?.text || candidate?.output || candidate?.output_text || '').trim()
+        );
+      })
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+    if (combined) return combined;
+  }
+
+  return '';
+}
+
+function calculateAdaptiveMinOutputChars(
+  prompt: string,
+  kind: 'fast' | 'quality',
+  explicitMinChars: number,
+): number {
+  if (explicitMinChars > 0) return explicitMinChars;
+  const len = String(prompt || '').length;
+  if (len < 500) return 0;
+  if (kind === 'fast') return Math.min(1200, Math.max(90, Math.round(len * 0.06)));
+  return Math.min(6000, Math.max(180, Math.round(len * 0.12)));
+}
+
+function calculateAdaptiveTimeoutMs(kind: 'fast' | 'quality', maxOutputTokens: number): number {
+  const tokens = Math.max(512, Number(maxOutputTokens || 0));
+  if (kind === 'fast') {
+    return Math.min(90000, 18000 + Math.round(tokens * 10));
+  }
+  return Math.min(180000, 35000 + Math.round(tokens * 14));
+}
 
 const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit, timeoutMs: number) => {
   const controller = new AbortController();
@@ -660,8 +790,18 @@ async function generateGeminiText(
 ): Promise<string> {
   const runtime = getApiRuntimeConfig();
   const model = auth.model || getProfileModel(kind, auth.provider);
-  const mergedConfig = buildDefaultGenConfig(kind, config);
-  const reqFingerprint = quickHash(JSON.stringify({ provider: auth.provider, model, contents, config: mergedConfig }));
+  const splitConfig = splitGenConfig(config);
+  const initialConfig = buildDefaultGenConfig(kind, splitConfig.providerConfig);
+  const reqFingerprint = quickHash(
+    JSON.stringify({
+      provider: auth.provider,
+      model,
+      contents,
+      config: initialConfig,
+      maxRetries: splitConfig.maxRetries,
+      minOutputChars: splitConfig.minOutputChars,
+    }),
+  );
   const cacheKey = `v1:${reqFingerprint}`;
 
   if (runtime.enableCache) {
@@ -681,124 +821,155 @@ async function generateGeminiText(
   let text = '';
 
   const task = (async () => {
-    // If in relay mode, send request through relay WebSocket; no token exposed to browser.
-    if (runtime.mode === 'relay') {
-      const body = {
-        contents: [
-          {
-            parts: [{ text: contents }],
-          },
-        ],
-        generationConfig: mergedConfig,
-      };
-      const raw = await relayGenerateContent(model, body, kind === 'fast' ? 18000 : 28000);
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed?.error?.message) {
-          throw new Error(`AI lỗi: ${parsed.error.message}`);
-        }
-        const candidates = parsed?.candidates || parsed?.data?.candidates || parsed?.response?.candidates;
-        const first = Array.isArray(candidates) ? candidates[0] : undefined;
-        const partText = Array.isArray(first?.content?.parts)
-          ? first.content.parts.map((p: any) => p?.text || '').join('')
-          : '';
-        const directText = first?.content?.text || first?.text || first?.output || '';
-        const fallbackText = parsed?.text || parsed?.output || parsed?.result || parsed?.data?.text || '';
-        text = partText || directText || fallbackText || '';
-        if (!text && typeof raw === 'string') {
-          text = raw;
-        }
-      } catch (err) {
-        if (err instanceof Error && /AI lỗi:/i.test(err.message)) {
-          throw err;
-        }
-        text = raw || '';
-      }
-    } else if (auth.provider === 'gemini' && auth.isApiKey && auth.client) {
-      const response = await auth.client.models.generateContent({
-        model,
-        contents,
-        config: mergedConfig,
-      });
-      text = response.text || '';
-    } else if (auth.provider === 'gemini' || auth.provider === 'gcli') {
-      const geminiBase = auth.baseUrl || getProviderBaseUrl('gcli');
-      const geminiEndpoint = geminiBase.includes('/models/')
-        ? geminiBase
-        : `${geminiBase.replace(/\/+$/, '')}/models/${model}:generateContent`;
-      const resp = await fetchWithTimeout(geminiEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${auth.apiKey}`,
-        },
-        body: JSON.stringify({
+    let attemptConfig: Record<string, unknown> = { ...initialConfig };
+    let promptForAttempt = contents;
+    const expectedMinChars = calculateAdaptiveMinOutputChars(contents, kind, splitConfig.minOutputChars);
+
+    for (let attempt = 0; attempt <= splitConfig.maxRetries; attempt += 1) {
+      const timeoutMs = calculateAdaptiveTimeoutMs(
+        kind,
+        Number(attemptConfig.maxOutputTokens || 0) || (kind === 'fast' ? 1800 : 4200),
+      );
+      // If in relay mode, send request through relay WebSocket; no token exposed to browser.
+      if (runtime.mode === 'relay') {
+        const body = {
           contents: [
             {
-              parts: [{ text: contents }],
+              parts: [{ text: promptForAttempt }],
             },
           ],
-          generationConfig: mergedConfig,
-        }),
-      }, kind === 'fast' ? 15000 : 25000);
-      if (!resp.ok) {
-        const body = await resp.text();
-        throw new Error(`${auth.provider === 'gcli' ? 'GCLI' : 'Gemini'} (Bearer) error ${resp.status}: ${body.slice(0, 200)}`);
-      }
-      const data = await resp.json();
-      text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    } else if (auth.provider === 'openai' || auth.provider === 'custom') {
-      const openAiBase = auth.baseUrl || getProviderBaseUrl(auth.provider === 'custom' ? 'custom' : 'openai');
-      const completionEndpoint = /\/chat\/completions$/i.test(openAiBase)
-        ? openAiBase
-        : `${openAiBase.replace(/\/+$/, '')}/chat/completions`;
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-      if (auth.apiKey.trim()) {
-        headers.Authorization = `Bearer ${auth.apiKey}`;
-      }
-      const resp = await fetchWithTimeout(completionEndpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
+          generationConfig: attemptConfig,
+        };
+        const raw = await relayGenerateContent(model, body, timeoutMs);
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed?.error?.message) {
+            throw new Error(`AI lỗi: ${parsed.error.message}`);
+          }
+          text = extractTextFromModelPayload(parsed) || '';
+          if (!text && typeof raw === 'string') {
+            text = raw;
+          }
+        } catch (err) {
+          if (err instanceof Error && /AI lỗi:/i.test(err.message)) {
+            throw err;
+          }
+          text = raw || '';
+        }
+      } else if (auth.provider === 'gemini' && auth.isApiKey && auth.client) {
+        const response = await auth.client.models.generateContent({
           model,
-          messages: [{ role: 'user', content: contents }],
-          temperature: typeof mergedConfig.temperature === 'number' ? mergedConfig.temperature : 0.7,
-          max_tokens: typeof mergedConfig.maxOutputTokens === 'number' ? mergedConfig.maxOutputTokens : undefined,
-        }),
-      }, kind === 'fast' ? 15000 : 25000);
-      if (!resp.ok) {
-        const body = await resp.text();
-        throw new Error(`${auth.provider === 'custom' ? 'Custom endpoint' : 'OpenAI'} error ${resp.status}: ${body.slice(0, 220)}`);
-      }
-      const data = await resp.json();
-      text = data?.choices?.[0]?.message?.content || '';
-    } else if (auth.provider === 'anthropic') {
-      const resp = await fetchWithTimeout(`${auth.baseUrl || getProviderBaseUrl('anthropic')}/messages`, {
-        method: 'POST',
-        headers: {
+          contents: promptForAttempt,
+          config: attemptConfig,
+        });
+        text = response.text || extractTextFromModelPayload(response as any) || '';
+      } else if (auth.provider === 'gemini' || auth.provider === 'gcli') {
+        const geminiBase = auth.baseUrl || getProviderBaseUrl('gcli');
+        const geminiEndpoint = geminiBase.includes('/models/')
+          ? geminiBase
+          : `${geminiBase.replace(/\/+$/, '')}/models/${model}:generateContent`;
+        const resp = await fetchWithTimeout(geminiEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${auth.apiKey}`,
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [{ text: promptForAttempt }],
+              },
+            ],
+            generationConfig: attemptConfig,
+          }),
+        }, timeoutMs);
+        if (!resp.ok) {
+          const body = await resp.text();
+          throw new Error(`${auth.provider === 'gcli' ? 'GCLI' : 'Gemini'} (Bearer) error ${resp.status}: ${body.slice(0, 200)}`);
+        }
+        const data = await resp.json();
+        text = extractTextFromModelPayload(data) || '';
+      } else if (auth.provider === 'openai' || auth.provider === 'custom') {
+        const openAiBase = auth.baseUrl || getProviderBaseUrl(auth.provider === 'custom' ? 'custom' : 'openai');
+        const completionEndpoint = /\/chat\/completions$/i.test(openAiBase)
+          ? openAiBase
+          : `${openAiBase.replace(/\/+$/, '')}/chat/completions`;
+        const headers: Record<string, string> = {
           'Content-Type': 'application/json',
-          'x-api-key': auth.apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
+        };
+        if (auth.apiKey.trim()) {
+          headers.Authorization = `Bearer ${auth.apiKey}`;
+        }
+        const wantsJson = String(attemptConfig.responseMimeType || '').toLowerCase().includes('json');
+        const bodyPayload: Record<string, unknown> = {
           model,
-          max_tokens: typeof mergedConfig.maxOutputTokens === 'number' ? mergedConfig.maxOutputTokens : 4096,
-          temperature: typeof mergedConfig.temperature === 'number' ? mergedConfig.temperature : 0.7,
-          messages: [{ role: 'user', content: contents }],
-        }),
-      }, kind === 'fast' ? 15000 : 25000);
-      if (!resp.ok) {
-        const body = await resp.text();
-        throw new Error(`Anthropic error ${resp.status}: ${body.slice(0, 220)}`);
+          messages: [{ role: 'user', content: promptForAttempt }],
+          temperature: typeof attemptConfig.temperature === 'number' ? attemptConfig.temperature : 0.7,
+          max_tokens: typeof attemptConfig.maxOutputTokens === 'number' ? attemptConfig.maxOutputTokens : undefined,
+        };
+        if (auth.provider === 'openai' && wantsJson) {
+          bodyPayload.response_format = { type: 'json_object' };
+        }
+        const resp = await fetchWithTimeout(completionEndpoint, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(bodyPayload),
+        }, timeoutMs);
+        if (!resp.ok) {
+          const body = await resp.text();
+          throw new Error(`${auth.provider === 'custom' ? 'Custom endpoint' : 'OpenAI'} error ${resp.status}: ${body.slice(0, 220)}`);
+        }
+        const data = await resp.json();
+        text = data?.choices?.[0]?.message?.content || extractTextFromModelPayload(data) || '';
+      } else if (auth.provider === 'anthropic') {
+        const resp = await fetchWithTimeout(`${auth.baseUrl || getProviderBaseUrl('anthropic')}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': auth.apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model,
+            max_tokens: typeof attemptConfig.maxOutputTokens === 'number' ? attemptConfig.maxOutputTokens : 4096,
+            temperature: typeof attemptConfig.temperature === 'number' ? attemptConfig.temperature : 0.7,
+            messages: [{ role: 'user', content: promptForAttempt }],
+          }),
+        }, timeoutMs);
+        if (!resp.ok) {
+          const body = await resp.text();
+          throw new Error(`Anthropic error ${resp.status}: ${body.slice(0, 220)}`);
+        }
+        const data = await resp.json();
+        text = Array.isArray(data?.content)
+          ? data.content.map((part: { text?: string }) => part?.text || '').join('\n').trim()
+          : extractTextFromModelPayload(data) || '';
+      } else {
+        throw new Error('Nhà cung cấp hiện tại chưa được hỗ trợ.');
       }
-      const data = await resp.json();
-      text = Array.isArray(data?.content)
-        ? data.content.map((part: { text?: string }) => part?.text || '').join('\n').trim()
-        : '';
-    } else {
-      throw new Error('Nhà cung cấp hiện tại chưa được hỗ trợ.');
+
+      text = String(text || '').trim();
+      const wantsJson = String(attemptConfig.responseMimeType || '').toLowerCase().includes('json');
+      const parsedAny = wantsJson ? tryParseJson<any>(text, 'any') : null;
+      const jsonOk = !wantsJson || Boolean(parsedAny);
+      const isExplicitEmpty =
+        wantsJson &&
+        ((Array.isArray(parsedAny) && parsedAny.length === 0) ||
+          (parsedAny &&
+            typeof parsedAny === 'object' &&
+            Array.isArray((parsedAny as any).issues) &&
+            (parsedAny as any).issues.length === 0));
+      const longEnough = isExplicitEmpty || expectedMinChars <= 0 || text.length >= expectedMinChars;
+      if ((jsonOk && longEnough) || attempt >= splitConfig.maxRetries) {
+        break;
+      }
+
+      const currentMax = Number(attemptConfig.maxOutputTokens || 0) || (kind === 'fast' ? 1800 : 4200);
+      attemptConfig = {
+        ...attemptConfig,
+        maxOutputTokens: Math.min(16384, Math.round(currentMax * 1.8)),
+      };
+      promptForAttempt = `${contents}\n\nYÊU CẦU BỔ SUNG BẮT BUỘC: phản hồi trước quá ngắn hoặc chưa đúng định dạng. Hãy trả lại đầy đủ, chi tiết hơn và tuân thủ đúng format đã yêu cầu.`;
     }
 
     bumpMainAiUsage(contents, text);
@@ -1406,13 +1577,7 @@ const WriterProPanel = () => {
 
   const trimForAi = (text: string, max = 6000) => String(text || '').trim().slice(0, max);
   const extractJson = (raw: string) => {
-    const match = raw.match(/\{[\s\S]*\}/);
-    const target = match ? match[0] : raw;
-    try {
-      return JSON.parse(target);
-    } catch {
-      return null;
-    }
+    return tryParseJson<any>(raw, 'object') || tryParseJson<any>(normalizeJsonLikeText(raw), 'object');
   };
 
   const runAutocomplete = async () => {
@@ -1434,10 +1599,12 @@ Trả về JSON đúng cấu trúc:
 NỘI DUNG TRƯỚC ĐÓ:
 ${trimForAi(autoContext, 7000)}
       `.trim();
-      const raw = await generateGeminiText(ai, 'fast', prompt, {
+      const raw = await generateGeminiText(ai, 'quality', prompt, {
         responseMimeType: 'application/json',
         temperature: 0.7,
-        maxOutputTokens: 700,
+        maxOutputTokens: Math.min(4800, Math.max(1400, Math.round(autoLength * 14))),
+        minOutputChars: Math.max(220, Math.round(autoLength * 2.8)),
+        maxRetries: 2,
       });
       const parsed = extractJson(raw);
       const variants = Array.isArray(parsed?.variants)
@@ -1475,10 +1642,12 @@ Trả về JSON:
 BỐI CẢNH:
 ${trimForAi(plotContext, 7000)}
       `.trim();
-      const raw = await generateGeminiText(ai, 'fast', prompt, {
+      const raw = await generateGeminiText(ai, 'quality', prompt, {
         responseMimeType: 'application/json',
         temperature: 0.6,
-        maxOutputTokens: 700,
+        maxOutputTokens: 2600,
+        minOutputChars: 260,
+        maxRetries: 2,
       });
       const parsed = extractJson(raw);
       setPlotResult({
@@ -1516,9 +1685,11 @@ Giữ nguyên ý chính, không thêm chi tiết mới.
 ĐOẠN GỐC:
 ${trimForAi(toneSource, 6000)}
       `.trim();
-      const raw = await generateGeminiText(ai, 'fast', prompt, {
+      const raw = await generateGeminiText(ai, 'quality', prompt, {
         temperature: 0.65,
-        maxOutputTokens: 700,
+        maxOutputTokens: 3200,
+        minOutputChars: Math.max(180, Math.round(trimForAi(toneSource, 6000).length * 0.35)),
+        maxRetries: 2,
       });
       setToneResult(raw.trim());
     } catch (err) {
@@ -1541,9 +1712,11 @@ CÂU HỎI: ${queryQuestion.trim()}
 BỐI CẢNH:
 ${trimForAi(queryContext, 7000)}
       `.trim();
-      const raw = await generateGeminiText(ai, 'fast', prompt, {
+      const raw = await generateGeminiText(ai, 'quality', prompt, {
         temperature: 0.3,
-        maxOutputTokens: 500,
+        maxOutputTokens: 2200,
+        minOutputChars: 220,
+        maxRetries: 2,
       });
       setQueryResult(raw.trim());
     } catch (err) {
@@ -1570,10 +1743,12 @@ Hãy trích xuất dữ liệu wiki từ nội dung sau. Trả về JSON:
 NỘI DUNG:
 ${trimForAi(wikiSource, 9000)}
       `.trim();
-      const raw = await generateGeminiText(ai, 'fast', prompt, {
+      const raw = await generateGeminiText(ai, 'quality', prompt, {
         responseMimeType: 'application/json',
         temperature: 0.4,
-        maxOutputTokens: 900,
+        maxOutputTokens: 3200,
+        minOutputChars: 260,
+        maxRetries: 2,
       });
       const parsed = extractJson(raw);
       setWikiResult({
@@ -3462,7 +3637,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
       const ai = createGeminiClient();
       const suggestionText = await generateGeminiText(
         ai,
-        'fast',
+        'quality',
         `Dựa trên các thông tin sau:
         Tiêu đề: ${title}
         Thể loại: ${genre}
@@ -3477,6 +3652,11 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
         6. Các yếu tố đặc sắc khác.
         
         Trả về kết quả dưới dạng Markdown chuyên nghiệp, rõ ràng.`,
+        {
+          maxOutputTokens: 3800,
+          minOutputChars: 320,
+          maxRetries: 2,
+        },
       );
 
       if (suggestionText) {
@@ -5036,7 +5216,7 @@ const AIGenerationModal = ({
       const ai = createGeminiClient();
       const scriptText = await generateGeminiText(
         ai,
-        'fast',
+        'quality',
         `Dựa trên dàn ý sau, hãy xây dựng một kịch bản chi tiết cho chương này. 
         Kịch bản nên bao gồm các cảnh chính, diễn biến tâm lý và các điểm mấu chốt.
         
@@ -5045,6 +5225,9 @@ const AIGenerationModal = ({
         
         Trả về kịch bản dưới dạng văn bản Markdown.`,
         {
+          maxOutputTokens: 5200,
+          minOutputChars: 700,
+          maxRetries: 2,
           safetySettings: [
             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -5068,7 +5251,7 @@ const AIGenerationModal = ({
       const ai = createGeminiClient();
       const outlineText = await generateGeminiText(
         ai,
-        'fast',
+        'quality',
         `Dựa trên nội dung chương trước, hãy gợi ý một dàn ý ngắn gọn cho chương tiếp theo.
         
         Nội dung chương trước: ${previousContext || "Đây là chương đầu tiên."}
@@ -5076,6 +5259,9 @@ const AIGenerationModal = ({
         
         Trả về dàn ý dưới dạng danh sách gạch đầu dòng ngắn gọn.`,
         {
+          maxOutputTokens: 2400,
+          minOutputChars: 220,
+          maxRetries: 2,
           safetySettings: [
             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -5751,7 +5937,12 @@ const AppContent = () => {
         ai,
         'quality',
         analysisPrompt,
-        { responseMimeType: "application/json" },
+        {
+          responseMimeType: "application/json",
+          maxOutputTokens: 2600,
+          minOutputChars: 200,
+          maxRetries: 2,
+        },
       );
 
       const analysisParsed = tryParseJson<any>(analysisTextRaw || '', 'object');
@@ -5786,19 +5977,20 @@ const AppContent = () => {
       }
 
       // 3. Split content into chapters/chunks and translate
-      const chunks = splitTextForTranslation(translateFileContent, 9000);
+      const chunks = splitTextForTranslation(translateFileContent, 3200);
       const effectiveChunks = chunks.length ? chunks : [String(translateFileContent || '').trim()];
+      const maxTranslateChunks = effectiveChunks.length;
       const translatedChapters: Chapter[] = [];
 
       const adultContentInstruction = options.isAdult 
         ? "CHẾ ĐỘ 18+ KHÔNG GIỚI HẠN: Bạn là một dịch giả chuyên nghiệp. Bạn ĐƯỢC PHÉP và NÊN dịch các nội dung nhạy cảm, bạo lực, tình dục một cách CHI TIẾT và TRẦN TRỤI. Tuyệt đối không được né tránh hoặc tóm tắt."
         : "CHẾ ĐỘ BÌNH THƯỜNG: Tuyệt đối không dịch nội dung khiêu dâm hoặc bạo lực cực đoan.";
 
-      for (let i = 0; i < Math.min(effectiveChunks.length, 20); i++) { // Limit to 20 chapters for demo
+      for (let i = 0; i < maxTranslateChunks; i++) {
         const chunk = effectiveChunks[i];
         if (chunk.trim().length < 50) continue;
 
-        setAILoadingMessage(`Đang dịch chương ${i + 1}/${Math.min(effectiveChunks.length, 20)}...`);
+        setAILoadingMessage(`Đang dịch chương ${i + 1}/${maxTranslateChunks}...`);
         
         const translatePrompt = `
           Bạn là một dịch giả văn học cao cấp, chuyên dịch truyện từ tiếng Trung sang tiếng Việt.
@@ -5818,12 +6010,17 @@ const AppContent = () => {
           }
         `;
 
+        const dynamicMaxTokens = Math.min(12288, Math.max(2600, Math.round(chunk.length * 1.35)));
+        const dynamicMinChars = Math.max(220, Math.round(chunk.length * 0.2));
         const translateTextRaw = await generateGeminiText(
           ai,
           'quality',
           translatePrompt,
           { 
             responseMimeType: "application/json",
+            maxOutputTokens: dynamicMaxTokens,
+            minOutputChars: dynamicMinChars,
+            maxRetries: 2,
             safetySettings: [
               { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
               { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -5833,7 +6030,24 @@ const AppContent = () => {
           },
         );
 
-        const translated = normalizeAiJsonContent(translateTextRaw || '', `Chương ${i + 1}`);
+        let translated = normalizeAiJsonContent(translateTextRaw || '', `Chương ${i + 1}`);
+        if (translated.content.length < Math.max(180, Math.round(dynamicMinChars * 0.7))) {
+          const retryPrompt = `${translatePrompt}\n\nYÊU CẦU BẮT BUỘC: Bản dịch trước quá ngắn, hãy dịch đầy đủ toàn bộ đoạn nguồn, không tóm tắt, không rút gọn.`;
+          const retryRaw = await generateGeminiText(ai, 'quality', retryPrompt, {
+            responseMimeType: "application/json",
+            maxOutputTokens: Math.min(14336, Math.round(dynamicMaxTokens * 1.5)),
+            minOutputChars: Math.round(dynamicMinChars * 1.1),
+            maxRetries: 1,
+            safetySettings: [
+              { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+              { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+              { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+              { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
+            ]
+          });
+          const retried = normalizeAiJsonContent(retryRaw || '', `Chương ${i + 1}`);
+          if (retried.content.length > translated.content.length) translated = retried;
+        }
         translatedChapters.push({
           id: `tr-${Date.now()}-${i}`,
           title: String(translated.title || `Chương ${i + 1}`).trim(),
@@ -5941,7 +6155,12 @@ const AppContent = () => {
         ai,
         'quality',
         analysisPrompt,
-        { responseMimeType: "application/json" },
+        {
+          responseMimeType: "application/json",
+          maxOutputTokens: 3200,
+          minOutputChars: 260,
+          maxRetries: 2,
+        },
       ) || '{}';
       const analysisParsed = tryParseJson<any>(analysisText, 'object') || {};
       const analysis = {
@@ -5973,7 +6192,12 @@ const AppContent = () => {
         ai,
         'quality',
         planPrompt,
-        { responseMimeType: "application/json" },
+        {
+          responseMimeType: "application/json",
+          maxOutputTokens: Math.min(5200, Math.max(1600, options.chapterCount * 700)),
+          minOutputChars: Math.max(200, options.chapterCount * 70),
+          maxRetries: 2,
+        },
       ) || '{}';
       const planParsed = tryParseJson<any>(planText, 'object');
       let plannedChapters = Array.isArray(planParsed?.chapters) ? planParsed.chapters : (Array.isArray(planParsed) ? planParsed : []);
@@ -6004,6 +6228,9 @@ const AppContent = () => {
 
       // 4. Generate chapters
       const generatedChapters: Chapter[] = [];
+      const minChapterWords = 1800;
+      const chapterMaxTokens = Math.min(16384, Math.max(3600, Math.round(minChapterWords * 2.4)));
+      const minChapterChars = Math.max(1100, Math.round(minChapterWords * 2.2));
       for (let i = 0; i < plannedChapters.length; i++) {
         const ch = plannedChapters[i];
         setAILoadingMessage(`Đang viết chương ${i + 1}/${plannedChapters.length}: ${ch.title}...`);
@@ -6025,11 +6252,14 @@ const AppContent = () => {
           - Không tóm tắt, hãy viết chi tiết các hành động và lời thoại.
         `;
 
-        const chapterText = await generateGeminiText(
+        let chapterText = await generateGeminiText(
           ai,
           'quality',
           chapterPrompt,
           {
+            maxOutputTokens: chapterMaxTokens,
+            minOutputChars: minChapterChars,
+            maxRetries: 2,
             safetySettings: [
               { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
               { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -6038,6 +6268,25 @@ const AppContent = () => {
             ]
           },
         );
+
+        if (countWords(chapterText || '') < Math.max(220, Math.round(minChapterWords * 0.55))) {
+          chapterText = await generateGeminiText(
+            ai,
+            'quality',
+            `${chapterPrompt}\n\nYÊU CẦU BẮT BUỘC: Bản trước quá ngắn. Hãy viết lại đầy đủ, chi tiết, đúng độ dài yêu cầu.`,
+            {
+              maxOutputTokens: Math.min(16384, Math.round(chapterMaxTokens * 1.35)),
+              minOutputChars: Math.round(minChapterChars * 1.15),
+              maxRetries: 1,
+              safetySettings: [
+                { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+                { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
+              ]
+            },
+          );
+        }
 
         generatedChapters.push({
           id: `ch-${Date.now()}-${i}`,
@@ -6170,6 +6419,8 @@ const AppContent = () => {
         ? "AI TỰ DỰ ĐOÁN: Dựa trên dàn ý và nội dung THỰC TẾ của các chương trước (được cung cấp trong phần BỐI CẢNH THỰC TẾ), hãy tự sáng tạo và dự đoán các tình tiết tiếp theo một cách logic. LƯU Ý: Tuyệt đối không lặp lại các tình tiết đã xảy ra, hãy tập trung vào diễn biến MỚI."
         : "BÁM SÁT DÀN Ý: Hãy viết chính xác theo các tình tiết đã được cung cấp trong dàn ý, không tự ý thay đổi mạch truyện chính.";
 
+      const chapterWordsTarget = Math.max(350, Number.parseInt(String(chapterLength || '1000'), 10) || 1000);
+      const batchMinChars = Math.min(22000, Math.max(1200, Math.round(chapterCount * chapterWordsTarget * 1.5)));
       const generatedChapterBatchText = await generateGeminiText(
         ai,
         'quality',
@@ -6225,6 +6476,8 @@ const AppContent = () => {
         {
           responseMimeType: "application/json",
           maxOutputTokens: 8192,
+          minOutputChars: batchMinChars,
+          maxRetries: 2,
           safetySettings: [
             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -6255,10 +6508,13 @@ const AppContent = () => {
       const nextOrder = currentChapters.length + 1;
       
       const newChapters = newChaptersData.map((c, i) => {
+        const sourceTitle = typeof c === 'object' && c ? String((c as any).title || '').trim() : '';
+        const sourceContent = typeof c === 'object' && c ? String((c as any).content || '') : String(c || '');
+        const normalizedChapter = normalizeAiJsonContent(sourceContent, sourceTitle || `Chương mới ${i + 1}`);
         const chapter: any = {
           id: Math.random().toString(36).substr(2, 9),
-          title: String(c.title || `Chương mới ${i + 1}`),
-          content: String(c.content || '').replace(/\]\s*\[/g, ']\n\n['), // Tự động xuống dòng đôi giữa các ngoặc vuông để Markdown nhận diện
+          title: String(sourceTitle || normalizedChapter.title || `Chương mới ${i + 1}`),
+          content: String(normalizedChapter.content || sourceContent || '').replace(/\]\s*\[/g, ']\n\n['), // Tự động xuống dòng đôi giữa các ngoặc vuông để Markdown nhận diện
           order: nextOrder + i,
           createdAt: Timestamp.now(),
         };
@@ -6418,6 +6674,8 @@ const AppContent = () => {
         {
           responseMimeType: "application/json",
           maxOutputTokens: 8192,
+          minOutputChars: Math.min(12000, Math.max(900, Math.round(content.length * 0.35))),
+          maxRetries: 2,
           safetySettings: [
             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -6471,6 +6729,8 @@ const AppContent = () => {
           {
             responseMimeType: "text/plain",
             maxOutputTokens: 8192,
+            minOutputChars: Math.min(14000, Math.max(1200, Math.round(content.length * 0.4))),
+            maxRetries: 2,
             safetySettings: [
               { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
               { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
