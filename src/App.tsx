@@ -6173,15 +6173,27 @@ const AppContent = () => {
         },
       );
 
-      const textResponse = aiStoryText || '{}';
-      const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
-      const result = JSON.parse(jsonMatch ? jsonMatch[0] : textResponse);
-      
-      if (result.title && result.content) {
+      const textResponse = aiStoryText || '';
+      const parsed = tryParseJson<any>(textResponse, 'object');
+      let resolvedTitle = parsed && typeof parsed === 'object' ? String(parsed.title || '').trim() : '';
+      let resolvedContent = parsed && typeof parsed === 'object' ? String(parsed.content || '').trim() : '';
+
+      if (!resolvedContent) {
+        const cleaned = stripJsonFence(textResponse);
+        const lines = cleaned.split('\n').map((l) => l.trim()).filter(Boolean);
+        if (!resolvedTitle && lines.length) {
+          resolvedTitle = lines[0].replace(/^#+\s*/g, '').trim();
+        }
+        resolvedContent = cleaned.trim();
+      }
+
+      if (!resolvedTitle) resolvedTitle = 'Truyện mới';
+
+      if (resolvedTitle && resolvedContent) {
         const storyRef = await addDoc(collection(db, 'stories'), {
           authorId: user.uid,
-          title: String(result.title).substring(0, 480),
-          content: String(result.content).replace(/\]\s*\[/g, ']\n\n[').substring(0, 1999900), // Tự động xuống dòng đôi giữa các ngoặc vuông để Markdown nhận diện
+          title: resolvedTitle.substring(0, 480),
+          content: resolvedContent.replace(/\]\s*\[/g, ']\n\n[').substring(0, 1999900), // Tự động xuống dòng đôi giữa các ngoặc vuông để Markdown nhận diện
           genre: String(genre || 'Tự do').substring(0, 190),
           isAdult: Boolean(isAdult),
           isPublic: false,
@@ -6194,8 +6206,8 @@ const AppContent = () => {
         const newStory = {
           id: storyRef.id,
           authorId: user.uid,
-          title: String(result.title).substring(0, 480),
-          content: String(result.content).replace(/\]\s*\[/g, ']\n\n[').substring(0, 1999900),
+          title: resolvedTitle.substring(0, 480),
+          content: resolvedContent.replace(/\]\s*\[/g, ']\n\n[').substring(0, 1999900),
           genre: String(genre || 'Tự do').substring(0, 190),
           isAdult: Boolean(isAdult),
           isPublic: false,
@@ -6210,7 +6222,7 @@ const AppContent = () => {
 
         alert("AI đã tạo truyện thành công từ file của bạn!");
       } else {
-        throw new Error("AI không thể tạo được cấu trúc truyện hợp lệ.");
+        throw new Error("AI không trả về nội dung hợp lệ để tạo truyện.");
       }
     } catch (error) {
       console.error("AI Creation failed", error);
