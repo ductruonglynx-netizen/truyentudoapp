@@ -909,6 +909,58 @@ function calculateAdaptiveTimeoutMs(kind: 'fast' | 'quality', maxOutputTokens: n
   return Math.min(180000, 35000 + Math.round(tokens * 14));
 }
 
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function stringifyError(err: unknown): string {
+  if (err instanceof Error) return err.message || String(err);
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err || '');
+  }
+}
+
+function extractRetryDelayMs(err: unknown): number {
+  const message = stringifyError(err);
+  const retryDelayMatch = message.match(/retryDelay["'\s:]*"?(\d+(?:\.\d+)?)s/i);
+  if (retryDelayMatch?.[1]) {
+    return Math.max(1000, Math.round(Number(retryDelayMatch[1]) * 1000));
+  }
+  const retryInMatch = message.match(/retry in\s+(\d+(?:\.\d+)?)s/i);
+  if (retryInMatch?.[1]) {
+    return Math.max(1000, Math.round(Number(retryInMatch[1]) * 1000));
+  }
+  return 0;
+}
+
+function isQuotaOrRateLimitError(err: unknown): boolean {
+  const message = stringifyError(err).toLowerCase();
+  if (message.includes('resource_exhausted') || message.includes('quota exceeded') || message.includes('rate limit')) {
+    return true;
+  }
+  return /\b429\b/.test(message);
+}
+
+function isDailyQuotaExceededError(err: unknown): boolean {
+  const message = stringifyError(err).toLowerCase();
+  return (
+    message.includes('generaterequestsperday') ||
+    message.includes('free_tier_requests') ||
+    message.includes('perday') ||
+    message.includes('per day per project')
+  );
+}
+
+function getGeminiFallbackModels(baseModel: string, kind: 'fast' | 'quality'): string[] {
+  const preferred = kind === 'fast'
+    ? ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-3.1-pro-preview']
+    : ['gemini-2.5-flash', 'gemini-3.1-pro-preview', 'gemini-2.0-flash'];
+  const merged = [baseModel, ...preferred].map((item) => String(item || '').trim()).filter(Boolean);
+  return Array.from(new Set(merged));
+}
+
 const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit, timeoutMs: number) => {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -937,13 +989,16 @@ async function generateGeminiText(
   config?: Record<string, unknown>,
 ): Promise<string> {
   const runtime = getApiRuntimeConfig();
-  const model = auth.model || getProfileModel(kind, auth.provider);
+  const initialModel = auth.model || getProfileModel(kind, auth.provider);
+  const modelCandidates = auth.provider === 'gemini' || auth.provider === 'gcli'
+    ? getGeminiFallbackModels(initialModel, kind)
+    : [initialModel];
   const splitConfig = splitGenConfig(config);
   const initialConfig = buildDefaultGenConfig(kind, splitConfig.providerConfig);
   const reqFingerprint = quickHash(
     JSON.stringify({
       provider: auth.provider,
-      model,
+      model: initialModel,
       contents,
       config: initialConfig,
       maxRetries: splitConfig.maxRetries,
@@ -972,128 +1027,151 @@ async function generateGeminiText(
     let attemptConfig: Record<string, unknown> = { ...initialConfig };
     let promptForAttempt = contents;
     const expectedMinChars = calculateAdaptiveMinOutputChars(contents, kind, splitConfig.minOutputChars);
+    let currentModelIndex = 0;
+    let currentModel = modelCandidates[currentModelIndex] || initialModel;
+    const maxAttempts = splitConfig.maxRetries + Math.max(0, modelCandidates.length - 1);
 
-    for (let attempt = 0; attempt <= splitConfig.maxRetries; attempt += 1) {
+    for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
       const timeoutMs = calculateAdaptiveTimeoutMs(
         kind,
         Number(attemptConfig.maxOutputTokens || 0) || (kind === 'fast' ? 1800 : 4200),
       );
-      // If in relay mode, send request through relay WebSocket; no token exposed to browser.
-      if (runtime.mode === 'relay') {
-        const body = {
-          contents: [
-            {
-              parts: [{ text: promptForAttempt }],
-            },
-          ],
-          generationConfig: attemptConfig,
-        };
-        const raw = await relayGenerateContent(model, body, timeoutMs);
-        try {
-          const parsed = JSON.parse(raw);
-          if (parsed?.error?.message) {
-            throw new Error(`AI lỗi: ${parsed.error.message}`);
-          }
-          text = extractTextFromModelPayload(parsed) || '';
-          if (!text && typeof raw === 'string') {
-            text = raw;
-          }
-        } catch (err) {
-          if (err instanceof Error && /AI lỗi:/i.test(err.message)) {
-            throw err;
-          }
-          text = raw || '';
-        }
-      } else if (auth.provider === 'gemini' && auth.isApiKey && auth.client) {
-        const response = await auth.client.models.generateContent({
-          model,
-          contents: promptForAttempt,
-          config: attemptConfig,
-        });
-        text = response.text || extractTextFromModelPayload(response as any) || '';
-      } else if (auth.provider === 'gemini' || auth.provider === 'gcli') {
-        const geminiBase = auth.baseUrl || getProviderBaseUrl('gcli');
-        const geminiEndpoint = geminiBase.includes('/models/')
-          ? geminiBase
-          : `${geminiBase.replace(/\/+$/, '')}/models/${model}:generateContent`;
-        const resp = await fetchWithTimeout(geminiEndpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${auth.apiKey}`,
-          },
-          body: JSON.stringify({
+      try {
+        // If in relay mode, send request through relay WebSocket; no token exposed to browser.
+        if (runtime.mode === 'relay') {
+          const body = {
             contents: [
               {
                 parts: [{ text: promptForAttempt }],
               },
             ],
             generationConfig: attemptConfig,
-          }),
-        }, timeoutMs);
-        if (!resp.ok) {
-          const body = await resp.text();
-          throw new Error(`${auth.provider === 'gcli' ? 'GCLI' : 'Gemini'} (Bearer) error ${resp.status}: ${body.slice(0, 200)}`);
-        }
-        const data = await resp.json();
-        text = extractTextFromModelPayload(data) || '';
-      } else if (auth.provider === 'openai' || auth.provider === 'custom') {
-        const openAiBase = auth.baseUrl || getProviderBaseUrl(auth.provider === 'custom' ? 'custom' : 'openai');
-        const completionEndpoint = /\/chat\/completions$/i.test(openAiBase)
-          ? openAiBase
-          : `${openAiBase.replace(/\/+$/, '')}/chat/completions`;
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-        };
-        if (auth.apiKey.trim()) {
-          headers.Authorization = `Bearer ${auth.apiKey}`;
-        }
-        const wantsJson = String(attemptConfig.responseMimeType || '').toLowerCase().includes('json');
-        const bodyPayload: Record<string, unknown> = {
-          model,
-          messages: [{ role: 'user', content: promptForAttempt }],
-          temperature: typeof attemptConfig.temperature === 'number' ? attemptConfig.temperature : 0.7,
-          max_tokens: typeof attemptConfig.maxOutputTokens === 'number' ? attemptConfig.maxOutputTokens : undefined,
-        };
-        if (auth.provider === 'openai' && wantsJson) {
-          bodyPayload.response_format = { type: 'json_object' };
-        }
-        const resp = await fetchWithTimeout(completionEndpoint, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(bodyPayload),
-        }, timeoutMs);
-        if (!resp.ok) {
-          const body = await resp.text();
-          throw new Error(`${auth.provider === 'custom' ? 'Custom endpoint' : 'OpenAI'} error ${resp.status}: ${body.slice(0, 220)}`);
-        }
-        const data = await resp.json();
-        text = data?.choices?.[0]?.message?.content || extractTextFromModelPayload(data) || '';
-      } else if (auth.provider === 'anthropic') {
-        const resp = await fetchWithTimeout(`${auth.baseUrl || getProviderBaseUrl('anthropic')}/messages`, {
-          method: 'POST',
-          headers: {
+          };
+          const raw = await relayGenerateContent(currentModel, body, timeoutMs);
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed?.error?.message) {
+              throw new Error(`AI lỗi: ${parsed.error.message}`);
+            }
+            text = extractTextFromModelPayload(parsed) || '';
+            if (!text && typeof raw === 'string') {
+              text = raw;
+            }
+          } catch (err) {
+            if (err instanceof Error && /AI lỗi:/i.test(err.message)) {
+              throw err;
+            }
+            text = raw || '';
+          }
+        } else if (auth.provider === 'gemini' && auth.isApiKey && auth.client) {
+          const response = await auth.client.models.generateContent({
+            model: currentModel,
+            contents: promptForAttempt,
+            config: attemptConfig,
+          });
+          text = response.text || extractTextFromModelPayload(response as any) || '';
+        } else if (auth.provider === 'gemini' || auth.provider === 'gcli') {
+          const geminiBase = auth.baseUrl || getProviderBaseUrl('gcli');
+          const geminiEndpoint = geminiBase.includes('/models/')
+            ? geminiBase
+            : `${geminiBase.replace(/\/+$/, '')}/models/${currentModel}:generateContent`;
+          const resp = await fetchWithTimeout(geminiEndpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${auth.apiKey}`,
+            },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [{ text: promptForAttempt }],
+                },
+              ],
+              generationConfig: attemptConfig,
+            }),
+          }, timeoutMs);
+          if (!resp.ok) {
+            const body = await resp.text();
+            throw new Error(`${auth.provider === 'gcli' ? 'GCLI' : 'Gemini'} (Bearer) error ${resp.status}: ${body.slice(0, 200)}`);
+          }
+          const data = await resp.json();
+          text = extractTextFromModelPayload(data) || '';
+        } else if (auth.provider === 'openai' || auth.provider === 'custom') {
+          const openAiBase = auth.baseUrl || getProviderBaseUrl(auth.provider === 'custom' ? 'custom' : 'openai');
+          const completionEndpoint = /\/chat\/completions$/i.test(openAiBase)
+            ? openAiBase
+            : `${openAiBase.replace(/\/+$/, '')}/chat/completions`;
+          const headers: Record<string, string> = {
             'Content-Type': 'application/json',
-            'x-api-key': auth.apiKey,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model,
-            max_tokens: typeof attemptConfig.maxOutputTokens === 'number' ? attemptConfig.maxOutputTokens : 4096,
-            temperature: typeof attemptConfig.temperature === 'number' ? attemptConfig.temperature : 0.7,
+          };
+          if (auth.apiKey.trim()) {
+            headers.Authorization = `Bearer ${auth.apiKey}`;
+          }
+          const wantsJson = String(attemptConfig.responseMimeType || '').toLowerCase().includes('json');
+          const bodyPayload: Record<string, unknown> = {
+            model: currentModel,
             messages: [{ role: 'user', content: promptForAttempt }],
-          }),
-        }, timeoutMs);
-        if (!resp.ok) {
-          const body = await resp.text();
-          throw new Error(`Anthropic error ${resp.status}: ${body.slice(0, 220)}`);
+            temperature: typeof attemptConfig.temperature === 'number' ? attemptConfig.temperature : 0.7,
+            max_tokens: typeof attemptConfig.maxOutputTokens === 'number' ? attemptConfig.maxOutputTokens : undefined,
+          };
+          if (auth.provider === 'openai' && wantsJson) {
+            bodyPayload.response_format = { type: 'json_object' };
+          }
+          const resp = await fetchWithTimeout(completionEndpoint, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(bodyPayload),
+          }, timeoutMs);
+          if (!resp.ok) {
+            const body = await resp.text();
+            throw new Error(`${auth.provider === 'custom' ? 'Custom endpoint' : 'OpenAI'} error ${resp.status}: ${body.slice(0, 220)}`);
+          }
+          const data = await resp.json();
+          text = data?.choices?.[0]?.message?.content || extractTextFromModelPayload(data) || '';
+        } else if (auth.provider === 'anthropic') {
+          const resp = await fetchWithTimeout(`${auth.baseUrl || getProviderBaseUrl('anthropic')}/messages`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': auth.apiKey,
+              'anthropic-version': '2023-06-01',
+            },
+            body: JSON.stringify({
+              model: currentModel,
+              max_tokens: typeof attemptConfig.maxOutputTokens === 'number' ? attemptConfig.maxOutputTokens : 4096,
+              temperature: typeof attemptConfig.temperature === 'number' ? attemptConfig.temperature : 0.7,
+              messages: [{ role: 'user', content: promptForAttempt }],
+            }),
+          }, timeoutMs);
+          if (!resp.ok) {
+            const body = await resp.text();
+            throw new Error(`Anthropic error ${resp.status}: ${body.slice(0, 220)}`);
+          }
+          const data = await resp.json();
+          text = Array.isArray(data?.content)
+            ? data.content.map((part: { text?: string }) => part?.text || '').join('\n').trim()
+            : extractTextFromModelPayload(data) || '';
+        } else {
+          throw new Error('Nhà cung cấp hiện tại chưa được hỗ trợ.');
         }
-        const data = await resp.json();
-        text = Array.isArray(data?.content)
-          ? data.content.map((part: { text?: string }) => part?.text || '').join('\n').trim()
-          : extractTextFromModelPayload(data) || '';
-      } else {
-        throw new Error('Nhà cung cấp hiện tại chưa được hỗ trợ.');
+      } catch (err) {
+        if (isQuotaOrRateLimitError(err)) {
+          const retryDelayMs = extractRetryDelayMs(err);
+          if (currentModelIndex < modelCandidates.length - 1) {
+            currentModelIndex += 1;
+            currentModel = modelCandidates[currentModelIndex];
+            continue;
+          }
+          if (attempt < maxAttempts) {
+            const waitMs = retryDelayMs || Math.min(65000, 2000 * (attempt + 1));
+            await sleepMs(waitMs);
+            continue;
+          }
+          if (isDailyQuotaExceededError(err)) {
+            throw new Error(`Đã chạm quota của model ${currentModel}. Hãy đổi model/API key hoặc chờ quota reset rồi thử lại.`);
+          }
+        }
+        throw err;
       }
 
       text = String(text || '').trim();
@@ -1108,7 +1186,7 @@ async function generateGeminiText(
             Array.isArray((parsedAny as any).issues) &&
             (parsedAny as any).issues.length === 0));
       const longEnough = isExplicitEmpty || expectedMinChars <= 0 || text.length >= expectedMinChars;
-      if ((jsonOk && longEnough) || attempt >= splitConfig.maxRetries) {
+      if ((jsonOk && longEnough) || attempt >= maxAttempts) {
         break;
       }
 
@@ -6493,7 +6571,12 @@ const AppContent = () => {
       setView('stories');
     } catch (error) {
       console.error("Lỗi khi dịch truyện:", error);
-      alert("Có lỗi xảy ra trong quá trình AI dịch truyện.");
+      const rawMessage = error instanceof Error ? error.message : String(error || '');
+      if (isQuotaOrRateLimitError(error)) {
+        alert(`AI đang chạm giới hạn quota/rate limit.\n${rawMessage}\n\nBạn có thể đổi model trong phần API hoặc chờ quota reset rồi dịch lại.`);
+      } else {
+        alert(`Có lỗi xảy ra trong quá trình AI dịch truyện.\n${rawMessage.slice(0, 260)}`);
+      }
     } finally {
       setIsProcessingAI(false);
       setAILoadingMessage('');
