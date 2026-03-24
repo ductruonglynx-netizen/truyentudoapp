@@ -5680,7 +5680,7 @@ const AppContent = () => {
           "characters": [{"name": "...", "personality": "..."}],
           "currentContext": "..."
         }
-        CHỈ TRẢ VỀ JSON thuần, KHÔNG bọc ``` và KHÔNG thêm giải thích.
+        CHỈ TRẢ VỀ JSON thuần, KHÔNG bọc bằng dấu 3 backtick và KHÔNG thêm giải thích.
       `;
 
       const analysisText = await generateGeminiText(
@@ -5712,7 +5712,7 @@ const AppContent = () => {
         {
           "chapters": [{"title": "...", "outline": "..."}]
         }
-        CHỈ TRẢ VỀ JSON thuần, KHÔNG bọc ``` và KHÔNG thêm giải thích.
+        CHỈ TRẢ VỀ JSON thuần, KHÔNG bọc bằng dấu 3 backtick và KHÔNG thêm giải thích.
       `;
 
       const planText = await generateGeminiText(
@@ -5966,7 +5966,7 @@ const AppContent = () => {
         [Trạng thái: Cô đơn]
         
         Trả về kết quả dưới dạng JSON array các chương: [ { "title": "Chương x: ...", "content": "..." }, ... ]
-        CHỈ TRẢ VỀ JSON thuần, KHÔNG bọc ``` và KHÔNG thêm giải thích.
+        CHỈ TRẢ VỀ JSON thuần, KHÔNG bọc bằng dấu 3 backtick và KHÔNG thêm giải thích.
         Nội dung nên được định dạng Markdown.`,
         {
           responseMimeType: "application/json",
