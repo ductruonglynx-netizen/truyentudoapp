@@ -8502,7 +8502,7 @@ const AppContent = () => {
                 TruyenForge
               </div>
               <p className={themeMode === 'dark' ? 'text-slate-200' : 'text-slate-700'}>Playground AI cho viết, dịch, QA, worldbuilding. Vận hành cá nhân nên ưu tiên minh bạch, bảo mật và FinOps rõ ràng.</p>
-              <p className={themeMode === 'dark' ? 'text-slate-400' : 'text-xs text-slate-500'}>© 2026 TruyenForge · Người vận hành: ductruong.lynx@gmail.com</p>
+              <p className={themeMode === 'dark' ? 'text-slate-400' : 'text-xs text-slate-500'}>© 2026 TruyenForge · Người xây dựng: Lynx</p>
             </div>
             <div className="shrink-0 flex items-center gap-2">
               <button
