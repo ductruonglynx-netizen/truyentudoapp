@@ -2632,6 +2632,8 @@ const ToolsManager = ({
 }) => {
   const { user } = useAuth();
   const isApiSection = section === 'api';
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [profileName, setProfileName] = useState(profile.displayName);
   const [profileAvatar, setProfileAvatar] = useState(profile.avatarUrl);
   const [maskedGeminiKey, setMaskedGeminiKey] = useState('');
