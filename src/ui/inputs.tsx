@@ -9,5 +9,5 @@ export const TFInput: React.FC<InputProps> = ({ className, ...rest }) => (
 );
 
 export const TFTextarea: React.FC<TextareaProps> = ({ className, ...rest }) => (
-  <textarea className={clsx("tf-textarea", className)} {...rest} />
+  <textarea className={clsx("tf-textarea tf-mobile-textarea", className)} {...rest} />
 );

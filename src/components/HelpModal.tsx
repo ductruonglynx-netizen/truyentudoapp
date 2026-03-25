@@ -38,26 +38,26 @@ export function HelpModal({ isOpen, onClose }: HelpModalProps) {
   ];
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[100] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
       <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden"
+        className="tf-modal-panel bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden"
       >
-        <div className="p-8">
+        <div className="tf-modal-content p-6 md:p-8">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-2xl font-serif font-bold text-slate-900">Hướng dẫn sử dụng</h3>
+            <h3 className="pr-3 text-2xl font-serif font-bold text-slate-900 tf-break-long">Hướng dẫn sử dụng</h3>
             <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
               <Plus className="w-6 h-6 rotate-45 text-slate-400" />
             </button>
           </div>
           <div className="space-y-6">
             {features.map((feature) => (
-              <div key={feature.title} className="flex gap-4">
+              <div key={feature.title} className="flex items-start gap-4">
                 <div className="p-3 bg-slate-50 rounded-2xl h-fit">{feature.icon}</div>
-                <div>
-                  <h4 className="font-bold text-slate-800">{feature.title}</h4>
-                  <p className="text-sm text-slate-500 leading-relaxed">{feature.desc}</p>
+                <div className="min-w-0">
+                  <h4 className="font-bold text-slate-800 tf-break-long">{feature.title}</h4>
+                  <p className="text-sm text-slate-500 leading-relaxed tf-break-long">{feature.desc}</p>
                 </div>
               </div>
             ))}

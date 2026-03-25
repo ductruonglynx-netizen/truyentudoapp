@@ -14,13 +14,13 @@ type TabsProps = {
 export const TFTabs: React.FC<TabsProps> = ({ tabs, active, onChange, variant = "pill", className }) => {
   if (variant === "underline") {
     return (
-      <div className={clsx("flex gap-4 border-b border-slate-800", className)}>
+      <div className={clsx("tf-scroll-tabs flex gap-4 border-b border-slate-800", className)}>
         {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => onChange(t.key)}
             className={clsx(
-              "pb-3 text-sm font-semibold transition-colors",
+              "pb-3 text-sm font-semibold transition-colors whitespace-nowrap",
               active === t.key ? "text-slate-200 border-b-2 border-indigo-500" : "text-slate-400 hover:text-slate-200"
             )}
           >
@@ -32,13 +32,13 @@ export const TFTabs: React.FC<TabsProps> = ({ tabs, active, onChange, variant = 
   }
 
   return (
-    <div className={clsx("tf-pill-tabs", className)}>
+    <div className={clsx("tf-pill-tabs tf-scroll-tabs", className)}>
       {tabs.map((t) => (
         <button
           key={t.key}
           onClick={() => onChange(t.key)}
           className={clsx(
-            "tf-pill-btn",
+            "tf-pill-btn whitespace-nowrap",
             active === t.key ? "bg-indigo-600 text-white" : "text-slate-200 hover:bg-slate-800"
           )}
         >

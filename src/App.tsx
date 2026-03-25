@@ -3747,20 +3747,20 @@ const AIRulesManager = () => {
       </div>
 
       {viewingRule && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
+        <div className="fixed inset-0 z-[200] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+            className="tf-modal-panel bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
           >
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-              <h3 className="text-xl font-serif font-bold">{viewingRule.name}</h3>
+              <h3 className="text-xl font-serif font-bold tf-break-long pr-3">{viewingRule.name}</h3>
               <button onClick={() => setViewingRule(null)} className="p-2 hover:bg-white rounded-full shadow-sm">
                 <Plus className="w-6 h-6 rotate-45 text-slate-400" />
               </button>
             </div>
-            <div className="p-8 overflow-y-auto">
-              <div className="markdown-body text-slate-600 leading-relaxed whitespace-pre-wrap">
+            <div className="tf-modal-content p-6 md:p-8 overflow-y-auto">
+              <div className="markdown-body text-slate-600 leading-relaxed whitespace-pre-wrap tf-break-long">
                 {viewingRule.content}
               </div>
             </div>
@@ -3927,19 +3927,19 @@ const StyleReferenceLibrary = ({
       </div>
 
       {viewingRef && (
-        <div className="fixed inset-0 z-[250] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
+        <div className="fixed inset-0 z-[250] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+            className="tf-modal-panel bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
           >
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <h3 className="text-xl font-serif font-bold">{viewingRef.name}</h3>
+              <h3 className="text-xl font-serif font-bold tf-break-long pr-3">{viewingRef.name}</h3>
               <button onClick={() => setViewingRef(null)} className="p-2 hover:bg-white rounded-full">
                 <Plus className="w-6 h-6 rotate-45 text-slate-400" />
               </button>
             </div>
-            <div className="p-8 overflow-y-auto whitespace-pre-wrap text-slate-600 text-sm leading-relaxed">
+            <div className="tf-modal-content p-6 md:p-8 overflow-y-auto whitespace-pre-wrap text-slate-600 text-sm leading-relaxed tf-break-long">
               {viewingRef.content}
             </div>
           </motion.div>
@@ -4160,14 +4160,14 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
       exit={{ opacity: 0, y: 20 }}
       className="max-w-4xl mx-auto pt-24 pb-12 px-6"
     >
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <button 
           onClick={onCancel}
-          className="p-2 rounded-full hover:bg-slate-100 transition-colors"
+          className="p-2 rounded-full hover:bg-slate-100 transition-colors shrink-0"
         >
           <ChevronLeft className="w-6 h-6" />
         </button>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 w-full sm:w-auto tf-actions-mobile">
           <button 
             onClick={() => setPreview(!preview)}
             className="flex items-center gap-2 px-4 py-2 rounded-full border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-medium"
@@ -4277,15 +4277,15 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
                     value={coverImageUrl}
                     onChange={(e) => setCoverImageUrl(e.target.value)}
                     placeholder="Dán URL ảnh bìa (https://...)"
-                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 tf-break-all"
                   />
                   <textarea
                     value={coverPrompt}
                     onChange={(e) => setCoverPrompt(e.target.value)}
                     placeholder="Prompt ảnh bìa (tùy chọn). Bỏ trống để tự tạo từ tiêu đề/thể loại."
-                    className="w-full min-h-[88px] rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 resize-none"
+                    className="w-full min-h-[88px] rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 resize-none tf-mobile-textarea"
                   />
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-col sm:flex-row flex-wrap gap-2 tf-actions-mobile">
                     <button
                       type="button"
                       onClick={handlePickCoverFile}
@@ -4323,7 +4323,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
               placeholder="Nhập giới thiệu cho truyện..."
               value={introduction}
               onChange={(e) => setIntroduction(e.target.value)}
-              className="w-full min-h-[150px] text-lg leading-relaxed border border-slate-100 rounded-2xl p-4 focus:ring-indigo-500 focus:border-transparent placeholder:text-slate-300 resize-none"
+              className="w-full min-h-[150px] text-lg leading-relaxed border border-slate-100 rounded-2xl p-4 focus:ring-indigo-500 focus:border-transparent placeholder:text-slate-300 resize-none tf-mobile-textarea"
             />
           </div>
 
@@ -4343,7 +4343,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
               placeholder="Bắt đầu viết câu chuyện của bạn (hỗ trợ Markdown)..."
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              className="w-full min-h-[40vh] text-lg leading-relaxed border-none focus:ring-0 placeholder:text-slate-300 resize-none"
+              className="w-full min-h-[40vh] text-lg leading-relaxed border-none focus:ring-0 placeholder:text-slate-300 resize-none tf-editor-textarea"
             />
           </div>
         </div>
@@ -4391,7 +4391,7 @@ const ConfirmModal = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[150] flex items-center justify-center p-6">
+    <div className="fixed inset-0 z-[150] tf-modal-overlay flex items-center justify-center p-6">
       <motion.div 
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -4403,11 +4403,11 @@ const ConfirmModal = ({
         initial={{ opacity: 0, scale: 0.9, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.9, y: 20 }}
-        className="relative w-full max-w-sm bg-white rounded-[32px] shadow-2xl overflow-hidden p-8"
+        className="tf-modal-panel relative w-full max-w-sm bg-white rounded-[32px] shadow-2xl overflow-hidden p-6 md:p-8"
       >
         <h3 className="text-xl font-serif font-bold text-slate-900 mb-2">{title}</h3>
-        <p className="text-slate-500 mb-8">{message}</p>
-        <div className="flex gap-3">
+        <p className="text-slate-500 mb-8 tf-break-long">{message}</p>
+        <div className="flex gap-3 tf-modal-actions">
           <button 
             onClick={onClose}
             className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-all"
@@ -4608,21 +4608,21 @@ const StoryDetail = ({
 
         <AnimatePresence>
           {isEditingChapter && (
-            <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
+            <div className="fixed inset-0 z-[200] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
               <motion.div 
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
-                className="bg-white w-full max-w-4xl rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+                className="tf-modal-panel bg-white w-full max-w-4xl rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
               >
-                <div className="p-8 border-b border-slate-100 flex justify-between items-center">
+                <div className="p-6 md:p-8 border-b border-slate-100 flex justify-between items-center gap-3">
                   <h3 className="text-2xl font-serif font-bold text-slate-900">Chỉnh sửa chương</h3>
                   <button onClick={() => setIsEditingChapter(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
                     <Plus className="w-6 h-6 rotate-45 text-slate-400" />
                   </button>
                 </div>
                 
-                <div className="p-8 flex-grow overflow-y-auto space-y-6">
+                <div className="tf-modal-content p-6 md:p-8 flex-grow overflow-y-auto space-y-6">
                   <div>
                     <label className="block text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">Tiêu đề chương</label>
                     <input 
@@ -4638,12 +4638,12 @@ const StoryDetail = ({
                       value={editContent}
                       onChange={(e) => setEditContent(e.target.value)}
                       rows={15}
-                      className="w-full px-6 py-4 bg-slate-50 rounded-2xl border-none focus:ring-2 focus:ring-indigo-500 text-slate-700 leading-relaxed"
+                      className="w-full px-6 py-4 bg-slate-50 rounded-2xl border-none focus:ring-2 focus:ring-indigo-500 text-slate-700 leading-relaxed tf-editor-textarea"
                     />
                   </div>
                 </div>
 
-                <div className="p-8 border-t border-slate-100 flex gap-4">
+                <div className="p-6 md:p-8 border-t border-slate-100 flex gap-4 tf-modal-actions">
                   <button 
                     onClick={() => setIsEditingChapter(false)}
                     className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all"
@@ -5252,31 +5252,31 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
+    <div className="fixed inset-0 z-[300] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
       <motion.div 
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white w-full max-w-4xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+        className="tf-modal-panel bg-white w-full max-w-4xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
       >
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-          <div className="flex items-center gap-3">
+        <div className="p-4 md:p-6 border-b border-slate-100 flex justify-between items-center gap-3 bg-slate-50">
+          <div className="flex items-center gap-3 min-w-0">
             <div className="p-2 bg-indigo-100 rounded-xl">
               <Library className="w-5 h-5 text-indigo-600" />
             </div>
-            <h3 className="text-xl font-serif font-bold">Kho Prompt (Yêu cầu AI)</h3>
+            <h3 className="text-xl font-serif font-bold tf-break-long">Kho Prompt (Yêu cầu AI)</h3>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-white rounded-full shadow-sm">
             <Plus className="w-6 h-6 rotate-45 text-slate-400" />
           </button>
         </div>
 
-        <div className="px-6 pt-3 bg-slate-900 text-slate-100 border-b border-slate-800 flex flex-wrap gap-2">
+        <div className="px-4 md:px-6 pt-3 bg-slate-900 text-slate-100 border-b border-slate-800 tf-scroll-tabs flex gap-2">
           {PROMPT_GROUP_TABS.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setSelectedGroup(tab.key)}
               className={cn(
-                'px-4 py-2 rounded-xl text-xs font-bold tracking-wide transition-all border border-slate-800',
+                'px-4 py-2 rounded-xl text-xs font-bold tracking-wide transition-all border border-slate-800 whitespace-nowrap',
                 selectedGroup === tab.key ? 'bg-indigo-600 text-white shadow' : 'bg-slate-800 text-slate-200 hover:bg-slate-700',
               )}
             >
@@ -5285,9 +5285,9 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
           ))}
         </div>
         
-        <div className="flex flex-1 overflow-hidden min-h-[420px] bg-slate-950 text-slate-100">
+        <div className="tf-modal-content flex flex-col md:flex-row flex-1 overflow-hidden min-h-[420px] bg-slate-950 text-slate-100">
           {/* Sidebar */}
-          <div className="w-[32%] border-r border-slate-800 bg-slate-900 overflow-y-auto p-4 space-y-2">
+          <div className="w-full md:w-[32%] border-b md:border-b-0 md:border-r border-slate-800 bg-slate-900 overflow-y-auto p-4 space-y-2">
             {(selectedGroup === 'common' ? coreRules : genreRules).map((item) => (
               <button
                 key={item.id}
@@ -5297,7 +5297,7 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
                   setDraftContent(item.content);
                 }}
                 className={cn(
-                  "w-full text-left px-4 py-3 rounded-xl font-semibold transition-all border border-transparent",
+                  "w-full text-left px-4 py-3 rounded-xl font-semibold transition-all border border-transparent tf-break-long",
                   (selectedGroup === 'common' ? selectedCoreId : selectedGenreId) === item.id
                     ? "bg-indigo-600 text-white border-indigo-500 shadow"
                     : "bg-slate-800 hover:bg-slate-700 text-slate-200"
@@ -5327,7 +5327,7 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
           </div>
           
           {/* Content */}
-          <div className="w-[68%] p-6 overflow-y-auto relative">
+          <div className="w-full md:w-[68%] p-4 md:p-6 overflow-y-auto relative">
             <div className="flex items-center justify-between mb-4">
               <input
                 value={selectedItem?.title || ''}
@@ -5335,7 +5335,7 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
                   const nextList = currentList.map((i) => i.id === selectedId ? { ...i, title: e.target.value } : i);
                   setList(nextList);
                 }}
-                className="text-xl font-bold bg-transparent border-b border-slate-700 focus:border-indigo-400 outline-none w-full"
+                className="text-xl font-bold bg-transparent border-b border-slate-700 focus:border-indigo-400 outline-none w-full tf-break-long"
               />
             </div>
             <textarea
@@ -5344,9 +5344,9 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
               placeholder={selectedGroup === 'common'
                 ? '- Ghi rõ quy tắc bắt buộc...\n- ...'
                 : '- Giọng văn: ...\n- Xưng hô: ...\n- Từ vựng: ...\n- Cấm: ...'}
-            className="w-full min-h-[260px] rounded-2xl border border-slate-800 bg-slate-900 text-slate-100 p-4 text-sm leading-relaxed focus:border-indigo-400 focus:ring-1 focus:ring-indigo-500 outline-none resize-y"
+            className="w-full min-h-[260px] rounded-2xl border border-slate-800 bg-slate-900 text-slate-100 p-4 text-sm leading-relaxed focus:border-indigo-400 focus:ring-1 focus:ring-indigo-500 outline-none resize-y tf-mobile-textarea"
             />
-            <div className="flex justify-end gap-3 mt-4">
+            <div className="flex justify-end gap-3 mt-4 tf-modal-actions">
               <button
                 onClick={() => {
                   onSelect(draftContent);
@@ -5397,25 +5397,25 @@ const ExportStoryModal = ({
 }) => {
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[220] tf-modal-overlay flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 10 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden"
+        className="tf-modal-panel bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden"
       >
         <div className="p-6 border-b border-slate-100 flex items-center justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Xuất truyện</p>
-            <h3 className="text-2xl font-serif font-bold text-slate-900">{storyTitle || 'Truyện'}</h3>
+            <h3 className="text-2xl font-serif font-bold text-slate-900 tf-break-long">{storyTitle || 'Truyện'}</h3>
           </div>
           <button onClick={onClose} className="p-2 rounded-xl hover:bg-slate-100">
             <X className="w-5 h-5 text-slate-500" />
           </button>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="tf-modal-content p-6 space-y-4">
           <div className="space-y-2">
             <p className="text-sm font-semibold text-slate-700">Định dạng</p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {(['txt', 'epub'] as ExportFormat[]).map((fmt) => (
                 <button
                   key={fmt}
@@ -5443,7 +5443,7 @@ const ExportStoryModal = ({
           </label>
           <p className="text-xs text-slate-400">EPUB sẽ tạo nav.xhtml với liên kết tới từng chương. TXT sẽ chèn mục lục dạng danh sách.</p>
         </div>
-        <div className="p-6 border-t border-slate-100 flex justify-end gap-3">
+        <div className="p-6 border-t border-slate-100 flex justify-end gap-3 tf-modal-actions">
           <button onClick={onClose} className="px-4 py-2 rounded-xl border text-sm font-bold text-slate-600 hover:bg-slate-100">
             Hủy
           </button>
@@ -5491,11 +5491,11 @@ const AuthModal = ({
 }) => {
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-[230] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[230] tf-modal-overlay flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 10 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
+        className="tf-modal-panel bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
       >
         <div className="p-6 border-b border-slate-100 flex items-center justify-between">
           <div>
@@ -5506,8 +5506,8 @@ const AuthModal = ({
             <X className="w-5 h-5 text-slate-500" />
           </button>
         </div>
-        <div className="p-6 space-y-4">
-          <div className="grid grid-cols-2 gap-2">
+        <div className="tf-modal-content p-6 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <button
               onClick={() => onModeChange('login')}
               className={cn(
@@ -5553,7 +5553,7 @@ const AuthModal = ({
             ) : null}
             {error ? <p className="text-sm text-rose-600">{error}</p> : null}
           </div>
-          <div className="grid grid-cols-2 gap-3 pt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
             <button
               type="button"
               onClick={() => onProvider('google')}
@@ -5574,7 +5574,7 @@ const AuthModal = ({
             </button>
           </div>
         </div>
-        <div className="p-6 border-t border-slate-100 flex justify-end gap-3">
+        <div className="p-6 border-t border-slate-100 flex justify-end gap-3 tf-modal-actions">
           <button onClick={onClose} className="px-4 py-2 rounded-xl border text-sm font-bold text-slate-600 hover:bg-slate-100">
             Hủy
           </button>
@@ -5617,16 +5617,16 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
         onClose={() => setShowPromptLibrary(false)} 
         onSelect={(prompt) => setAdditionalInstructions(prev => prev ? prev + '\n' + prompt : prompt)} 
       />
-      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+      <div className="fixed inset-0 z-[100] tf-modal-overlay flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
       <motion.div 
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        className="tf-modal-panel bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]"
       >
-        <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-          <div>
+        <div className="p-6 md:p-8 border-b border-slate-100 flex items-center justify-between gap-3 bg-slate-50/50">
+          <div className="min-w-0">
             <h2 className="text-3xl font-serif font-bold text-slate-900 tracking-tight">Dịch truyện bằng AI</h2>
-            <p className="text-slate-500 mt-1 font-medium">File: {fileName}</p>
+            <p className="text-slate-500 mt-1 font-medium tf-break-all">File: {fileName}</p>
             <p className="text-xs text-slate-400 mt-1">Hệ thống sẽ tự nhận diện mốc chương và tự chia phần nếu file quá dài.</p>
           </div>
           <button onClick={onClose} className="p-3 hover:bg-white rounded-2xl transition-colors shadow-sm">
@@ -5634,7 +5634,7 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
           </button>
         </div>
 
-        <div className="p-8 overflow-y-auto space-y-8">
+        <div className="tf-modal-content p-6 md:p-8 overflow-y-auto space-y-8">
           <div className="space-y-4">
             <label className="flex items-center gap-3 p-4 rounded-2xl border-2 border-slate-100 hover:border-indigo-100 transition-all cursor-pointer group">
               <div className={cn(
@@ -5692,12 +5692,12 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
               value={additionalInstructions}
               onChange={(e) => setAdditionalInstructions(e.target.value)}
               placeholder="Ví dụ: Dịch theo phong cách kiếm hiệp, giữ nguyên các từ Hán Việt,..."
-              className="w-full h-32 p-5 rounded-2xl border-2 border-slate-100 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all resize-none font-medium"
+              className="w-full h-32 p-5 rounded-2xl border-2 border-slate-100 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all resize-none font-medium tf-mobile-textarea"
             />
           </div>
         </div>
 
-        <div className="p-8 bg-slate-50/50 border-t border-slate-100 flex gap-4">
+        <div className="p-6 md:p-8 bg-slate-50/50 border-t border-slate-100 flex gap-4 tf-modal-actions">
           <button 
             onClick={onClose}
             className="flex-1 px-8 py-4 rounded-2xl bg-white border-2 border-slate-200 text-slate-600 font-bold hover:bg-slate-100 transition-all"
@@ -5760,17 +5760,17 @@ const AIContinueStoryModal = ({
         onClose={() => setShowPromptLibrary(false)} 
         onSelect={(prompt) => setAdditionalInstructions(prev => prev ? prev + '\n' + prompt : prompt)} 
       />
-      <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
+      <div className="fixed inset-0 z-[100] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
       <motion.div 
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden"
+        className="tf-modal-panel bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden"
       >
-        <div className="p-8">
-          <div className="flex justify-between items-center mb-6">
-            <div>
+        <div className="tf-modal-content p-6 md:p-8">
+          <div className="flex justify-between items-center gap-3 mb-6">
+            <div className="min-w-0">
               <h3 className="text-2xl font-serif font-bold text-slate-900">Viết tiếp truyện</h3>
-              <p className="text-sm text-slate-500 mt-1">File: <span className="font-bold text-indigo-600">{fileName}</span></p>
+              <p className="text-sm text-slate-500 mt-1 tf-break-all">File: <span className="font-bold text-indigo-600">{fileName}</span></p>
             </div>
             <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
               <Plus className="w-6 h-6 rotate-45 text-slate-400" />
@@ -5849,12 +5849,12 @@ const AIContinueStoryModal = ({
                 value={additionalInstructions}
                 onChange={(e) => setAdditionalInstructions(e.target.value)}
                 placeholder="VD: Tập trung vào phát triển tình cảm giữa A và B, hoặc thêm một nhân vật phản diện mới..."
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all h-24 resize-none text-sm"
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all h-24 resize-none text-sm tf-mobile-textarea"
               />
             </div>
           </div>
 
-          <div className="flex gap-4 mt-8">
+          <div className="flex gap-4 mt-8 tf-modal-actions">
             <button 
               onClick={onClose}
               className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all"
@@ -5939,17 +5939,17 @@ const AIStoryCreationModal = ({
         onClose={() => setShowPromptLibrary(false)} 
         onSelect={(prompt) => setGenre(prev => prev ? prev + ', ' + prompt : prompt)} 
       />
-      <div className="fixed inset-0 z-[150] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
+      <div className="fixed inset-0 z-[150] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
       <motion.div 
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
+        className="tf-modal-panel bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
       >
-        <div className="p-8 border-b border-slate-100 bg-indigo-50/30">
-          <div className="flex justify-between items-center">
-            <div>
+        <div className="p-6 md:p-8 border-b border-slate-100 bg-indigo-50/30">
+          <div className="flex justify-between items-center gap-3">
+            <div className="min-w-0">
               <h3 className="text-2xl font-serif font-bold text-slate-900">Thiết lập truyện mới</h3>
-              <p className="text-sm text-indigo-600 mt-1 flex items-center gap-2">
+              <p className="text-sm text-indigo-600 mt-1 flex items-center gap-2 tf-break-all">
                 <FileText className="w-4 h-4" /> {fileName}
               </p>
             </div>
@@ -5959,7 +5959,7 @@ const AIStoryCreationModal = ({
           </div>
         </div>
 
-        <div className="p-8 space-y-6 overflow-y-auto">
+        <div className="tf-modal-content p-6 md:p-8 space-y-6 overflow-y-auto">
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="block text-sm font-bold text-slate-700">Thể loại mong muốn / Yêu cầu thêm</label>
@@ -5979,7 +5979,7 @@ const AIStoryCreationModal = ({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-2">Nhịp điệu</label>
               <select 
@@ -6028,7 +6028,7 @@ const AIStoryCreationModal = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-2">Góc nhìn</label>
               <select 
@@ -6102,16 +6102,16 @@ const AIStoryCreationModal = ({
               value={styleReference}
               onChange={(e) => setStyleReference(e.target.value)}
               placeholder="Dán một đoạn văn mẫu bạn muốn AI bắt chước phong cách..."
-              className="w-full h-24 p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 resize-none text-sm"
+              className="w-full h-24 p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 resize-none text-sm tf-mobile-textarea"
             />
           </div>
 
           {showStyleLibrary && (
-            <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
+            <div className="fixed inset-0 z-[200] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
               <motion.div 
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+                className="tf-modal-panel bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
               >
                 <div className="p-6 border-b border-slate-100 flex justify-between items-center">
                   <h3 className="text-xl font-serif font-bold">Thư viện văn mẫu</h3>
@@ -6119,7 +6119,7 @@ const AIStoryCreationModal = ({
                     <Plus className="w-6 h-6 rotate-45 text-slate-400" />
                   </button>
                 </div>
-                <div className="p-6 overflow-y-auto">
+                <div className="tf-modal-content p-6 overflow-y-auto">
                   <StyleReferenceLibrary 
                     onSelect={(content) => {
                       setStyleReference(content);
@@ -6132,7 +6132,7 @@ const AIStoryCreationModal = ({
           )}
         </div>
 
-        <div className="p-8 bg-slate-50 border-t border-slate-100">
+        <div className="p-6 md:p-8 bg-slate-50 border-t border-slate-100 tf-modal-actions">
           <button 
             onClick={() => onConfirm({ genre, pacing, tone, isAdult, customPacing, customTone, perspective, audience, styleReference })}
             className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-900/20 flex items-center justify-center gap-3"
@@ -6353,14 +6353,14 @@ const AIGenerationModal = ({
         onClose={() => setShowPromptLibrary(false)} 
         onSelect={(prompt) => setAiInstructions(prev => prev ? prev + '\n' + prompt : prompt)} 
       />
-      <div className="fixed inset-0 z-[150] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
+      <div className="fixed inset-0 z-[150] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
       <motion.div 
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white w-full max-w-3xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        className="tf-modal-panel bg-white w-full max-w-3xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
       >
-        <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-          <div>
+        <div className="p-6 md:p-8 border-b border-slate-100 flex justify-between items-center gap-3 bg-slate-50/50">
+          <div className="min-w-0">
             <h3 className="text-2xl font-serif font-bold text-slate-900">Tùy chỉnh viết chương AI</h3>
             <p className="text-sm text-slate-500 mt-1">Thiết lập phong cách và mạch truyện cho AI</p>
           </div>
@@ -6369,7 +6369,7 @@ const AIGenerationModal = ({
           </button>
         </div>
 
-        <div className="p-8 overflow-y-auto space-y-8">
+        <div className="tf-modal-content p-6 md:p-8 overflow-y-auto space-y-8">
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -6404,7 +6404,7 @@ const AIGenerationModal = ({
               value={outline}
               onChange={(e) => setOutline(e.target.value)}
               placeholder="Nhập dàn ý hoặc ý tưởng cho câu chuyện của bạn... (Dàn ý càng chi tiết, AI viết càng dài và hay)"
-              className="w-full h-24 p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none text-slate-700"
+              className="w-full h-24 p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none text-slate-700 tf-mobile-textarea"
             />
           </div>
 
@@ -6435,7 +6435,7 @@ const AIGenerationModal = ({
                 value={aiInstructions}
                 onChange={(e) => setAiInstructions(e.target.value)}
                 placeholder="Ví dụ: Tập trung vào miêu tả tâm lý, viết theo phong cách kiếm hiệp cổ điển..."
-                className="w-full h-32 p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 resize-none text-sm"
+                className="w-full h-32 p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 resize-none text-sm tf-mobile-textarea"
               />
             </div>
             <div className="space-y-4">
@@ -6454,7 +6454,7 @@ const AIGenerationModal = ({
                 value={chapterScript}
                 onChange={(e) => setChapterScript(e.target.value)}
                 placeholder="Kịch bản chi tiết cho chương này (có thể tự viết hoặc dùng AI tạo)..."
-                className="w-full h-32 p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 resize-none text-sm"
+                className="w-full h-32 p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 resize-none text-sm tf-mobile-textarea"
               />
             </div>
           </div>
@@ -6515,7 +6515,7 @@ const AIGenerationModal = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Góc nhìn</label>
                   <select 
@@ -6550,7 +6550,7 @@ const AIGenerationModal = ({
                 <div className="space-y-4">
                   <div>
                     <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block">Nhịp điệu (Pacing)</span>
-                    <div className="grid grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       {['slow', 'normal', 'fast', 'custom'].map((p) => (
                         <button
                           key={p}
@@ -6664,7 +6664,7 @@ const AIGenerationModal = ({
                 value={keyEvents}
                 onChange={(e) => setKeyEvents(e.target.value)}
                 placeholder="Các sự kiện bắt buộc xảy ra..."
-                className="w-full h-24 p-3 rounded-xl border border-slate-200 text-sm resize-none"
+                className="w-full h-24 p-3 rounded-xl border border-slate-200 text-sm resize-none tf-mobile-textarea"
               />
             </div>
           </div>
@@ -6676,7 +6676,7 @@ const AIGenerationModal = ({
                 value={previousContext}
                 onChange={(e) => setPreviousContext(e.target.value)}
                 placeholder="Tóm tắt các sự kiện đã diễn ra trước chương này để AI duy trì mạch truyện..."
-                className="w-full h-24 p-3 rounded-xl border border-slate-200 text-sm resize-none"
+                className="w-full h-24 p-3 rounded-xl border border-slate-200 text-sm resize-none tf-mobile-textarea"
               />
             </div>
             <div className="space-y-4">
@@ -6701,16 +6701,16 @@ const AIGenerationModal = ({
                 value={styleReference}
                 onChange={(e) => setStyleReference(e.target.value)}
                 placeholder="Dán một đoạn văn mẫu bạn muốn AI bắt chước phong cách..."
-                className="w-full h-24 p-3 rounded-xl border border-slate-200 text-sm resize-none"
+                className="w-full h-24 p-3 rounded-xl border border-slate-200 text-sm resize-none tf-mobile-textarea"
               />
             </div>
 
             {showStyleLibrary && (
-              <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
+              <div className="fixed inset-0 z-[200] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+                  className="tf-modal-panel bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
                 >
                   <div className="p-6 border-b border-slate-100 flex justify-between items-center">
                     <h3 className="text-xl font-serif font-bold">Thư viện văn mẫu</h3>
@@ -6718,7 +6718,7 @@ const AIGenerationModal = ({
                       <Plus className="w-6 h-6 rotate-45 text-slate-400" />
                     </button>
                   </div>
-                  <div className="p-6 overflow-y-auto">
+                  <div className="tf-modal-content p-6 overflow-y-auto">
                     <StyleReferenceLibrary 
                       onSelect={(content) => {
                         setStyleReference(content);
@@ -6732,7 +6732,7 @@ const AIGenerationModal = ({
           </div>
         </div>
 
-        <div className="p-8 bg-slate-50 border-t border-slate-100">
+        <div className="p-6 md:p-8 bg-slate-50 border-t border-slate-100 tf-modal-actions">
           <button 
             onClick={() => onGenerate({
               outline, 
@@ -8165,9 +8165,9 @@ const AppContent = () => {
       />
 
       {showProfileModal && (
-        <div className="fixed inset-0 z-[260] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-lg tf-card p-6 space-y-4">
-            <div className="flex items-center justify-between">
+        <div className="fixed inset-0 z-[260] tf-modal-overlay bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="tf-modal-panel w-full max-w-lg tf-card p-6 space-y-4">
+            <div className="flex items-center justify-between gap-3">
               <h3 className="text-lg font-bold">Thiết lập cá nhân</h3>
               <button className="tf-btn tf-btn-ghost px-3 py-1" onClick={() => setShowProfileModal(false)}>Đóng</button>
             </div>
@@ -8182,12 +8182,12 @@ const AppContent = () => {
             <div className="space-y-2">
               <label className="text-sm text-slate-300">Avatar URL</label>
               <input
-                className="tf-input"
+                className="tf-input tf-break-all"
                 value={profileAvatarDraft}
                 onChange={(e) => setProfileAvatarDraft(e.target.value)}
               />
             </div>
-            <div className="flex justify-end gap-2">
+            <div className="flex justify-end gap-2 tf-modal-actions">
               <button className="tf-btn tf-btn-ghost" onClick={() => setShowProfileModal(false)}>Hủy</button>
               <button
                 className="tf-btn tf-btn-primary"

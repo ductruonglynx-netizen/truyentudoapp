@@ -124,7 +124,7 @@ export function ApiSectionPanel({
   return (
     <div className="max-w-5xl mx-auto pt-16 pb-10 px-4 space-y-6">
       <div className="flex items-center gap-3">
-        <button onClick={onBack} className="p-2 rounded-full hover:bg-slate-100 transition-colors"><ChevronLeft /></button>
+        <button onClick={onBack} className="p-2 rounded-full hover:bg-slate-100 transition-colors shrink-0"><ChevronLeft /></button>
         <div>
           <h2 className="text-2xl font-serif font-bold">Kết nối AI</h2>
           <p className="text-sm text-slate-500">Gọn nhất: thêm khóa hoặc relay, chọn model, xong.</p>
@@ -147,17 +147,17 @@ export function ApiSectionPanel({
       </div>
 
       <div className="tf-card p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-2 min-w-0">
             <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-200">
               <Zap className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold">Phương thức</p>
               <h3 className="text-lg font-semibold text-white">Trực tiếp / Relay</h3>
             </div>
           </div>
-          <div className="tf-pill-tabs">
+          <div className="tf-pill-tabs tf-scroll-tabs">
             <button
               onClick={onSwitchToDirect}
               className={cn("tf-pill-btn px-3 py-1.5", apiMode === 'manual' ? "bg-indigo-600 text-white shadow" : "text-slate-200 hover:bg-slate-800")}
@@ -228,7 +228,7 @@ export function ApiSectionPanel({
               placeholder="Dán API key hoặc mã đăng nhập Google (ya29...)"
             />
 
-            <div className="flex flex-wrap gap-3 justify-end">
+            <div className="flex flex-col sm:flex-row flex-wrap gap-3 justify-end tf-actions-mobile">
               <button onClick={onSaveApiEntry} className="tf-btn tf-btn-primary">Lưu</button>
               <button
                 onClick={() => currentApiEntry?.id && onTestApiEntry(currentApiEntry.id)}
@@ -240,7 +240,7 @@ export function ApiSectionPanel({
             </div>
 
             <div className="tf-card p-4 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <p className="text-sm font-semibold text-white">Đã lưu ({vaultCount})</p>
                 <span className="text-xs text-slate-400">Chọn “Dùng” để kích hoạt</span>
               </div>
@@ -248,20 +248,20 @@ export function ApiSectionPanel({
                 {apiVault.length === 0 && <p className="text-sm text-slate-400 py-2">Chưa có kết nối.</p>}
                 {apiVault.map((item) => (
                   <div key={item.id} className="py-2 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                    <div className="space-y-1">
-                      <p className="font-semibold text-white">{item.name || 'Chưa đặt tên'}</p>
-                      <p className="text-xs text-slate-400 flex gap-2 flex-wrap items-center">
+                    <div className="space-y-1 min-w-0">
+                      <p className="font-semibold text-white tf-break-long">{item.name || 'Chưa đặt tên'}</p>
+                      <p className="text-xs text-slate-400 flex gap-2 flex-wrap items-center min-w-0">
                         <span className="px-2 py-0.5 rounded-full bg-white/10 border border-white/10 text-white">{PROVIDER_LABELS[item.provider]}</span>
-                        <span>{item.model || 'Model?'}</span>
-                        {item.baseUrl && <span className="text-[11px] text-slate-500">{item.baseUrl}</span>}
-                        <span className="text-[11px] text-slate-500">•••{maskSensitive(item.key || '')}</span>
+                        <span className="tf-break-long">{item.model || 'Model?'}</span>
+                        {item.baseUrl && <span className="text-[11px] text-slate-500 tf-break-all">{item.baseUrl}</span>}
+                        <span className="text-[11px] text-slate-500 tf-break-all">•••{maskSensitive(item.key || '')}</span>
                       </p>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 w-full md:w-auto">
                       <select
                         value={item.model || ''}
                         onChange={(e) => onStoredApiModelChange(item.id, e.target.value)}
-                        className="text-xs rounded-md border border-white/10 bg-slate-900/60 text-white px-2 py-1"
+                        className="text-xs rounded-md border border-white/10 bg-slate-900/60 text-white px-2 py-1 min-w-0"
                       >
                         {PROVIDER_MODEL_OPTIONS[item.provider || 'gemini']?.map((m) => (
                           <option key={m.value} value={m.value}>{m.label}</option>
@@ -270,7 +270,7 @@ export function ApiSectionPanel({
                       <input
                         value={item.baseUrl || ''}
                         onChange={(e) => onStoredApiBaseUrlChange(item.id, e.target.value)}
-                        className="text-xs rounded-md border border-white/10 bg-slate-900/60 text-white px-2 py-1 w-32"
+                        className="text-xs rounded-md border border-white/10 bg-slate-900/60 text-white px-2 py-1 w-full sm:w-32 tf-break-all"
                         placeholder="Base URL"
                       />
                       <button
@@ -319,17 +319,17 @@ export function ApiSectionPanel({
               placeholder="Token relay (nếu có)"
             />
 
-            <div className="flex flex-wrap justify-end gap-3">
+            <div className="flex flex-col sm:flex-row flex-wrap justify-end gap-3 tf-actions-mobile">
               <button onClick={onSaveManualRelayToken} className="tf-btn tf-btn-ghost">Lưu token</button>
               <button onClick={onConnectRelay} className="tf-btn tf-btn-primary">Kết nối</button>
               <button onClick={onDisconnectRelay} className="tf-btn tf-btn-ghost">Ngắt</button>
             </div>
 
             <div className="tf-card p-4 text-sm space-y-1">
-              <p>Trạng thái: <span className="font-semibold text-white">{relayStatusText}</span></p>
-              <p>Token: <span className="text-slate-300">{relayMaskedToken}</span></p>
-              <p>Phiên: <span className="text-slate-300">{relayMatchedLong || '—'}</span></p>
-              <div className="flex gap-2 pt-2">
+              <p className="tf-break-long">Trạng thái: <span className="font-semibold text-white">{relayStatusText}</span></p>
+              <p className="tf-break-all">Token: <span className="text-slate-300">{relayMaskedToken}</span></p>
+              <p className="tf-break-long">Phiên: <span className="text-slate-300">{relayMatchedLong || '—'}</span></p>
+              <div className="flex flex-col sm:flex-row gap-2 pt-2 tf-actions-mobile">
                 <a href={relayWebBase} target="_blank" rel="noreferrer" className="tf-btn tf-btn-primary">Mở trang relay</a>
                 <a href={relaySocketBase} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">Xem endpoint</a>
               </div>

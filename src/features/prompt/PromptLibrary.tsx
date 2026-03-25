@@ -50,26 +50,26 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
   const setList = selectedGroup === "core" ? setCoreRules : setGenreRules;
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
+    <div className="fixed inset-0 z-[300] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-slate-950 w-full max-w-5xl rounded-[32px] border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+        className="tf-modal-panel bg-slate-950 w-full max-w-5xl rounded-[32px] border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
       >
-        <div className="p-6 border-b border-white/10 flex justify-between items-center">
-          <div className="flex items-center gap-3 text-white">
+        <div className="p-4 md:p-6 border-b border-white/10 flex justify-between items-center gap-3">
+          <div className="flex items-center gap-3 text-white min-w-0">
             <div className="p-2 bg-indigo-600/20 rounded-xl border border-indigo-500/40">
               <Library className="w-5 h-5 text-indigo-300" />
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Kho Prompt</p>
-              <h3 className="text-xl font-bold">Quy tắc & Prompt</h3>
+              <h3 className="text-xl font-bold tf-break-long">Quy tắc & Prompt</h3>
             </div>
           </div>
-          <button onClick={onClose} className="tf-btn tf-btn-ghost px-3 py-2">Đóng</button>
+          <button onClick={onClose} className="tf-btn tf-btn-ghost px-3 py-2 shrink-0">Đóng</button>
         </div>
 
-        <div className="px-6 pt-4">
+        <div className="px-4 md:px-6 pt-4">
           <TFTabs
             tabs={[
               { key: "core", label: "Quy tắc Cốt lõi" },
@@ -78,18 +78,19 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
             active={selectedGroup}
             onChange={(k) => setSelectedGroup(k as TabKey)}
             variant="pill"
+            className="w-full"
           />
         </div>
 
-        <div className="flex flex-1 overflow-hidden min-h-[420px] bg-slate-950">
+        <div className="tf-modal-content flex flex-col md:flex-row flex-1 overflow-hidden min-h-[420px] bg-slate-950">
           {/* Sidebar */}
-          <div className="w-[34%] border-r border-white/10 bg-slate-900/80 overflow-y-auto p-4 space-y-2">
+          <div className="w-full md:w-[34%] border-b md:border-b-0 md:border-r border-white/10 bg-slate-900/80 overflow-y-auto p-4 space-y-2">
             {currentList.map((item) => (
               <button
                 key={item.id}
                 onClick={() => setSelectedId(item.id)}
                 className={clsx(
-                  "w-full text-left px-4 py-3 rounded-md font-semibold transition-colors border",
+                  "w-full text-left px-4 py-3 rounded-md font-semibold transition-colors border tf-break-long",
                   selectedId === item.id
                     ? "bg-indigo-600 text-white border-indigo-400 shadow"
                     : "bg-slate-900/60 text-slate-200 border-white/5 hover:bg-slate-800"
@@ -113,21 +114,21 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
           </div>
 
           {/* Content */}
-          <div className="w-[66%] p-6 overflow-y-auto relative space-y-4">
+          <div className="w-full md:w-[66%] p-4 md:p-6 overflow-y-auto relative space-y-4">
             <input
               value={selectedItem?.title || ""}
               onChange={(e) => {
                 const next = currentList.map((i) => (i.id === selectedId ? { ...i, title: e.target.value } : i));
                 setList(next);
               }}
-              className="tf-input text-lg font-bold"
+              className="tf-input text-lg font-bold tf-break-long"
             />
             <TFTextarea
               value={draftContent}
               onChange={(e) => setDraftContent(e.target.value)}
               placeholder="- Giọng văn: ...\n- Xưng hô: ...\n- Từ vựng: ...\n- Cấm: ..."
             />
-            <div className="flex justify-end gap-3">
+            <div className="flex flex-col sm:flex-row justify-end gap-3 tf-actions-mobile">
               <TFButton
                 variant="ghost"
                 onClick={() => {

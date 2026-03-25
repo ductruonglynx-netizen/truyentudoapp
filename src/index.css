@@ -181,6 +181,28 @@
   scroll-behavior: smooth;
 }
 
+html,
+body,
+#root {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+img,
+svg,
+video,
+canvas,
+iframe {
+  max-width: 100%;
+}
+
 /* Markdown Styles */
 .markdown-body {
   @apply text-stone-800 leading-relaxed;
@@ -366,6 +388,7 @@
 
 .app-shell__body {
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 @media (min-width: 900px) {
@@ -1040,11 +1063,17 @@ body {
   .app-navbar__segments {
     flex: 1;
     min-width: 0;
-    overflow-x: visible;
-    flex-wrap: wrap;
-    justify-content: center;
-    row-gap: 0.35rem;
-    scrollbar-width: thin;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    row-gap: 0;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .app-navbar__segments::-webkit-scrollbar {
+    display: none;
   }
 
   .app-navbar__segments button {
@@ -1066,5 +1095,147 @@ body {
 
   .app-navbar__right .app-navbar-divider {
     display: none;
+  }
+}
+
+.tf-scroll-x,
+.tf-scroll-tabs {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.tf-scroll-x::-webkit-scrollbar,
+.tf-scroll-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tf-break-long {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.tf-break-all {
+  word-break: break-all;
+}
+
+.tf-modal-panel {
+  width: 100%;
+}
+
+.tf-modal-content {
+  overflow-y: auto;
+}
+
+@media (max-width: 767px) {
+  .app-shell,
+  .app-shell__body,
+  .day-bg,
+  .night-bg {
+    overflow-x: clip;
+  }
+
+  .tf-btn,
+  .tf-input,
+  .tf-textarea,
+  .tf-pill-btn,
+  button,
+  input,
+  select,
+  textarea {
+    min-height: 44px;
+  }
+
+  .tf-btn,
+  .tf-pill-btn {
+    min-width: 44px;
+  }
+
+  .tf-pill-tabs,
+  .tf-scroll-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    width: 100%;
+    max-width: 100%;
+    white-space: nowrap;
+    padding-bottom: 2px;
+  }
+
+  .tf-pill-tabs > *,
+  .tf-scroll-tabs > * {
+    flex: 0 0 auto;
+  }
+
+  .tf-textarea,
+  .tf-mobile-textarea {
+    height: auto;
+    min-height: clamp(180px, 32dvh, 420px);
+    max-height: none;
+    flex: 1 1 auto;
+  }
+
+  .tf-editor-textarea {
+    height: auto !important;
+    min-height: clamp(240px, 38dvh, 560px) !important;
+  }
+
+  .tf-modal-overlay {
+    align-items: flex-end !important;
+    justify-content: stretch !important;
+    padding: 0 !important;
+  }
+
+  .tf-modal-panel {
+    width: 100% !important;
+    max-width: none !important;
+    max-height: min(92dvh, 92vh) !important;
+    margin-top: auto !important;
+    border-top-left-radius: 28px !important;
+    border-top-right-radius: 28px !important;
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    transform-origin: bottom center;
+  }
+
+  .tf-modal-content {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem) !important;
+  }
+
+  .tf-modal-actions {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 0.75rem !important;
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem) !important;
+  }
+
+  .tf-modal-actions > * {
+    width: 100% !important;
+  }
+
+  .tf-stack-mobile,
+  .tf-stack-mobile > .grid,
+  .tf-stack-mobile .grid-cols-2,
+  .tf-stack-mobile .grid-cols-3,
+  .tf-stack-mobile .grid-cols-4,
+  .tf-stack-2,
+  .tf-stack-3,
+  .tf-stack-4 {
+    grid-template-columns: 1fr !important;
+  }
+
+  .tf-actions-mobile {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 0.75rem !important;
+  }
+
+  .tf-actions-mobile > * {
+    width: 100% !important;
+  }
+
+  .tf-break-mobile {
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
   }
 }
