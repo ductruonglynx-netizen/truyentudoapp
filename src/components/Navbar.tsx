@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, Users, Settings, Download, Upload, Info, Feather, Database, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Monitor, Smartphone, Library, LogIn, LogOut } from 'lucide-react';
+import { BookOpen, Users, Settings, Info, Feather, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Monitor, Smartphone, Library } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { storage } from '../storage';
@@ -71,7 +71,6 @@ export function Navbar({
   const rightRef = useRef<HTMLDivElement | null>(null);
   const segmentsRef = useRef<HTMLDivElement | null>(null);
   const [navDensity, setNavDensity] = useState<'normal' | 'compact' | 'tiny'>('normal');
-  const [showDataMenu, setShowDataMenu] = useState(false);
   const [showQuickActions, setShowQuickActions] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
@@ -79,9 +78,9 @@ export function Navbar({
   const navItems = useMemo(
     () => [
       { key: 'stories', label: 'Trang chủ', icon: BookOpen, action: onHome },
-      { key: 'characters', label: 'Nhân vật', icon: Users, action: () => setView('characters') },
       { key: 'api', label: 'API', icon: Zap, action: () => setView('api') },
       { key: 'tools', label: 'Công cụ', icon: Settings, action: () => setView('tools') },
+      { key: 'characters', label: 'Nhân vật', icon: Users, action: () => setView('characters') },
     ] as const,
     [onHome, setView],
   );
@@ -98,11 +97,10 @@ export function Navbar({
       { key: 'viewport', label: viewportToggleLabel, icon: ViewportIcon, action: onToggleViewportMode, tone: 'neutral' as const },
       { key: 'create', label: 'Viết truyện mới', icon: Plus, action: onCreateStory, tone: 'brand' as const },
       { key: 'prompt', label: 'Kho prompt', icon: Library, action: onOpenPromptManager, tone: 'neutral' as const },
-      { key: 'auth', label: authEmail ? 'Đăng xuất' : 'Đăng nhập', icon: authEmail ? LogOut : LogIn, action: authEmail ? onLogout : onShowAuth, tone: 'neutral' as const },
       { key: 'help', label: 'Xem hướng dẫn', icon: Info, action: onShowHelp, tone: 'neutral' as const },
       { key: 'theme', label: isDark ? 'Nền sáng' : 'Nền tối', icon: isDark ? Sun : Moon, action: onToggleTheme, tone: 'neutral' as const },
     ],
-    [isDark, isMobile, onCreateStory, onHome, onOpenPromptManager, onShowHelp, onToggleTheme, authEmail, onLogout, onShowAuth, setView],
+    [isDark, isMobile, onCreateStory, onHome, onOpenPromptManager, onShowHelp, onToggleTheme, setView],
   );
 
   const surfaceClass = isDark
@@ -136,6 +134,7 @@ export function Navbar({
   const indicatorStyle = {
     width: `${100 / navItems.length}%`,
     transform: `translateX(${Math.max(0, activeIndex) * 100}%)`,
+    transition: 'transform 320ms ease',
   };
 
   useEffect(() => {
@@ -197,6 +196,72 @@ export function Navbar({
     <>
       {isMobile && (
       <div className={cn('app-shell__quick-rail fixed left-4 z-[60] flex items-start gap-3', isMobile ? 'top-4 bottom-4' : 'top-24 bottom-4')}>
+        <div className="fixed right-4 top-4 z-[65]">
+          <div className="relative">
+            <button
+              onClick={() => setShowProfileMenu((v) => !v)}
+              className={cn('w-12 h-12 rounded-full border shadow-lg overflow-hidden transition-all duration-300 hover:scale-105', isDark ? 'bg-white/8 border-white/10' : 'bg-white border-indigo-100')}
+              title="Tài khoản"
+            >
+              <img src={profile.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+            </button>
+            {showProfileMenu ? (
+              <div className={cn('absolute right-0 mt-2 w-56 rounded-2xl border z-50 p-2 backdrop-blur-xl', dropdownClass)}>
+                <div className="px-3 py-2">
+                  <p className="text-xs text-slate-500">Đăng nhập với Supabase</p>
+                  <p className="font-bold text-slate-800 truncate">{authEmail || 'Chưa đăng nhập'}</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowProfileMenu(false);
+                    onShowAuth();
+                  }}
+                  className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
+                >
+                  {authEmail ? 'Đổi tài khoản' : 'Đăng nhập / Đăng ký'}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowProfileMenu(false);
+                    handleExport();
+                  }}
+                  className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
+                >
+                  Xuất backup JSON
+                </button>
+                <button
+                  onClick={() => {
+                    setShowProfileMenu(false);
+                    handleImport();
+                  }}
+                  className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
+                >
+                  Nhập backup JSON
+                </button>
+                <button
+                  onClick={() => {
+                    setShowProfileMenu(false);
+                    onOpenProfile();
+                  }}
+                  className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
+                >
+                  Đổi tên / Avatar
+                </button>
+                {authEmail ? (
+                  <button
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      onLogout();
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-lg text-sm font-semibold text-rose-600 hover:bg-rose-50"
+                  >
+                    Đăng xuất
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
         <div
           className={cn(
             'origin-left h-full transition-all duration-300 ease-out overflow-hidden',
@@ -301,48 +366,6 @@ export function Navbar({
               {finopsWarning}
             </span>
           ) : null}
-          <div className="relative">
-            <button
-              onClick={() => setShowDataMenu((v) => !v)}
-              className={cn(
-                'flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300',
-                isDark ? 'text-slate-200 hover:bg-cyan-500/10 hover:text-white' : 'text-slate-600 hover:bg-indigo-50 hover:text-indigo-700',
-              )}
-              title="Dữ liệu"
-            >
-              <Database className="w-4 h-4" /> <span className="hidden md:inline">Dữ liệu</span>
-            </button>
-            {showDataMenu ? (
-              <div className={cn('absolute right-0 mt-2 w-48 rounded-xl border z-50 p-1 backdrop-blur-xl', dropdownClass)}>
-                <button
-                  onClick={() => {
-                    setShowDataMenu(false);
-                    handleExport();
-                  }}
-                  className={cn(
-                    'w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors',
-                    isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100',
-                  )}
-                >
-                  <Download className="w-4 h-4 inline mr-2" />
-                  Sao lưu dữ liệu
-                </button>
-                <button
-                  onClick={() => {
-                    setShowDataMenu(false);
-                    handleImport();
-                  }}
-                  className={cn(
-                    'w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors',
-                    isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100',
-                  )}
-                >
-                  <Upload className="w-4 h-4 inline mr-2" />
-                  Khôi phục dữ liệu
-                </button>
-              </div>
-            ) : null}
-          </div>
           <button
             onClick={onOpenPromptManager}
             className={cn(

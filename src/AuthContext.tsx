@@ -14,6 +14,7 @@ interface AuthContextType {
   loading: boolean;
   login: (opts: { email: string; password: string }) => Promise<{ ok: boolean; message?: string }>;
   register: (opts: { email: string; password: string }) => Promise<{ ok: boolean; message?: string }>;
+  loginWithProvider: (provider: 'google' | 'discord') => Promise<{ ok: boolean; message?: string }>;
   logout: () => Promise<void>;
   provider: 'supabase' | 'local';
 }
@@ -30,6 +31,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   login: async () => ({ ok: false, message: 'not-ready' }),
   register: async () => ({ ok: false, message: 'not-ready' }),
+  loginWithProvider: async () => ({ ok: false, message: 'not-ready' }),
   logout: async () => {},
   provider: hasSupabase ? 'supabase' : 'local',
 });
@@ -100,6 +102,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { ok: true };
   };
 
+  const loginWithProvider = async (provider: 'google' | 'discord') => {
+    if (!hasSupabase || !supabase) {
+      return { ok: false, message: 'Supabase credentials missing' };
+    }
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+      },
+    });
+    if (error) return { ok: false, message: error.message };
+    return { ok: true };
+  };
+
   const register = async ({ email, password }: { email: string; password: string }) => {
     if (!hasSupabase || !supabase) {
       return { ok: false, message: 'Supabase credentials missing' };
@@ -126,7 +142,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, provider: hasSupabase ? 'supabase' : 'local' }}>
+    <AuthContext.Provider value={{ user, loading, login, register, loginWithProvider, logout, provider: hasSupabase ? 'supabase' : 'local' }}>
       {children}
     </AuthContext.Provider>
   );

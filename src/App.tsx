@@ -54,7 +54,6 @@ import { loadBudgetState } from './finops';
 import { HelpModal } from './components/HelpModal';
 import { ApiSectionPanel } from './components/tools/ApiSectionPanel';
 import { ProfileSettingsPanel } from './components/tools/ProfileSettingsPanel';
-import { DataManagementPanels } from './components/tools/DataManagementPanels';
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
@@ -2633,8 +2632,6 @@ const ToolsManager = ({
 }) => {
   const { user } = useAuth();
   const isApiSection = section === 'api';
-  const [isExporting, setIsExporting] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
   const [profileName, setProfileName] = useState(profile.displayName);
   const [profileAvatar, setProfileAvatar] = useState(profile.avatarUrl);
   const [maskedGeminiKey, setMaskedGeminiKey] = useState('');
@@ -3754,14 +3751,8 @@ const ToolsManager = ({
 
         <div className="space-y-6">
           <SectionHeader
-            title="Kho dữ liệu"
-            subtitle="Nhập/xuất dữ liệu và quản lý các kho nội dung nền."
-          />
-          <DataManagementPanels
-            isImporting={isImporting}
-            isExporting={isExporting}
-            onImportFile={handleImportFile}
-            onExportJson={handleExportJSON}
+            title="Kho prompt"
+            subtitle="Lưu và quản lý prompt dùng chung cho viết và dịch."
           />
           <PromptVaultPanel />
         </div>
@@ -5557,6 +5548,7 @@ const AuthModal = ({
   onEmailChange,
   onPasswordChange,
   onSubmit,
+  onProvider,
   onForgotPassword,
   busy,
   error,
@@ -5570,6 +5562,7 @@ const AuthModal = ({
   onEmailChange: (v: string) => void;
   onPasswordChange: (v: string) => void;
   onSubmit: () => void;
+  onProvider: (p: 'google' | 'discord') => void;
   onForgotPassword: () => void;
   busy: boolean;
   error?: string;
@@ -5637,6 +5630,26 @@ const AuthModal = ({
               </button>
             ) : null}
             {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+          </div>
+          <div className="grid grid-cols-2 gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => onProvider('google')}
+              disabled={busy}
+              className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold hover:border-indigo-200 hover:text-indigo-700 transition-all"
+            >
+              <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="" className="w-5 h-5" />
+              Google
+            </button>
+            <button
+              type="button"
+              onClick={() => onProvider('discord')}
+              disabled={busy}
+              className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold hover:border-indigo-200 hover:text-indigo-700 transition-all"
+            >
+              <img src="https://www.svgrepo.com/show/353655/discord-icon.svg" alt="" className="w-5 h-5" />
+              Discord
+            </button>
           </div>
         </div>
         <div className="p-6 border-t border-slate-100 flex justify-end gap-3">
@@ -6835,7 +6848,7 @@ const AIGenerationModal = ({
 };
 
 const AppContent = () => {
-  const { user, loading, login, logout, register, provider } = useAuth();
+  const { user, loading, login, logout, register, loginWithProvider, provider } = useAuth();
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
   const [viewportMode, setViewportMode] = useState<ViewportMode>(() => loadViewportMode());
   const [profile, setProfile] = useState<UiProfile>(() => loadUiProfile(user?.displayName || undefined, user?.photoURL || undefined));
@@ -6848,6 +6861,8 @@ const AppContent = () => {
   const [aiLoadingMessage, setAILoadingMessage] = useState('');
   const [aiTimer, setAiTimer] = useState(0);
   const [showPromptManager, setShowPromptManager] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [isExportingStory, setIsExportingStory] = useState(false);
 
   useEffect(() => {
@@ -7017,6 +7032,23 @@ const AppContent = () => {
       }
       setShowAuthModal(false);
       setAuthPasswordInput('');
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleAuthProvider = async (providerName: 'google' | 'discord') => {
+    setAuthBusy(true);
+    setAuthError('');
+    try {
+      const res = await loginWithProvider(providerName);
+      if (!res.ok) {
+        setAuthError(res.message || 'Đăng nhập thất bại.');
+        return;
+      }
+      setShowAuthModal(false);
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Đăng nhập thất bại.');
     } finally {
       setAuthBusy(false);
     }
@@ -8211,6 +8243,7 @@ const AppContent = () => {
         onEmailChange={setAuthEmailInput}
         onPasswordChange={setAuthPasswordInput}
         onSubmit={handleAuthSubmit}
+        onProvider={handleAuthProvider}
         onForgotPassword={handleForgotPassword}
         busy={authBusy}
         error={authError}
