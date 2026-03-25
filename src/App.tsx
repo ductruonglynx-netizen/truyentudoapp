@@ -6891,31 +6891,17 @@ const AppContent = () => {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const footerSections: { id: string; title: string; content: React.ReactNode }[] = [
     {
-      id: 'support',
-      title: 'TRUNG TÂM HỖ TRỢ & ĐIỀU KHOẢN DỊCH VỤ CƠ BẢN',
+      id: 'contact',
+      title: 'Liên hệ & Hỗ trợ',
       content: (
         <div className="space-y-3 leading-relaxed">
-          <p>TruyenForge AI được vận hành cá nhân, ưu tiên phản hồi nhanh cho tác giả/dịch giả.</p>
-          <div className="space-y-1">
-            <p className="font-semibold text-slate-800">Kênh liên hệ duy nhất</p>
-            <p>Email: <a className="text-indigo-600 font-semibold" href="mailto:ductruong.lynx@gmail.com">ductruong.lynx@gmail.com</a></p>
-          </div>
-          <div className="space-y-1">
-            <p className="font-semibold text-slate-800">Phạm vi hỗ trợ</p>
-            <ul className="list-disc pl-5 space-y-1">
-              <li>Kỹ thuật & bug: giao diện, đồng bộ, lưu bản thảo, lỗi AI/Relay.</li>
-              <li>Góp ý & yêu cầu tính năng: phím tắt, workflow biên tập, đề xuất model.</li>
-              <li>Tài khoản & hạn mức: đăng nhập, bảo mật, quên mật khẩu, quota FinOps.</li>
-            </ul>
-          </div>
-          <div className="space-y-1">
-            <p className="font-semibold text-slate-800">Cách gửi yêu cầu</p>
-            <ul className="list-disc pl-5 space-y-1">
-              <li>Email đăng ký, mô tả bước gây lỗi (steps), trình duyệt + thiết bị.</li>
-              <li>Đính kèm screenshot/video nếu có; nêu mã lỗi/relay code nếu hiển thị.</li>
-            </ul>
-          </div>
-          <p className="text-xs text-slate-500">SLA: phản hồi 24-48h; sự cố toàn hệ thống được ưu tiên ngay.</p>
+          <p className="text-sm">Vận hành cá nhân — phản hồi trực tiếp:</p>
+          <ul className="list-disc pl-5 space-y-1 text-sm">
+            <li>Email: <a className="text-indigo-600 font-semibold" href="mailto:ductruong.lynx@gmail.com">ductruong.lynx@gmail.com</a></li>
+            <li>Facebook: <a className="text-indigo-600 font-semibold" href="https://www.facebook.com/lynxphuog/" target="_blank" rel="noreferrer">Đức Trường</a></li>
+            <li>Discord: <span className="font-semibold text-slate-800">_lynxphg1314</span></li>
+          </ul>
+          <p className="text-xs text-slate-500">Ưu tiên lỗi kỹ thuật, đăng nhập, relay/API.</p>
         </div>
       ),
     },
