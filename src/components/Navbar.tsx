@@ -88,9 +88,9 @@ export function Navbar({
       ...(isMobile
         ? [
             { key: 'home', label: 'Trang chủ', icon: BookOpen, action: onHome, tone: 'neutral' as const },
-            { key: 'characters', label: 'Nhân vật', icon: Users, action: () => setView('characters'), tone: 'neutral' as const },
             { key: 'api', label: 'API', icon: Zap, action: () => setView('api'), tone: 'neutral' as const },
             { key: 'tools', label: 'Công cụ', icon: Settings, action: () => setView('tools'), tone: 'neutral' as const },
+            { key: 'characters', label: 'Nhân vật', icon: Users, action: () => setView('characters'), tone: 'neutral' as const },
           ]
         : []),
       { key: 'create', label: 'Viết truyện mới', icon: Plus, action: onCreateStory, tone: 'brand' as const },
@@ -112,6 +112,11 @@ export function Navbar({
   const inactiveButtonClass = isDark
     ? 'text-slate-300 hover:text-white hover:bg-cyan-500/12'
     : 'text-slate-500 hover:text-indigo-700 hover:bg-indigo-50/70';
+
+  const runAction = (fn: () => void) => {
+    fn();
+    if (isMobile) setShowQuickActions(false);
+  };
 
   const activeButtonClass = isDark
     ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-slate-950 shadow-lg shadow-cyan-500/30'
@@ -284,16 +289,20 @@ export function Navbar({
               {quickActions.map(({ key, label, icon: Icon, action, tone }) => (
                 <button
                   key={key}
-                  onClick={action}
+                  onClick={() => runAction(action)}
                   className={cn(
                     'flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-all duration-300 hover:-translate-y-0.5',
                     tone === 'brand'
                       ? isDark
                         ? 'bg-gradient-to-r from-cyan-500/88 to-blue-500/88 text-slate-950 shadow-lg shadow-cyan-500/25 hover:shadow-cyan-400/35'
                         : 'bg-gradient-to-r from-teal-500 to-sky-500 text-white shadow-lg shadow-cyan-500/25 hover:shadow-cyan-400/35'
-                      : isDark
-                        ? 'bg-white/5 text-slate-200 hover:text-white hover:bg-cyan-500/12'
-                        : 'bg-white/70 text-slate-700 hover:text-slate-900 hover:bg-white',
+                      : key === currentView
+                        ? (isDark
+                            ? 'bg-cyan-500/15 text-white border border-cyan-400/40 shadow-cyan-500/20'
+                            : 'bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-indigo-100')
+                        : isDark
+                          ? 'bg-white/5 text-slate-200 hover:text-white hover:bg-cyan-500/12'
+                          : 'bg-white/70 text-slate-700 hover:text-slate-900 hover:bg-white',
                   )}
                 >
                   <Icon className="h-4 w-4" />
@@ -348,7 +357,7 @@ export function Navbar({
             {navItems.map(({ key, label, icon: Icon, action }) => (
               <button
                 key={key}
-                onClick={action}
+                onClick={() => runAction(action)}
                 className={cn(
                   'relative z-10 flex items-center justify-center gap-2 px-3 md:px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300 transform-gpu hover:-translate-y-0.5',
                   currentView === key ? 'text-white' : inactiveButtonClass,
