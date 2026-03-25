@@ -110,8 +110,8 @@ export function Navbar({
     : 'bg-white/82 border border-indigo-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]';
 
   const inactiveButtonClass = isDark
-    ? 'text-slate-300 hover:text-white hover:bg-cyan-500/12'
-    : 'text-slate-500 hover:text-indigo-700 hover:bg-indigo-50/70';
+    ? 'text-slate-300 hover:text-white hover:bg-purple-500/15'
+    : 'text-slate-500 hover:text-purple-700 hover:bg-purple-50';
 
   const runAction = (fn: () => void) => {
     fn();
@@ -119,8 +119,8 @@ export function Navbar({
   };
 
   const activeButtonClass = isDark
-    ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-slate-950 shadow-lg shadow-cyan-500/30'
-    : 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-500/30';
+    ? 'bg-gradient-to-r from-emerald-500 to-green-500 text-slate-950 shadow-lg shadow-emerald-500/30'
+    : 'bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-lg shadow-emerald-400/30';
 
   const utilityButtonClass = isDark
     ? 'border-white/10 bg-white/5 text-slate-200 hover:text-white hover:border-cyan-400/35 hover:bg-cyan-500/12 hover:shadow-[0_0_20px_rgba(34,211,238,0.16)]'
@@ -294,15 +294,15 @@ export function Navbar({
                     'flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-all duration-300 hover:-translate-y-0.5',
                     tone === 'brand'
                       ? isDark
-                        ? 'bg-gradient-to-r from-cyan-500/88 to-blue-500/88 text-slate-950 shadow-lg shadow-cyan-500/25 hover:shadow-cyan-400/35'
-                        : 'bg-gradient-to-r from-teal-500 to-sky-500 text-white shadow-lg shadow-cyan-500/25 hover:shadow-cyan-400/35'
+                        ? 'bg-gradient-to-r from-emerald-500 to-green-500 text-slate-950 shadow-lg shadow-emerald-500/25 hover:shadow-emerald-400/35'
+                        : 'bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-lg shadow-emerald-400/25 hover:shadow-emerald-300/35'
                       : key === currentView
                         ? (isDark
-                            ? 'bg-cyan-500/15 text-white border border-cyan-400/40 shadow-cyan-500/20'
-                            : 'bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-indigo-100')
+                            ? 'bg-emerald-500/20 text-white border border-emerald-400/40 shadow-emerald-500/20'
+                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-emerald-100')
                         : isDark
-                          ? 'bg-white/5 text-slate-200 hover:text-white hover:bg-cyan-500/12'
-                          : 'bg-white/70 text-slate-700 hover:text-slate-900 hover:bg-white',
+                          ? 'bg-white/5 text-slate-200 hover:text-white hover:bg-purple-500/15'
+                          : 'bg-white/70 text-slate-700 hover:text-purple-700 hover:bg-purple-50',
                   )}
                 >
                   <Icon className="h-4 w-4" />
@@ -346,7 +346,7 @@ export function Navbar({
               layoutId="navbar-indicator"
               className={cn(
                 'absolute top-1 bottom-1 rounded-xl pointer-events-none',
-                isDark ? 'bg-gradient-to-r from-cyan-500 to-blue-500 shadow-lg shadow-cyan-500/30' : 'bg-gradient-to-r from-indigo-600 to-violet-600 shadow-lg shadow-indigo-500/30',
+                isDark ? 'bg-gradient-to-r from-emerald-500 to-green-500 shadow-lg shadow-emerald-500/30' : 'bg-gradient-to-r from-emerald-500 to-green-500 shadow-lg shadow-emerald-400/30',
               )}
               style={indicatorStyle}
               animate={{
@@ -360,7 +360,7 @@ export function Navbar({
                 onClick={() => runAction(action)}
                 className={cn(
                   'relative z-10 flex items-center justify-center gap-2 px-3 md:px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300 transform-gpu hover:-translate-y-0.5',
-                  currentView === key ? 'text-white' : inactiveButtonClass,
+                  currentView === key ? activeButtonClass : inactiveButtonClass,
                 )}
                 title={label}
                 aria-current={currentView === key}
