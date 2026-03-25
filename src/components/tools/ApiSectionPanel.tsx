@@ -369,60 +369,29 @@ export function ApiSectionPanel({
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="tf-card p-4 space-y-2 border border-emerald-400/40">
-              <p className="text-sm font-semibold text-white">Relay Authorization (WebSocket)</p>
-              <div className="flex flex-col md:flex-row gap-2">
-                <input
-                  value={relayCode}
-                  onChange={(e) => setRelayCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
-                  className="tf-input md:w-44"
-                  placeholder="Nhập code 4-8 số"
-                />
-                <input
-                  value={manualRelayTokenInput}
-                  onChange={(e) => onManualRelayTokenInputChange(e.target.value)}
-                  className="tf-input flex-1"
-                  placeholder="Dán token/AI key để gửi qua relay"
-                />
-                <button onClick={handleSendTokenToRelay} className="tf-btn tf-btn-primary">Send Token to Relay</button>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <a href={authLink || '#'} target="_blank" rel="noreferrer" className={cn("tf-btn tf-btn-ghost", (!authLink || !relayCode) && "pointer-events-none opacity-50")}>
-                  Mở AIS OAuth với code
-                </a>
-                <a href={relayConnectUrl || '#'} target="_blank" rel="noreferrer" className={cn("tf-btn tf-btn-ghost", !relayConnectUrl && "pointer-events-none opacity-50")}>
-                  Xem WS endpoint
-                </a>
-              </div>
-              {relaySendStatus && <p className="text-xs text-emerald-200">{relaySendStatus}</p>}
-            </div>
-
-            {relayCode && (
-              <div className="tf-card p-4 space-y-2 border border-emerald-400/40">
-                <p className="text-sm font-semibold text-white">Relay Authorization (WebSocket)</p>
-                <p className="text-xs text-slate-200">
-                  Mã code phát hiện: <span className="font-semibold">{relayCode}</span>. Dùng AIS Studio OAuth, không còn web relay cũ.
-                </p>
-                <div className="flex flex-col md:flex-row gap-2">
-                  <input
-                    value={manualRelayTokenInput}
-                    onChange={(e) => onManualRelayTokenInputChange(e.target.value)}
-                    className="tf-input"
-                    placeholder="Dán token/AI key để gửi qua relay"
-                  />
-                  <button onClick={handleSendTokenToRelay} className="tf-btn tf-btn-primary">Send Token to Relay</button>
+            <div className="tf-card p-4 space-y-3 border border-emerald-400/30">
+              <div className="flex flex-col md:flex-row gap-2 md:items-center md:justify-between">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold text-white">AIS OAuth</p>
+                  {relayCode ? <span className="rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-200">Code {relayCode}</span> : null}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <a href={authLink || '#'} target="_blank" rel="noreferrer" className={cn("tf-btn tf-btn-ghost", !authLink && "pointer-events-none opacity-50")}>
-                    Mở AIS OAuth với code
+                    Mở AIS OAuth
                   </a>
                   <a href={relayConnectUrl || '#'} target="_blank" rel="noreferrer" className={cn("tf-btn tf-btn-ghost", !relayConnectUrl && "pointer-events-none opacity-50")}>
-                    Xem WS endpoint
+                    WS endpoint
                   </a>
                 </div>
-                {relaySendStatus && <p className="text-xs text-emerald-200">{relaySendStatus}</p>}
               </div>
-            )}
+              <input
+                value={relayCode}
+                onChange={(e) => setRelayCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                className="tf-input md:w-44"
+                placeholder="Code 4-8 số"
+              />
+              {relaySendStatus ? <p className="text-xs text-emerald-200">{relaySendStatus}</p> : null}
+            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <input
