@@ -16,6 +16,8 @@ function maskSensitive(value: string, head = 6, tail = 4): string {
   return `${raw.slice(0, head)}...${raw.slice(-tail)}`;
 }
 
+const AIS_AUTH_BASE = 'https://ais-dev-qbnyavxszwzdl6ugpdjaxp-279055114293.asia-northeast1.run.app/?code=';
+
 interface ApiSectionPanelProps {
   onBack: () => void;
   apiMode: 'manual' | 'relay';
@@ -140,6 +142,11 @@ export function ApiSectionPanel({
   const relayConnectUrl = React.useMemo(() => {
     const code = relayCode || '';
     return code ? `wss://relay2026.up.railway.app/?code=${code}` : '';
+  }, [relayCode]);
+
+  const authLink = React.useMemo(() => {
+    const code = relayCode || '123456';
+    return `${AIS_AUTH_BASE}${code}`;
   }, [relayCode]);
 
   const handleSendTokenToRelay = () => {
@@ -354,7 +361,9 @@ export function ApiSectionPanel({
             {relayCode && (
               <div className="tf-card p-4 space-y-2 border border-emerald-400/40">
                 <p className="text-sm font-semibold text-white">Relay Authorization (WebSocket)</p>
-                <p className="text-xs text-slate-200">Mã code phát hiện: <span className="font-semibold">{relayCode}</span>. Nhập token/AI key rồi bấm gửi để chuyển an toàn.</p>
+                <p className="text-xs text-slate-200">
+                  Mã code phát hiện: <span className="font-semibold">{relayCode}</span>. Dùng AIS Studio OAuth, không còn web relay cũ.
+                </p>
                 <div className="flex flex-col md:flex-row gap-2">
                   <input
                     value={manualRelayTokenInput}
@@ -363,6 +372,14 @@ export function ApiSectionPanel({
                     placeholder="Dán token/AI key để gửi qua relay"
                   />
                   <button onClick={handleSendTokenToRelay} className="tf-btn tf-btn-primary">Send Token to Relay</button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <a href={authLink} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">
+                    Mở AIS OAuth với code
+                  </a>
+                  <a href={relayConnectUrl || '#'} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">
+                    Xem WS endpoint
+                  </a>
                 </div>
                 {relaySendStatus && <p className="text-xs text-emerald-200">{relaySendStatus}</p>}
               </div>
@@ -390,7 +407,7 @@ export function ApiSectionPanel({
               value={manualRelayTokenInput}
               onChange={(e) => onManualRelayTokenInputChange(e.target.value)}
               className="tf-textarea"
-              placeholder="Token relay (nếu có)"
+              placeholder="Token relay (AI key nhận từ AIS OAuth)"
             />
 
             <div className="flex flex-col sm:flex-row flex-wrap justify-end gap-3 tf-actions-mobile">
@@ -404,8 +421,8 @@ export function ApiSectionPanel({
               <p className="tf-break-all">Token: <span className="text-slate-300">{relayMaskedToken}</span></p>
               <p className="tf-break-long">Phiên: <span className="text-slate-300">{relayMatchedLong || '—'}</span></p>
               <div className="flex flex-col sm:flex-row gap-2 pt-2 tf-actions-mobile">
-                <a href={relayWebBase} target="_blank" rel="noreferrer" className="tf-btn tf-btn-primary">Mở trang relay</a>
-                <a href={relaySocketBase} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">Xem endpoint</a>
+                <a href={authLink} target="_blank" rel="noreferrer" className="tf-btn tf-btn-primary">Mở AIS OAuth</a>
+                <a href={relaySocketBase} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">WS endpoint</a>
               </div>
             </div>
           </div>
