@@ -17,6 +17,7 @@ function maskSensitive(value: string, head = 6, tail = 4): string {
 }
 
 const AIS_AUTH_BASE = 'https://ais-dev-qbnyavxszwzdl6ugpdjaxp-279055114293.asia-northeast1.run.app/?code=';
+const CODE_REGEX = /\b(\d{4,8})\b/;
 
 interface ApiSectionPanelProps {
   onBack: () => void;
@@ -139,14 +140,24 @@ export function ApiSectionPanel({
     }
   }, []);
 
+  // Cập nhật code nếu người dùng dán URL relay có chứa code
+  useEffect(() => {
+    if (relayUrl) {
+      const match = relayUrl.match(CODE_REGEX);
+      if (match && match[1] && match[1] !== relayCode) {
+        setRelayCode(match[1]);
+      }
+    }
+  }, [relayUrl, relayCode]);
+
   const relayConnectUrl = React.useMemo(() => {
     const code = relayCode || '';
     return code ? `wss://relay2026.up.railway.app/?code=${code}` : '';
   }, [relayCode]);
 
   const authLink = React.useMemo(() => {
-    const code = relayCode || '123456';
-    return `${AIS_AUTH_BASE}${code}`;
+    const code = relayCode || '';
+    return code ? `${AIS_AUTH_BASE}${code}` : '';
   }, [relayCode]);
 
   const handleSendTokenToRelay = () => {
@@ -358,6 +369,34 @@ export function ApiSectionPanel({
           </div>
         ) : (
           <div className="space-y-4">
+            <div className="tf-card p-4 space-y-2 border border-emerald-400/40">
+              <p className="text-sm font-semibold text-white">Relay Authorization (WebSocket)</p>
+              <div className="flex flex-col md:flex-row gap-2">
+                <input
+                  value={relayCode}
+                  onChange={(e) => setRelayCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                  className="tf-input md:w-44"
+                  placeholder="Nhập code 4-8 số"
+                />
+                <input
+                  value={manualRelayTokenInput}
+                  onChange={(e) => onManualRelayTokenInputChange(e.target.value)}
+                  className="tf-input flex-1"
+                  placeholder="Dán token/AI key để gửi qua relay"
+                />
+                <button onClick={handleSendTokenToRelay} className="tf-btn tf-btn-primary">Send Token to Relay</button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <a href={authLink || '#'} target="_blank" rel="noreferrer" className={cn("tf-btn tf-btn-ghost", (!authLink || !relayCode) && "pointer-events-none opacity-50")}>
+                  Mở AIS OAuth với code
+                </a>
+                <a href={relayConnectUrl || '#'} target="_blank" rel="noreferrer" className={cn("tf-btn tf-btn-ghost", !relayConnectUrl && "pointer-events-none opacity-50")}>
+                  Xem WS endpoint
+                </a>
+              </div>
+              {relaySendStatus && <p className="text-xs text-emerald-200">{relaySendStatus}</p>}
+            </div>
+
             {relayCode && (
               <div className="tf-card p-4 space-y-2 border border-emerald-400/40">
                 <p className="text-sm font-semibold text-white">Relay Authorization (WebSocket)</p>
@@ -374,10 +413,10 @@ export function ApiSectionPanel({
                   <button onClick={handleSendTokenToRelay} className="tf-btn tf-btn-primary">Send Token to Relay</button>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <a href={authLink} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">
+                  <a href={authLink || '#'} target="_blank" rel="noreferrer" className={cn("tf-btn tf-btn-ghost", !authLink && "pointer-events-none opacity-50")}>
                     Mở AIS OAuth với code
                   </a>
-                  <a href={relayConnectUrl || '#'} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">
+                  <a href={relayConnectUrl || '#'} target="_blank" rel="noreferrer" className={cn("tf-btn tf-btn-ghost", !relayConnectUrl && "pointer-events-none opacity-50")}>
                     Xem WS endpoint
                   </a>
                 </div>
@@ -390,7 +429,7 @@ export function ApiSectionPanel({
                 value={relayUrl}
                 onChange={(e) => onRelayUrlChange(e.target.value)}
                 className="tf-input"
-                placeholder="wss://relay.yourserver.com"
+                placeholder="wss://relay2026.up.railway.app/?code=182004"
               />
               <select
                 value={relayModel}
@@ -421,8 +460,8 @@ export function ApiSectionPanel({
               <p className="tf-break-all">Token: <span className="text-slate-300">{relayMaskedToken}</span></p>
               <p className="tf-break-long">Phiên: <span className="text-slate-300">{relayMatchedLong || '—'}</span></p>
               <div className="flex flex-col sm:flex-row gap-2 pt-2 tf-actions-mobile">
-                <a href={authLink} target="_blank" rel="noreferrer" className="tf-btn tf-btn-primary">Mở AIS OAuth</a>
-                <a href={relaySocketBase} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">WS endpoint</a>
+                <a href={authLink || '#'} target="_blank" rel="noreferrer" className={cn("tf-btn tf-btn-primary", !authLink && "pointer-events-none opacity-50")}>Mở AIS OAuth</a>
+                <a href={relayConnectUrl || relaySocketBase} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">WS endpoint</a>
               </div>
             </div>
           </div>
