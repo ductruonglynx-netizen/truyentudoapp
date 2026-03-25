@@ -5384,31 +5384,37 @@ const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts:
 ];
 
 const PROMPT_GROUP_TABS: Array<{ key: PromptGroup, label: string }> = [
-  { key: 'common', label: 'Prompt chung (ưu tiên cao nhất)' },
-  { key: 'tone_rules', label: 'Quy tắc thể loại' },
+  { key: 'common', label: 'Quy tắc Cốt lõi' },
+  { key: 'tone_rules', label: 'Theo Thể loại' },
 ];
+
+type MasterItem = { id: string; title: string; content: string };
 
 const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, onClose: () => void, onSelect: (prompt: string) => void }) => {
   const [selectedGroup, setSelectedGroup] = useState<PromptGroup>('common');
-  const filteredCategories = PREDEFINED_PROMPTS.filter((c) => c.group === selectedGroup);
-  const [selectedCategory, setSelectedCategory] = useState(filteredCategories[0]?.category || '');
-  const [editablePrompts, setEditablePrompts] = useState<Record<string, Array<{ title: string; content: string }>>>({});
-  const [newPromptTitle, setNewPromptTitle] = useState('');
-  const [newPromptContent, setNewPromptContent] = useState('');
+  const [coreRules, setCoreRules] = useState<MasterItem[]>([
+    { id: 'terms', title: 'Danh từ riêng / Thuật ngữ', content: '- Giữ nguyên tên riêng, thuật ngữ khóa (Kho Name/Glossary).\n- Không phiên âm sai; nếu thiếu mapping, giữ nguyên gốc.\n- Thêm chú thích ngắn trong ngoặc khi cần làm rõ.' },
+    { id: 'must', title: 'Yêu cầu bắt buộc', content: '- Ưu tiên: Quy tắc thể loại → Kho Name → Glossary/Term lock → Timeline.\n- Không bịa sự kiện khi thiếu dữ liệu; đánh dấu [thiếu dữ liệu] nếu cần.\n- Giữ consistency nhân xưng, địa danh, mốc thời gian.' },
+    { id: 'blacklist', title: 'Các điều cấm (Blacklist)', content: '- Cấm thêm 18+/nhạy cảm nếu đầu vào không có.\n- Cấm chèn link/contact/quảng cáo/API key.\n- Cấm sai lệch fact gốc, phá OOC không lý do.\n- Cấm meme, viết tắt chat trong văn bản.' },
+  ]);
+  const [genreRules, setGenreRules] = useState<MasterItem[]>([
+    { id: 'co-dai', title: 'Cổ đại / Tiên hiệp', content: '- Giọng văn: Cổ phong, ước lệ; nhịp chậm-trung.\n- Xưng hô: tôn ti (trẫm/vi thần/thần thiếp, bổn vương/tại hạ...).\n- Từ vựng: Hán Việt chọn lọc; tránh công nghệ/meme.\n- Cấu trúc: câu 2-3 vế, tả cảnh → tâm/cơ mưu.\n- Cấm: wow/emoji, tiếng lóng, pha tiếng Anh.' },
+    { id: 'hien-dai', title: 'Hiện đại / Hào môn', content: '- Giọng văn: Nhanh, trực diện; hào môn lạnh/sang.\n- Xưng hô: tôi/anh/em/cô + chức danh (sếp/giám đốc).\n- Từ vựng: business/showbiz đúng cảnh; tránh Hán Việt cổ.\n- Cấu trúc: đoạn 3-6 câu, nhiều thoại.\n- Cấm: viết tắt chat (ko, j), lạm dụng brand >2/đoạn.' },
+    { id: 'khoa-hoc', title: 'Võng du / Khoa học', content: '- Giọng văn: Lý tính, hệ thống rõ.\n- Xưng hô: linh hoạt theo thế giới thật/ảo.\n- Từ vựng: game chuẩn (level, cooldown, buff/debuff, PK), sci-fi (cơ giáp, gene, warp).\n- Cấu trúc: log/bảng trạng thái ngắn; ví dụ sau mô tả.\n- Cấm: bùa/thuật tiên hiệp mơ hồ; số liệu không khớp.' },
+  ]);
+  const [selectedCoreId, setSelectedCoreId] = useState('terms');
+  const [selectedGenreId, setSelectedGenreId] = useState('co-dai');
+  const [draftContent, setDraftContent] = useState<string>('');
 
   useEffect(() => {
-    const first = PREDEFINED_PROMPTS.find((c) => c.group === selectedGroup);
-    if (first?.category) setSelectedCategory(first.category);
-  }, [selectedGroup]);
+    const list = selectedGroup === 'common' ? coreRules : genreRules;
+    const picked = list.find((i) => i.id === (selectedGroup === 'common' ? selectedCoreId : selectedGenreId)) || list[0];
+    setDraftContent(picked?.content || '');
+  }, [selectedGroup, selectedCoreId, selectedGenreId]);
 
-  useEffect(() => {
-    if (!selectedCategory) return;
-    setEditablePrompts((prev) => {
-      if (prev[selectedCategory]) return prev;
-      const source = PREDEFINED_PROMPTS.find((c) => c.category === selectedCategory)?.prompts || [];
-      return { ...prev, [selectedCategory]: source.map((p) => ({ ...p })) };
-    });
-  }, [selectedCategory]);
+  const currentList = selectedGroup === 'common' ? coreRules : genreRules;
+  const selectedId = selectedGroup === 'common' ? selectedCoreId : selectedGenreId;
+  const setList = selectedGroup === 'common' ? setCoreRules : setGenreRules;
 
   if (!isOpen) return null;
 
@@ -5431,116 +5437,102 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
           </button>
         </div>
 
-        <div className="px-6 pt-3 bg-slate-50 border-b border-slate-100 flex flex-wrap gap-2">
+        <div className="px-6 pt-3 bg-slate-900 text-slate-100 border-b border-slate-800 flex flex-wrap gap-2">
           {PROMPT_GROUP_TABS.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setSelectedGroup(tab.key)}
               className={cn(
-                'px-3 py-2 rounded-xl text-xs font-bold tracking-wide transition-all',
-                selectedGroup === tab.key ? 'bg-indigo-600 text-white shadow' : 'bg-white text-slate-600 hover:bg-slate-100',
+                'px-4 py-2 rounded-xl text-xs font-bold tracking-wide transition-all border border-slate-800',
+                selectedGroup === tab.key ? 'bg-indigo-600 text-white shadow' : 'bg-slate-800 text-slate-200 hover:bg-slate-700',
               )}
             >
               {tab.label}
             </button>
           ))}
-          <p className="text-[11px] text-slate-500 ml-auto pr-2 italic">Prompt mẫu chỉ để tham khảo, bạn có thể chỉnh sửa trước khi dùng.</p>
         </div>
         
-        <div className="flex flex-1 overflow-hidden min-h-[400px]">
+        <div className="flex flex-1 overflow-hidden min-h-[420px] bg-slate-950 text-slate-100">
           {/* Sidebar */}
-          <div className="w-1/3 border-r border-slate-100 bg-slate-50/50 overflow-y-auto p-4 space-y-2">
-            {filteredCategories.map(cat => (
+          <div className="w-[32%] border-r border-slate-800 bg-slate-900 overflow-y-auto p-4 space-y-2">
+            {(selectedGroup === 'common' ? coreRules : genreRules).map((item) => (
               <button
-                key={cat.category}
-                onClick={() => setSelectedCategory(cat.category)}
+                key={item.id}
+                onClick={() => {
+                  if (selectedGroup === 'common') setSelectedCoreId(item.id);
+                  else setSelectedGenreId(item.id);
+                  setDraftContent(item.content);
+                }}
                 className={cn(
-                  "w-full text-left px-4 py-3 rounded-xl font-bold transition-all",
-                  selectedCategory === cat.category 
-                    ? "bg-indigo-600 text-white shadow-md" 
-                    : "text-slate-600 hover:bg-slate-100"
+                  "w-full text-left px-4 py-3 rounded-xl font-semibold transition-all border border-transparent",
+                  (selectedGroup === 'common' ? selectedCoreId : selectedGenreId) === item.id
+                    ? "bg-indigo-600 text-white border-indigo-500 shadow"
+                    : "bg-slate-800 hover:bg-slate-700 text-slate-200"
                 )}
               >
-                {cat.category}
+                {item.title}
               </button>
             ))}
+            <button
+              onClick={() => {
+                const id = `new-${Date.now()}`;
+                const title = selectedGroup === 'common' ? 'Quy tắc mới' : 'Nhóm mới';
+                const newItem: MasterItem = { id, title, content: '' };
+                if (selectedGroup === 'common') {
+                  setCoreRules((p) => [...p, newItem]);
+                  setSelectedCoreId(id);
+                } else {
+                  setGenreRules((p) => [...p, newItem]);
+                  setSelectedGenreId(id);
+                }
+                setDraftContent('');
+              }}
+              className="mt-4 w-full px-4 py-3 rounded-xl border border-dashed border-indigo-500 text-indigo-200 hover:bg-indigo-500/10"
+            >
+              + Thêm {selectedGroup === 'common' ? 'quy tắc' : 'nhóm'} mới
+            </button>
           </div>
           
           {/* Content */}
-          <div className="w-2/3 p-6 overflow-y-auto bg-white space-y-4">
-            {(editablePrompts[selectedCategory] || []).map((prompt, idx) => (
-              <div key={`${selectedCategory}-${idx}`} className="p-5 rounded-2xl border border-slate-200 hover:border-indigo-300 transition-all group space-y-3">
-                <div className="flex justify-between items-start gap-3">
-                  <input
-                    value={prompt.title}
-                    onChange={(e) => {
-                      const next = [...(editablePrompts[selectedCategory] || [])];
-                      next[idx] = { ...next[idx], title: e.target.value };
-                      setEditablePrompts((prev) => ({ ...prev, [selectedCategory]: next }));
-                    }}
-                    className="flex-1 font-bold text-slate-800 text-lg bg-transparent border-b border-slate-200 focus:border-indigo-400 outline-none"
-                  />
-                  <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition">
-                    <button 
-                      onClick={() => {
-                        onSelect(prompt.content);
-                        onClose();
-                      }}
-                      className="px-3 py-2 bg-indigo-50 text-indigo-600 rounded-lg text-sm font-bold hover:bg-indigo-100"
-                    >
-                      Dùng
-                    </button>
-                    <button
-                      onClick={() => {
-                        const next = (editablePrompts[selectedCategory] || []).filter((_, i) => i !== idx);
-                        setEditablePrompts((prev) => ({ ...prev, [selectedCategory]: next }));
-                      }}
-                      className="px-3 py-2 bg-rose-50 text-rose-600 rounded-lg text-sm font-bold hover:bg-rose-100"
-                    >
-                      Xóa
-                    </button>
-                  </div>
-                </div>
-                <textarea
-                  value={prompt.content}
-                  onChange={(e) => {
-                    const next = [...(editablePrompts[selectedCategory] || [])];
-                    next[idx] = { ...next[idx], content: e.target.value };
-                    setEditablePrompts((prev) => ({ ...prev, [selectedCategory]: next }));
-                  }}
-                  className="w-full min-h-[120px] text-sm text-slate-700 border border-slate-200 rounded-xl p-3 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 outline-none resize-vertical"
-                />
-              </div>
-            ))}
-
-            <div className="p-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 space-y-3">
-              <p className="text-sm font-semibold text-slate-700">Thêm prompt mới</p>
+          <div className="w-[68%] p-6 overflow-y-auto relative">
+            <div className="flex items-center justify-between mb-4">
               <input
-                value={newPromptTitle}
-                onChange={(e) => setNewPromptTitle(e.target.value)}
-                placeholder="Tiêu đề"
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:border-indigo-400 outline-none"
+                value={selectedItem?.title || ''}
+                onChange={(e) => {
+                  const nextList = currentList.map((i) => i.id === selectedId ? { ...i, title: e.target.value } : i);
+                  setList(nextList);
+                }}
+                className="text-xl font-bold bg-transparent border-b border-slate-700 focus:border-indigo-400 outline-none w-full"
               />
-              <textarea
-                value={newPromptContent}
-                onChange={(e) => setNewPromptContent(e.target.value)}
-                placeholder="Nội dung prompt..."
-                className="w-full min-h-[100px] px-3 py-2 rounded-lg border border-slate-200 focus:border-indigo-400 outline-none resize-vertical"
-              />
-              <div className="flex justify-end">
-                <button
-                  onClick={() => {
-                    if (!newPromptContent.trim()) return;
-                    const next = [...(editablePrompts[selectedCategory] || []), { title: newPromptTitle || 'Prompt tùy chỉnh', content: newPromptContent }];
-                    setEditablePrompts((prev) => ({ ...prev, [selectedCategory]: next }));
-                    setNewPromptTitle('');
-                    setNewPromptContent('');
-                  }}
-                  className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700"
-                >
-                  Thêm
-                </button>
-              </div>
+            </div>
+            <textarea
+              value={draftContent}
+              onChange={(e) => setDraftContent(e.target.value)}
+              placeholder={selectedGroup === 'common'
+                ? '- Ghi rõ quy tắc bắt buộc...\n- ...'
+                : '- Giọng văn: ...\n- Xưng hô: ...\n- Từ vựng: ...\n- Cấm: ...'}
+              className="w-full min-h-[260px] rounded-2xl border border-slate-800 bg-slate-900 text-slate-100 p-4 text-sm leading-relaxed focus:border-indigo-400 focus:ring-1 focus:ring-indigo-500 outline-none resize-vertical"
+            />
+            <div className="flex justify-end gap-3 mt-4">
+              <button
+                onClick={() => {
+                  onSelect(draftContent);
+                  onClose();
+                }}
+                className="px-4 py-2 rounded-xl border border-slate-700 text-slate-200 hover:bg-slate-800 text-sm font-semibold"
+              >
+                Sao chép & đóng
+              </button>
+              <button
+                onClick={() => {
+                  const nextList = currentList.map((i) => i.id === selectedId ? { ...i, content: draftContent } : i);
+                  setList(nextList);
+                  alert('Đã lưu thay đổi');
+                }}
+                className="px-5 py-2 rounded-xl bg-emerald-600 text-white font-bold text-sm hover:bg-emerald-700"
+              >
+                Lưu thay đổi
+              </button>
             </div>
           </div>
         </div>
