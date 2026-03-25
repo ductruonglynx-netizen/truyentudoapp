@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, Users, Settings, Download, Upload, Info, Feather, Database, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Monitor, Smartphone, Library } from 'lucide-react';
+import { BookOpen, Users, Settings, Download, Upload, Info, Feather, Database, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Monitor, Smartphone, Library, LogIn, LogOut } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { storage } from '../storage';
@@ -23,12 +23,15 @@ interface NavbarProps {
   onHome: () => void;
   onCreateStory: () => void;
   onOpenPromptManager: () => void;
+  onShowAuth: () => void;
+  onLogout: () => void;
   themeMode: ThemeMode;
   onToggleTheme: () => void;
   viewportMode: ViewportMode;
   onToggleViewportMode: () => void;
   profile: UiProfile;
   finopsWarning?: string;
+  authEmail?: string;
 }
 
 export function Navbar({
@@ -38,12 +41,15 @@ export function Navbar({
   onHome,
   onCreateStory,
   onOpenPromptManager,
+  onShowAuth,
+  onLogout,
   themeMode,
   onToggleTheme,
   viewportMode,
   onToggleViewportMode,
   profile,
   finopsWarning,
+  authEmail,
 }: NavbarProps) {
   const viewportModeValue: ViewportMode = viewportMode;
   const isMobile = viewportModeValue === 'mobile';
@@ -87,6 +93,7 @@ export function Navbar({
       { key: 'create', label: 'Viết truyện mới', icon: Plus, action: onCreateStory, tone: 'brand' as const },
       { key: 'prompt', label: 'Kho prompt', icon: Library, action: onOpenPromptManager, tone: 'neutral' as const },
       { key: 'api-settings', label: 'Mở thiết lập AI', icon: Zap, action: () => setView('api'), tone: 'neutral' as const },
+      { key: 'auth', label: authEmail ? 'Đăng xuất' : 'Đăng nhập', icon: authEmail ? LogOut : LogIn, action: authEmail ? onLogout : onShowAuth, tone: 'neutral' as const },
       { key: 'help', label: 'Xem hướng dẫn', icon: Info, action: onShowHelp, tone: 'neutral' as const },
       { key: 'theme', label: isDark ? 'Chuyển nền sáng' : 'Chuyển nền tối', icon: isDark ? Sun : Moon, action: onToggleTheme, tone: 'neutral' as const },
       { key: 'viewport', label: viewportModeValue === 'mobile' ? 'Chế độ máy tính' : 'Chế độ điện thoại', icon: viewportModeValue === 'mobile' ? Monitor : Smartphone, action: onToggleViewportMode, tone: 'neutral' as const },
