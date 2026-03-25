@@ -1936,7 +1936,7 @@ const TranslationNameDictionary = () => {
             <Languages className="w-6 h-6 text-amber-600" />
           </div>
           <div>
-            <h3 className="text-xl font-serif font-bold">Khi Name</h3>
+            <h3 className="text-xl font-serif font-bold">Kho Name</h3>
             <p className="text-xs text-slate-500 font-medium">Tự động thay thế tên khi dịch truyện</p>
           </div>
         </div>
