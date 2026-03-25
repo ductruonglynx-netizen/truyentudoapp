@@ -1900,13 +1900,20 @@ const TranslationNameDictionary = () => {
   const handleImportTxt = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
+    const decodeEntities = (input: string) => {
+      const el = document.createElement('textarea');
+      el.innerHTML = input;
+      return el.value;
+    };
     try {
       const text = await file.text();
-      const lines = text.split('\n').filter(l => l.includes('='));
+      const lines = text.split('\n').map(l => l.trim()).filter(l => l.includes('='));
       if (window.confirm(`Bạn có muốn nhập ${lines.length} tên từ file này?`)) {
         const newNames: TranslationName[] = [];
         for (const line of lines) {
-          const [original, translation] = line.split('=').map(s => s.trim());
+          const [rawOriginal, ...rawRest] = line.split('=');
+          const original = decodeEntities((rawOriginal || '').trim());
+          const translation = decodeEntities(rawRest.join('=').trim());
           if (original && translation) {
             newNames.push({
               id: `trans-${Date.now()}-${Math.random()}`,
