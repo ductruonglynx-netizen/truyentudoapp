@@ -16,7 +16,7 @@ function maskSensitive(value: string, head = 6, tail = 4): string {
   return `${raw.slice(0, head)}...${raw.slice(-tail)}`;
 }
 
-const AIS_AUTH_BASE = 'https://ais-dev-qbnyavxszwzdl6ugpdjaxp-279055114293.asia-northeast1.run.app/?code=';
+const AIS_AUTH_BASE = 'https://ais-dev-qbnyavxszwzdl6ugpdjaxp-279055114293.asia-northeast1.run.app/';
 const CODE_REGEX = /\b(\d{4,8})\b/;
 
 interface ApiSectionPanelProps {
@@ -151,13 +151,17 @@ export function ApiSectionPanel({
 
   const relayConnectUrl = useMemo(() => {
     const code = relayCode || '';
-    return code ? `wss://relay2026.up.railway.app/?code=${code}` : '';
-  }, [relayCode]);
+    return code ? `${relaySocketBase}${code}` : '';
+  }, [relayCode, relaySocketBase]);
 
   const authLink = useMemo(() => {
     const code = relayCode || '';
-    return code ? `${AIS_AUTH_BASE}${code}` : '';
-  }, [relayCode]);
+    if (!code) return '';
+    const url = new URL(AIS_AUTH_BASE);
+    url.searchParams.set('code', code);
+    url.searchParams.set('relay', relayConnectUrl);
+    return url.toString();
+  }, [relayCode, relayConnectUrl]);
 
   useEffect(() => {
     if (!relayConnectUrl) return;
@@ -366,7 +370,7 @@ export function ApiSectionPanel({
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <div className="space-y-1">
                   <p className="text-sm font-semibold text-white">Kết nối qua Relay</p>
-                  <p className="text-xs text-slate-300">Web sẽ mở WebSocket trước, sau đó mở AI Studio để nhận `TOKEN_TRANSFER` theo đúng mã code.</p>
+                  <p className="text-xs text-slate-300">Web sẽ mở WebSocket qua Cloudflare Worker trước, sau đó mở AI Studio để nhận `TOKEN_TRANSFER` theo đúng mã code.</p>
                 </div>
                 {relayCode ? (
                   <span className="rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-200">
@@ -415,7 +419,7 @@ export function ApiSectionPanel({
             </div>
 
             <div className="tf-card p-4 text-sm space-y-2">
-              <p className="tf-break-long">WS: <span className="text-slate-300">{relayConnectUrl || relaySocketBase}</span></p>
+              <p className="tf-break-long">WS Worker: <span className="text-slate-300">{relayConnectUrl || relaySocketBase}</span></p>
               <p className="tf-break-long">Trạng thái: <span className="font-semibold text-white">{relayStatusText}</span></p>
               <p className="tf-break-all">Token: <span className="text-slate-300">{relayMaskedToken}</span></p>
               <p className="tf-break-long">Phiên: <span className="text-slate-300">{relayMatchedLong || relayCode || '—'}</span></p>

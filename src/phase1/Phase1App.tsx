@@ -610,12 +610,12 @@ export default function Phase1App() {
                   className="phase1-input"
                   value={apiConfig.relayBaseUrl}
                   onChange={(e) => setApiConfig((prev) => ({ ...prev, relayBaseUrl: e.target.value }))}
-                  placeholder="wss://relay2026.up.railway.app/?code=1234"
+                  placeholder="wss://truyenforge-relay.your-subdomain.workers.dev/?code=1234"
                 />
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-xs text-slate-500">Định dạng chuẩn: <code>wss://relay2026.up.railway.app/?code=CODE</code> (CODE từ 4 đến 8 số).</p>
+                  <p className="text-xs text-slate-500">Định dạng chuẩn: <code>wss://truyenforge-relay.your-subdomain.workers.dev/?code=CODE</code> (CODE từ 4 đến 8 số).</p>
                   <a
-                    href="https://relay2026.vercel.app/"
+                    href="https://truyenforge-relay.your-subdomain.workers.dev/"
                     target="_blank"
                     rel="noreferrer"
                     className="rounded-lg bg-fuchsia-600 px-3 py-1 text-xs font-semibold text-white hover:bg-fuchsia-700"

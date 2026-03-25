@@ -223,8 +223,8 @@ ${includeToc ? navItems.join('\n') : ''}
 
 
 type ApiMode = 'manual' | 'relay';
-const DEFAULT_RELAY_WS_BASE = 'wss://relay2026.up.railway.app/?code=';
-const DEFAULT_RELAY_WEB_BASE = 'https://relay2026.vercel.app/';
+const DEFAULT_RELAY_WS_BASE = 'wss://truyenforge-relay.your-subdomain.workers.dev/?code=';
+const DEFAULT_RELAY_WEB_BASE = 'https://truyenforge-relay.your-subdomain.workers.dev/';
 const RELAY_SOCKET_BASE = normalizeRelaySocketBase(import.meta.env.VITE_RELAY_WS_BASE || DEFAULT_RELAY_WS_BASE);
 const RELAY_WEB_BASE = ((import.meta.env.VITE_RELAY_WEB_BASE || DEFAULT_RELAY_WEB_BASE).trim().replace(/\/+$/, '') + '/');
 
@@ -1319,7 +1319,6 @@ async function generateGeminiText(
         Number(attemptConfig.maxOutputTokens || 0) || (kind === 'fast' ? 1800 : 4200),
       );
       try {
-        // If in relay mode, send request through relay WebSocket; no token exposed to browser.
         if (runtime.mode === 'relay') {
           const body = {
             contents: [
@@ -1329,47 +1328,77 @@ async function generateGeminiText(
             ],
             generationConfig: attemptConfig,
           };
-          try {
-            const raw = await relayGenerateContent(currentModel, body, timeoutMs);
-            try {
-              const parsed = JSON.parse(raw);
-              if (parsed?.error?.message) {
-                throw new Error(`AI lỗi: ${parsed.error.message}`);
-              }
-              text = extractTextFromModelPayload(parsed) || '';
-              if (!text && typeof raw === 'string') {
-                text = raw;
-              }
-            } catch (err) {
-              if (err instanceof Error && /AI lỗi:/i.test(err.message)) {
-                throw err;
-              }
-              text = raw || '';
-            }
-          } catch (relayErr) {
-            const fallbackKey = getConfiguredGeminiApiKey();
-            const fallbackEndpoint = `${getProviderBaseUrl('gcli').replace(/\/+$/, '')}/models/${currentModel}:generateContent`;
-            const relayMsg = stringifyError(relayErr);
-            if (fallbackKey) {
-              const resp = await fetchWithTimeout(
-                fallbackEndpoint,
-                {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${fallbackKey}`,
-                  },
-                  body: JSON.stringify(body),
+          const relayToken = getConfiguredGeminiApiKey();
+          const relayEndpoint = `${getProviderBaseUrl('gcli').replace(/\/+$/, '')}/models/${currentModel}:generateContent`;
+
+          const runDirectRelayToken = async () => {
+            if (!relayToken) return false;
+            const resp = await fetchWithTimeout(
+              relayEndpoint,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${relayToken}`,
                 },
-                timeoutMs + 8000,
-              );
-              if (!resp.ok) {
-                throw new Error(`Relay timeout; fallback bearer error ${resp.status}: ${await resp.text()}`);
+                body: JSON.stringify(body),
+              },
+              timeoutMs + 8000,
+            );
+            if (!resp.ok) {
+              throw new Error(`Direct bearer error ${resp.status}: ${await resp.text()}`);
+            }
+            const data = await resp.json();
+            text = extractTextFromModelPayload(data) || '';
+            return true;
+          };
+
+          let directRelayError = '';
+          if (relayToken) {
+            try {
+              const usedDirectToken = await runDirectRelayToken();
+              if (!usedDirectToken) {
+                throw new Error('Relay token is unavailable.');
               }
-              const data = await resp.json();
-              text = extractTextFromModelPayload(data) || '';
-            } else {
-              throw new Error(`Relay timeout. ${relayMsg} · Hãy kết nối lại Relay hoặc dán API key trực tiếp (Gemini).`);
+            } catch (directErr) {
+              directRelayError = stringifyError(directErr);
+            }
+          }
+
+          if (!text) {
+            try {
+              const raw = await relayGenerateContent(currentModel, body, timeoutMs);
+              try {
+                const parsed = JSON.parse(raw);
+                if (parsed?.error?.message) {
+                  throw new Error(`AI lỗi: ${parsed.error.message}`);
+                }
+                text = extractTextFromModelPayload(parsed) || '';
+                if (!text && typeof raw === 'string') {
+                  text = raw;
+                }
+              } catch (err) {
+                if (err instanceof Error && /AI lỗi:/i.test(err.message)) {
+                  throw err;
+                }
+                text = raw || '';
+              }
+            } catch (relayErr) {
+              const relayMsg = stringifyError(relayErr);
+              if (relayToken) {
+                if (directRelayError) {
+                  throw new Error(`Token relay failed (${directRelayError}); relay socket failed (${relayMsg}).`);
+                }
+                const usedDirectToken = await runDirectRelayToken();
+                if (usedDirectToken && text) {
+                  // Recovered via direct bearer token from relay cache.
+                } else {
+                  throw new Error(`Relay timeout. ${relayMsg} · Hãy kết nối lại Relay hoặc dán API key trực tiếp (Gemini).`);
+                }
+              }
+              if (!relayToken) {
+                throw new Error(`Relay timeout. ${relayMsg} · Hãy kết nối lại Relay hoặc dán API key trực tiếp (Gemini).`);
+              }
             }
           }
         } else if (auth.provider === 'gemini' && auth.isApiKey && auth.client) {

@@ -38,10 +38,17 @@ npm run dev
 - Phase 4 Scale & PWA: `/?phase4=1`
 - Phase 5 Release checks: `/?phase5=1`
 
-## Cấu hình relay (tùy chọn, giống bản gốc)
-- `VITE_RELAY_WS_BASE=wss://relay2026.up.railway.app/?code=`
-- `VITE_RELAY_WEB_BASE=https://relay2026.vercel.app/`
-Nhập URL WebSocket trong tab Relay: ví dụ `wss://relay2026.up.railway.app/?code=1810`. Relay health: https://relay2026.up.railway.app/health.
+## Cấu hình relay (Cloudflare Worker)
+- `VITE_RELAY_WS_BASE=wss://truyenforge-relay.<your-subdomain>.workers.dev/?code=`
+- `VITE_RELAY_WEB_BASE=https://truyenforge-relay.<your-subdomain>.workers.dev/`
+Nhập URL WebSocket trong tab Relay: ví dụ `wss://truyenforge-relay.<your-subdomain>.workers.dev/?code=1810`.
+
+Worker relay mẫu nằm tại:
+- `workers/relay-worker/src/index.ts`
+- `workers/relay-worker/wrangler.toml`
+
+Hướng dẫn deploy:
+- [CLOUDFLARE_RELAY_SETUP.md](/Users/phand/Downloads/ai/truyentudoapp/docs/CLOUDFLARE_RELAY_SETUP.md)
 
 ## FinOps nhanh (mock, client-side)
 - Budget mặc định 20 USD/chu kỳ 28 ngày, lưu localStorage.
