@@ -1,3 +1,4 @@
+import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, Trash2, Zap } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -121,6 +122,48 @@ export function ApiSectionPanel({
   onManualRelayTokenInputChange,
   onSaveManualRelayToken,
 }: ApiSectionPanelProps) {
+  const [relayCode, setRelayCode] = useState('');
+  const [relaySendStatus, setRelaySendStatus] = useState<string>('');
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code') || '';
+      if (/^\d{4,8}$/.test(code)) {
+        setRelayCode(code);
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }, []);
+
+  const relayConnectUrl = React.useMemo(() => {
+    const code = relayCode || '';
+    return code ? `wss://relay2026.up.railway.app/?code=${code}` : '';
+  }, [relayCode]);
+
+  const handleSendTokenToRelay = () => {
+    if (!relayCode) {
+      setRelaySendStatus('Chưa có mã code 4-8 số trong URL.');
+      return;
+    }
+    const token = (manualRelayTokenInput || apiEntryText || '').trim();
+    if (!token) {
+      setRelaySendStatus('Bạn chưa nhập token/API key.');
+      return;
+    }
+    try {
+      const ws = new WebSocket(relayConnectUrl);
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'TOKEN_TRANSFER', token, uid: 'local', email: '' }));
+        setRelaySendStatus('Đã gửi token an toàn qua WebSocket riêng. Có thể đóng tab này.');
+        ws.close();
+      };
+      ws.onerror = () => setRelaySendStatus('Gửi thất bại, kiểm tra mạng hoặc mã code.');
+    } catch {
+      setRelaySendStatus('Không thể mở kết nối WebSocket.');
+    }
+  };
   return (
     <div className="max-w-5xl mx-auto pt-28 pb-12 px-4 md:px-6 space-y-6">
       <div className="flex items-center gap-3">
@@ -308,6 +351,23 @@ export function ApiSectionPanel({
           </div>
         ) : (
           <div className="space-y-4">
+            {relayCode && (
+              <div className="tf-card p-4 space-y-2 border border-emerald-400/40">
+                <p className="text-sm font-semibold text-white">Relay Authorization (WebSocket)</p>
+                <p className="text-xs text-slate-200">Mã code phát hiện: <span className="font-semibold">{relayCode}</span>. Nhập token/AI key rồi bấm gửi để chuyển an toàn.</p>
+                <div className="flex flex-col md:flex-row gap-2">
+                  <input
+                    value={manualRelayTokenInput}
+                    onChange={(e) => onManualRelayTokenInputChange(e.target.value)}
+                    className="tf-input"
+                    placeholder="Dán token/AI key để gửi qua relay"
+                  />
+                  <button onClick={handleSendTokenToRelay} className="tf-btn tf-btn-primary">Send Token to Relay</button>
+                </div>
+                {relaySendStatus && <p className="text-xs text-emerald-200">{relaySendStatus}</p>}
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <input
                 value={relayUrl}
