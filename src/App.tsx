@@ -401,20 +401,35 @@ function buildRelaySocketUrl(code: string): string {
   return buildRelayConnectUrl(RELAY_SOCKET_BASE, code);
 }
 
+function ensureRelayClientRole(rawUrl: string): string {
+  const raw = String(rawUrl || '').trim();
+  if (!raw) return raw;
+  try {
+    const url = new URL(raw);
+    url.searchParams.set('role', 'client');
+    return url.toString();
+  } catch {
+    const joiner = raw.includes('?') ? '&' : '?';
+    return raw.includes('role=') ? raw : `${raw}${joiner}role=client`;
+  }
+}
+
 function buildRelayConnectUrl(rawInput: string, code: string): string {
   const cleanCode = String(code || '').trim();
-  if (!cleanCode) return toWsUrl(rawInput || RELAY_SOCKET_BASE);
+  if (!cleanCode) return ensureRelayClientRole(toWsUrl(rawInput || RELAY_SOCKET_BASE));
   const raw = normalizeRelaySocketBase(rawInput || RELAY_SOCKET_BASE);
   try {
     const url = new URL(raw);
     if (!url.searchParams.has('code') && !/[?&]code=/i.test(raw)) {
       url.pathname = `${url.pathname.replace(/\/+$/, '')}/${cleanCode}`;
+      url.searchParams.set('role', 'client');
       return url.toString();
     }
     url.searchParams.set('code', cleanCode);
+    url.searchParams.set('role', 'client');
     return url.toString();
   } catch {
-    return `${RELAY_SOCKET_BASE}${cleanCode}`;
+    return ensureRelayClientRole(`${RELAY_SOCKET_BASE}${cleanCode}`);
   }
 }
 
@@ -3077,13 +3092,13 @@ const ToolsManager = ({
 
   const buildRelayCandidateUrls = (rawInput: string, code: string): string[] => {
     const candidates = new Set<string>();
-    const inferred = toWsUrl(rawInput);
+    const inferred = ensureRelayClientRole(toWsUrl(rawInput));
     if (inferred) candidates.add(inferred);
     candidates.add(buildRelayConnectUrl(rawInput, code));
-    candidates.add(`${RELAY_SOCKET_BASE}${code}`);
+    candidates.add(buildRelayConnectUrl(RELAY_SOCKET_BASE, code));
     try {
       const url = new URL(`${RELAY_SOCKET_BASE}${code}`);
-      candidates.add(`${url.origin}/${code}`);
+      candidates.add(ensureRelayClientRole(`${url.origin}/${code}`));
     } catch {}
     return Array.from(candidates);
   };
