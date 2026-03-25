@@ -5357,11 +5357,16 @@ const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts:
   },
   {
     group: 'common',
-    category: 'Chung · Tóm tắt & Graph',
+    category: 'Chung · Mệnh lệnh tuyệt đối (áp dụng mọi tác vụ)',
     prompts: [
-      { title: 'Tóm tắt 3 tầng', content: 'Tạo 3 lớp tóm tắt: 1) 2 câu siêu ngắn, 2) 6 câu sự kiện chính, 3) trích dẫn dòng then chốt. Không vượt 220 từ.' },
-      { title: 'Graph quan hệ', content: 'Liệt kê nút (nhân vật/địa điểm/vật phẩm) và cạnh (quan hệ/giao dịch/xung đột) dạng JSON để nuôi GraphRAG.' },
-      { title: 'Timeline kiểm chứng', content: 'Xuất timeline chuẩn hóa yyyy-mm-dd hoặc mốc chương, nêu ai/tham gia gì. Dùng để đối chiếu consistency.' },
+      { title: 'Mệnh lệnh TUYỆT ĐỐI', content: `Luôn tuân thủ thứ tự ưu tiên: (1) Quy tắc thể loại, (2) Kho Name, (3) Glossary/term lock, (4) Timeline/continuity. Không thay đổi/phiên âm sai tên riêng hoặc thuật ngữ đã khóa. Giữ nguyên fact, không bịa sự kiện mới. Nếu thiếu dữ liệu, hỏi lại hoặc đánh dấu [thiếu dữ liệu] thay vì bịa.` },
+    ],
+  },
+  {
+    group: 'common',
+    category: 'Chung · Tuyệt đối CẤM',
+    prompts: [
+      { title: 'Những điều CẤM', content: `Cấm thêm nội dung nhạy cảm/18+ nếu đầu vào không có. Cấm chèn quảng cáo, link, contact. Cấm tiết lộ khóa API, token, thông tin cá nhân. Cấm bịa brand/giải thưởng/nhân vật thật. Cấm dịch/viết theo phong cách khác nhóm thể loại đã chọn. Nếu gặp yêu cầu trái luật hoặc vi phạm bản quyền, từ chối và cảnh báo.` },
     ],
   },
   {
@@ -5379,9 +5384,9 @@ const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts:
 ];
 
 const PROMPT_GROUP_TABS: Array<{ key: PromptGroup, label: string }> = [
+  { key: 'common', label: 'Prompt chung (ưu tiên cao nhất)' },
   { key: 'translate', label: 'Prompt dịch truyện' },
   { key: 'write', label: 'Prompt viết truyện' },
-  { key: 'common', label: 'Prompt chung' },
   { key: 'tone_rules', label: 'Quy tắc thể loại' },
 ];
 
