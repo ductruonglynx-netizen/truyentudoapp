@@ -28,7 +28,7 @@ export const ToolsPage: React.FC<ToolsPageProps> = ({ onBack, onRequireAuth }) =
   const [showPrompt, setShowPrompt] = React.useState(false);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pt-24 pb-12 px-2 md:px-0">
       <div className="flex items-center justify-between">
         <h2 className="text-3xl font-serif font-bold text-slate-100">Công cụ</h2>
         <TFButton variant="ghost" onClick={onBack}>Quay lại</TFButton>
