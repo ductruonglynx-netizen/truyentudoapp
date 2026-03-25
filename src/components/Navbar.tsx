@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { BookOpen, Users, Settings, Info, Feather, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Library } from 'lucide-react';
+import { BookOpen, Users, Settings, Info, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Library } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { storage } from '../storage';
@@ -334,9 +334,7 @@ export function Navbar({
       <nav ref={navRef} data-density={navDensity} className={cn('app-navbar fixed top-0 left-0 right-0 z-50 flex h-20 items-center justify-between border-b px-6 backdrop-blur-xl navbar-appear', surfaceClass)}>
         <div ref={leftRef} className="app-navbar__left flex items-center gap-5 lg:gap-8">
           <div className="flex items-center gap-3 cursor-pointer group transition-all duration-300" onClick={onHome}>
-            <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-900/30 group-hover:scale-110 group-hover:rotate-3 transition-all duration-300">
-              <Feather className="w-6 h-6 text-white" />
-            </div>
+            <img src="/logo.svg" alt="TruyenForge" className="w-11 h-11 rounded-2xl shadow-lg shadow-indigo-900/40 group-hover:scale-105 transition-transform duration-300" />
             <span className={cn('text-xl font-serif font-bold tracking-tight hidden sm:block', titleClass)}>TruyenForge</span>
           </div>
 
