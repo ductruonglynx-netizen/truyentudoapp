@@ -3164,16 +3164,19 @@ const ToolsManager = ({
         relayRequestReadyRef.current = false;
         setRelaySender(null);
         notifyRelayDisconnected('Relay socket closed');
-        setRelayStatus('disconnected');
-        setRelayStatusText('Ngắt kết nối');
         if (relayShouldReconnectRef.current) {
+          setRelayStatus('connecting');
+          setRelayStatusText('Kết nối relay bị đóng, đang nghe lại để chờ token...');
           if (relayReconnectRef.current) {
             window.clearTimeout(relayReconnectRef.current);
           }
           relayReconnectRef.current = window.setTimeout(() => {
             void handleConnectRelay();
-          }, 5000);
+          }, 800);
+          return;
         }
+        setRelayStatus('disconnected');
+        setRelayStatusText('Ngắt kết nối');
       };
     } catch (error) {
       setRelayStatus('error');
