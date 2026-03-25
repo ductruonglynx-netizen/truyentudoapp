@@ -8321,32 +8321,44 @@ const AppContent = () => {
         timer={aiTimer}
       />
 
-      <footer className="mt-10 border-t border-slate-200 bg-white/90 px-6 py-8 text-sm text-slate-600">
-        <div className="max-w-6xl mx-auto grid gap-6 md:grid-cols-3">
-          <div className="space-y-2">
-            <h3 className="text-base font-bold text-slate-900">Liên hệ</h3>
-            <p>Email: <a className="text-indigo-600 font-semibold" href="mailto:ductruong.lynx@gmail.com">ductruong.lynx@gmail.com</a></p>
-            <p>Phản hồi bug, yêu cầu tính năng hoặc hỗ trợ tài khoản.</p>
+      <footer className="mt-10 border-t border-slate-200 bg-white/95 px-6 py-10 text-sm text-slate-600">
+        <div className="max-w-6xl mx-auto grid gap-8 md:grid-cols-4">
+          <div className="space-y-3">
+            <div className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-3 py-1 text-white text-xs font-bold shadow">
+              TruyenForge
+            </div>
+            <p className="text-slate-600">Playground AI cho viết, dịch, QA và worldbuilding. Tập trung bảo mật, FinOps và quyền kiểm soát của bạn.</p>
+            <p className="text-xs text-slate-500">© 2026 TruyenForge. All rights reserved.</p>
           </div>
           <div className="space-y-2">
-            <h3 className="text-base font-bold text-slate-900">Cam kết & An toàn</h3>
+            <h3 className="text-base font-bold text-slate-900">Đường tắt</h3>
+            <ul className="space-y-1">
+              <li><a className="hover:text-indigo-600" href="/">Trang chủ / Thư viện</a></li>
+              <li><a className="hover:text-indigo-600" href="/?phase1=1">Translator (Phase 1)</a></li>
+              <li><a className="hover:text-indigo-600" href="/?phase2=1">QA & Hậu kỳ (Phase 2)</a></li>
+              <li><a className="hover:text-indigo-600" href="/?phase3=1">Writer Pro (Phase 3)</a></li>
+              <li><a className="hover:text-indigo-600" href="/?phase4=1">Offline/PWA (Phase 4)</a></li>
+              <li><a className="hover:text-indigo-600" href="/?phase5=1">Release checks (Phase 5)</a></li>
+            </ul>
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-base font-bold text-slate-900">An toàn & Tin cậy</h3>
             <ul className="list-disc pl-4 space-y-1">
               <li>Không lưu nội dung người dùng trên server mặc định; API key nằm phía client/Supabase.</li>
-              <li>Cảnh báo hạn mức FinOps khi gần hết ngân sách.</li>
-              <li>Ưu tiên bảo mật: không dùng dữ liệu để huấn luyện mô hình bên thứ ba.</li>
+              <li>Cảnh báo hạn mức FinOps khi gần hết ngân sách; bạn tự kiểm soát quota.</li>
+              <li>Không dùng dữ liệu của bạn để huấn luyện mô hình bên thứ ba.</li>
             </ul>
           </div>
           <div className="space-y-2">
-            <h3 className="text-base font-bold text-slate-900">Miễn trừ trách nhiệm</h3>
-            <ul className="list-disc pl-4 space-y-1">
-              <li>Nội dung AI chỉ mang tính tham khảo, bạn chịu trách nhiệm biên tập và kiểm duyệt.</li>
-              <li>Không chịu trách nhiệm về vi phạm bản quyền hoặc dữ liệu nhạy cảm do người dùng nhập.</li>
-              <li>Vui lòng tuân thủ pháp luật và điều khoản nền tảng khi sử dụng.</li>
+            <h3 className="text-base font-bold text-slate-900">Liên hệ & Điều khoản</h3>
+            <p>Email: <a className="text-indigo-600 font-semibold" href="mailto:ductruong.lynx@gmail.com">ductruong.lynx@gmail.com</a></p>
+            <p className="text-xs text-slate-500">Phản hồi bug, yêu cầu tính năng hoặc hỗ trợ tài khoản.</p>
+            <ul className="list-disc pl-4 space-y-1 text-sm">
+              <li><span className="font-semibold">Miễn trừ:</span> Nội dung AI chỉ tham khảo; bạn chịu trách nhiệm biên tập/kiểm duyệt.</li>
+              <li><a className="hover:text-indigo-600" href="#terms">Điều khoản sử dụng</a> &middot; <a className="hover:text-indigo-600" href="#privacy">Chính sách riêng tư</a> (cập nhật sau).</li>
+              <li><span className="font-semibold">Bản quyền:</span> Tôn trọng bản quyền tác giả, không nhập nội dung khi chưa có quyền.</li>
             </ul>
           </div>
-        </div>
-        <div className="mt-6 text-center text-xs text-slate-500">
-          © 2026 TruyenForge. All rights reserved.
         </div>
       </footer>
     </div>
