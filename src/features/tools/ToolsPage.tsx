@@ -1,9 +1,9 @@
 import React from "react";
 import clsx from "clsx";
-import { TFTabs } from "../ui/tabs";
-import { TFButton } from "../ui/buttons";
-import { TFInput, TFTextarea } from "../ui/inputs";
-import { PromptLibraryModal } from "../features/prompt/PromptLibrary";
+import { TFTabs } from "../../ui/tabs";
+import { TFButton } from "../../ui/buttons";
+import { TFInput, TFTextarea } from "../../ui/inputs";
+import { PromptLibraryModal } from "../prompt/PromptLibrary";
 import { TFAlert } from "./common/TFAlert";
 
 /**

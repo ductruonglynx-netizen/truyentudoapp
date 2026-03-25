@@ -2,9 +2,9 @@ import React from "react";
 import { motion } from "motion/react";
 import { Library } from "lucide-react";
 import clsx from "clsx";
-import { TFTabs } from "../ui/tabs";
-import { TFButton } from "../ui/buttons";
-import { TFTextarea } from "../ui/inputs";
+import { TFTabs } from "../../ui/tabs";
+import { TFButton } from "../../ui/buttons";
+import { TFTextarea } from "../../ui/inputs";
 
 type TabKey = "core" | "genre";
 
