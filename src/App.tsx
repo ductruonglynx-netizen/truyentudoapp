@@ -223,8 +223,8 @@ ${includeToc ? navItems.join('\n') : ''}
 
 
 type ApiMode = 'manual' | 'relay';
-const DEFAULT_RELAY_WS_BASE = 'wss://proxymid.your-subdomain.workers.dev/?code=';
-const DEFAULT_RELAY_WEB_BASE = 'https://proxymid.your-subdomain.workers.dev/';
+const DEFAULT_RELAY_WS_BASE = 'wss://proxymid.ductruong-lynx.workers.dev/';
+const DEFAULT_RELAY_WEB_BASE = 'https://proxymid.ductruong-lynx.workers.dev/';
 const RELAY_SOCKET_BASE = normalizeRelaySocketBase(import.meta.env.VITE_RELAY_WS_BASE || DEFAULT_RELAY_WS_BASE);
 const RELAY_WEB_BASE = ((import.meta.env.VITE_RELAY_WEB_BASE || DEFAULT_RELAY_WEB_BASE).trim().replace(/\/+$/, '') + '/');
 
@@ -360,6 +360,8 @@ function parseRelayCodeFromText(input: string): string {
   if (c0?.[1]) return c0[1];
   const c00 = value.match(/\/code=(\d{4,8})(?:\D|$)/i);
   if (c00?.[1]) return c00[1];
+  const c01 = value.match(/\/(\d{4,8})(?:[/?#]|$)/i);
+  if (c01?.[1]) return c01[1];
   const c1 = value.match(/[?&]code=(\d{4,8})/i);
   if (c1?.[1]) return c1[1];
   const c2 = value.match(/\/code=(\d{4,8})/i);
@@ -374,6 +376,12 @@ function normalizeRelaySocketBase(input: string): string {
   const raw = toWsUrl(String(input || '').trim() || DEFAULT_RELAY_WS_BASE);
   try {
     const url = new URL(raw);
+    const prefersPathCode = !/[?&]code=/i.test(raw) && !/\/code=/i.test(raw);
+    if (prefersPathCode) {
+      url.searchParams.delete('code');
+      url.pathname = `${url.pathname.replace(/\/\d{4,8}\/?$/i, '').replace(/\/+$/, '')}/`;
+      return url.toString();
+    }
     if (/\/code=$/i.test(url.pathname)) {
       url.pathname = url.pathname.replace(/\/code=$/i, '/');
       url.searchParams.set('code', '');
@@ -398,6 +406,10 @@ function buildRelayConnectUrl(rawInput: string, code: string): string {
   const raw = normalizeRelaySocketBase(rawInput || RELAY_SOCKET_BASE);
   try {
     const url = new URL(raw);
+    if (!url.searchParams.has('code') && !/[?&]code=/i.test(raw)) {
+      url.pathname = `${url.pathname.replace(/\/+$/, '')}/${cleanCode}`;
+      return url.toString();
+    }
     url.searchParams.set('code', cleanCode);
     return url.toString();
   } catch {
@@ -2994,7 +3006,7 @@ const ToolsManager = ({
     }
 
     if (updates === 0) {
-      setQuickImportResult(`Chưa nhận diện được thông tin phù hợp. Hãy dán API key, mã truy cập Google, địa chỉ máy chủ AI riêng hoặc URL trung chuyển dạng ${RELAY_SOCKET_BASE}1234.`);
+      setQuickImportResult(`Chưa nhận diện được thông tin phù hợp. Hãy dán API key, mã truy cập Google, địa chỉ máy chủ AI riêng hoặc URL trung chuyển dạng ${RELAY_WEB_BASE}1234.`);
     } else {
       setQuickImportResult(`Đã cập nhật ${updates} mục thông tin.`);
       setQuickImportText('');
@@ -3043,6 +3055,7 @@ const ToolsManager = ({
     candidates.add(`${RELAY_SOCKET_BASE}${code}`);
     try {
       const url = new URL(`${RELAY_SOCKET_BASE}${code}`);
+      candidates.add(`${url.origin}/${code}`);
       candidates.add(`${url.origin}/code=${code}`);
     } catch {}
     return Array.from(candidates);
@@ -3057,7 +3070,7 @@ const ToolsManager = ({
       : parseRelayCodeFromText(baseRelayInput);
     if (!/^\d{4,8}$/.test(inferredCode)) {
       setRelayStatus('error');
-      setRelayStatusText(`Vui lòng nhập đúng mẫu ${RELAY_SOCKET_BASE}1234 (mã 4-8 số).`);
+      setRelayStatusText(`Vui lòng nhập mã 4-8 số hoặc URL dạng ${RELAY_WEB_BASE}1234.`);
       return;
     }
     const nextRelayUrl = buildRelaySocketUrl(inferredCode);
