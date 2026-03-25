@@ -5432,6 +5432,7 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
               {tab.label}
             </button>
           ))}
+          <p className="text-[11px] text-slate-500 ml-auto pr-2 italic">Prompt mẫu chỉ để tham khảo, bạn có thể chỉnh sửa trước khi dùng.</p>
         </div>
         
         <div className="flex flex-1 overflow-hidden min-h-[400px]">
