@@ -54,6 +54,7 @@ import { loadBudgetState } from './finops';
 import { HelpModal } from './components/HelpModal';
 import { ApiSectionPanel } from './components/tools/ApiSectionPanel';
 import { ProfileSettingsPanel } from './components/tools/ProfileSettingsPanel';
+import { ToolsPage } from './features/tools/ToolsPage';
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
@@ -8398,13 +8399,9 @@ const AppContent = () => {
             onSaveProfile={setProfile}
           />
         ) : view === 'tools' ? (
-          <ToolsManager
-            key="tools"
-            section="tools"
+          <ToolsPage
             onBack={() => setView('stories')}
             onRequireAuth={() => setShowAuthModal(true)}
-            profile={profile}
-            onSaveProfile={setProfile}
           />
         ) : (isCreating || editingStory) ? (
           <StoryEditor 
