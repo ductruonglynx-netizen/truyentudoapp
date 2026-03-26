@@ -37,6 +37,7 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
   const [libraryState, setLibraryState] = React.useState<PromptLibraryState>(() => loadPromptLibraryState());
   const currentList = libraryState[selectedGroup];
   const [selectedId, setSelectedId] = React.useState(currentList[0]?.id || "");
+  const [draftTitle, setDraftTitle] = React.useState(currentList[0]?.title || "");
   const [draftContent, setDraftContent] = React.useState(currentList[0]?.content || "");
   const [notice, setNotice] = React.useState("");
   const selectedItem = currentList.find((i) => i.id === selectedId) || currentList[0];
@@ -57,10 +58,12 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
     const fallbackItem = list.find((item) => item.id === selectedId) || list[0];
     if (!fallbackItem) {
       setSelectedId("");
+      setDraftTitle("");
       setDraftContent("");
       return;
     }
     setSelectedId(fallbackItem.id);
+    setDraftTitle(fallbackItem.title);
     setDraftContent(fallbackItem.content);
   }, [selectedGroup, libraryState, selectedId]);
 
@@ -69,6 +72,52 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
     const timer = window.setTimeout(() => setNotice(""), 2400);
     return () => window.clearTimeout(timer);
   }, [notice]);
+
+  const isDirty = Boolean(selectedItem) && (
+    draftTitle !== String(selectedItem?.title || "") ||
+    draftContent !== String(selectedItem?.content || "")
+  );
+
+  const applyDraftToState = React.useCallback((baseState: PromptLibraryState): PromptLibraryState => {
+    if (!selectedId) return baseState;
+    const normalizedTitle = draftTitle.trim() || (selectedGroup === "core" ? "Quy tắc chưa đặt tên" : "Nhóm chưa đặt tên");
+    const nextList = baseState[selectedGroup].map((item) => (
+      item.id === selectedId
+        ? { ...item, title: normalizedTitle, content: draftContent }
+        : item
+    ));
+    return updatePromptLibraryList(baseState, selectedGroup, nextList);
+  }, [draftContent, draftTitle, selectedGroup, selectedId]);
+
+  const persistDraft = React.useCallback((nextNotice?: string) => {
+    const nextState = applyDraftToState(libraryState);
+    commitLibraryState(nextState);
+    if (nextNotice) setNotice(nextNotice);
+    return nextState;
+  }, [applyDraftToState, commitLibraryState, libraryState]);
+
+  const handleSwitchGroup = (nextGroup: PromptLibraryTabKey) => {
+    if (nextGroup === selectedGroup) return;
+    if (isDirty) {
+      persistDraft("Đã tự động lưu mục trước khi đổi nhóm.");
+    }
+    setSelectedGroup(nextGroup);
+  };
+
+  const handleSelectItem = (nextId: string) => {
+    if (nextId === selectedId) return;
+    if (isDirty) {
+      persistDraft("Đã tự động lưu mục trước khi đổi prompt.");
+    }
+    setSelectedId(nextId);
+  };
+
+  const handleClose = () => {
+    if (isDirty) {
+      persistDraft("Đã tự động lưu trước khi đóng Kho Prompt.");
+    }
+    onClose();
+  };
 
   if (!isOpen) return null;
 
@@ -97,13 +146,14 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
                 setLibraryState(resetState);
                 setSelectedGroup("core");
                 setSelectedId(resetState.core[0]?.id || "");
+                setDraftTitle(resetState.core[0]?.title || "");
                 setDraftContent(resetState.core[0]?.content || "");
                 setNotice("Đã khôi phục prompt mặc định.");
               }}
             >
               Khôi phục mặc định
             </TFButton>
-            <button onClick={onClose} className="tf-btn tf-btn-ghost px-3 py-2 shrink-0">Đóng</button>
+            <button onClick={handleClose} className="tf-btn tf-btn-ghost px-3 py-2 shrink-0">Đóng</button>
           </div>
         </div>
 
@@ -114,7 +164,7 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
               { key: "genre", label: "Theo Thể loại" },
             ]}
             active={selectedGroup}
-            onChange={(k) => setSelectedGroup(k as PromptLibraryTabKey)}
+            onChange={(k) => handleSwitchGroup(k as PromptLibraryTabKey)}
             variant="pill"
             className="w-full"
           />
@@ -125,10 +175,7 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
             {currentList.map((item) => (
               <button
                 key={item.id}
-                onClick={() => {
-                  setSelectedId(item.id);
-                  setDraftContent(item.content);
-                }}
+                onClick={() => handleSelectItem(item.id)}
                 className={clsx(
                   "w-full text-left px-4 py-3 rounded-md font-semibold transition-colors border tf-break-long",
                   selectedId === item.id
@@ -141,15 +188,18 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
             ))}
             <button
               onClick={() => {
+                const baseState = isDirty ? persistDraft() : libraryState;
+                const baseList = baseState[selectedGroup];
                 const id = `new-${Date.now()}`;
                 const newItem = {
                   id,
                   title: selectedGroup === "core" ? "Quy tắc mới" : "Nhóm mới",
                   content: "",
                 };
-                const nextList = [...currentList, newItem];
-                commitLibraryState(updatePromptLibraryList(libraryState, selectedGroup, nextList));
+                const nextList = [...baseList, newItem];
+                commitLibraryState(updatePromptLibraryList(baseState, selectedGroup, nextList));
                 setSelectedId(id);
+                setDraftTitle(newItem.title);
                 setDraftContent("");
                 setNotice("Đã thêm mục prompt mới.");
               }}
@@ -165,16 +215,24 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
                 {notice}
               </div>
             ) : null}
-            <input
-              value={selectedItem?.title || ""}
-              onChange={(e) => {
-                const next = currentList.map((item) => (
-                  item.id === selectedId ? { ...item, title: e.target.value } : item
-                ));
-                setLibraryState(updatePromptLibraryList(libraryState, selectedGroup, next));
-              }}
-              className="tf-input text-lg font-bold tf-break-long"
-            />
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <input
+                value={draftTitle}
+                onChange={(e) => setDraftTitle(e.target.value)}
+                className="tf-input text-lg font-bold tf-break-long"
+              />
+              <div className="flex items-center gap-2 text-xs font-semibold">
+                <span
+                  className={clsx(
+                    "rounded-full px-3 py-1",
+                    isDirty ? "bg-amber-500/15 text-amber-200 border border-amber-400/20" : "bg-emerald-500/15 text-emerald-200 border border-emerald-400/20"
+                  )}
+                >
+                  {isDirty ? "Chưa lưu" : "Đã đồng bộ"}
+                </span>
+                <span className="text-slate-400">Tự động lưu khi đổi mục hoặc đóng.</span>
+              </div>
+            </div>
             <TFTextarea
               value={draftContent}
               onChange={(e) => setDraftContent(e.target.value)}
@@ -188,6 +246,9 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
                   if (!prompt) {
                     setNotice("Chưa có nội dung để sao chép.");
                     return;
+                  }
+                  if (isDirty) {
+                    persistDraft("Đã lưu prompt hiện tại trước khi sao chép.");
                   }
                   onSelect(prompt);
                   try {
@@ -203,13 +264,9 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
               </TFButton>
               <TFButton
                 variant="primary"
+                disabled={!isDirty}
                 onClick={() => {
-                  const next = currentList.map((item) => (
-                    item.id === selectedId ? { ...item, content: draftContent } : item
-                  ));
-                  const nextState = updatePromptLibraryList(libraryState, selectedGroup, next);
-                  commitLibraryState(nextState);
-                  setNotice("Đã lưu thay đổi vào Kho prompt.");
+                  persistDraft("Đã lưu thay đổi vào Kho prompt.");
                 }}
               >
                 Lưu thay đổi

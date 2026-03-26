@@ -13,6 +13,12 @@ const toolsTabs = [
   { key: "prompt", label: "Kho Prompt" },
 ];
 
+const toolModeBadges = [
+  "Phản hồi tức thì",
+  "Chạy cục bộ",
+  "Không gọi model AI",
+];
+
 type ToolsPageProps = {
   onBack: () => void;
   onRequireAuth: () => void;
@@ -85,13 +91,39 @@ export const ToolsPage: React.FC<ToolsPageProps> = ({ onBack, onRequireAuth }) =
         <TFButton variant="ghost" onClick={onBack}>Quay lại</TFButton>
       </div>
 
+      <section className="tf-card p-4 md:p-5 space-y-4">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="space-y-2">
+            <p className="text-xs font-bold uppercase tracking-[0.28em] text-cyan-300/80">AI Trust Center</p>
+            <h3 className="text-xl font-semibold text-slate-100">Trang này ưu tiên công cụ cục bộ, rõ ràng và phản hồi nhanh</h3>
+            <p className="tf-body max-w-3xl">
+              Các tác vụ ở đây giúp khóa thuật ngữ, rà consistency, lưu văn mẫu và quản lý prompt.
+              Chúng không giả vờ là AI tạo sinh. Khi cần luồng AI đầy đủ, hãy mở workspace chính hoặc đăng nhập để dùng tính năng nâng cao.
+            </p>
+          </div>
+          <TFButton variant="primary" onClick={onRequireAuth}>
+            Mở AI nâng cao
+          </TFButton>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {toolModeBadges.map((badge) => (
+            <span
+              key={badge}
+              className="rounded-full border border-cyan-300/20 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold text-cyan-100"
+            >
+              {badge}
+            </span>
+          ))}
+        </div>
+      </section>
+
       <TFTabs tabs={toolsTabs} active={tab} onChange={setTab} variant="pill" />
 
       {tab === "translate" && (
         <section className="grid md:grid-cols-2 gap-4">
           <div className="tf-card p-4 space-y-3">
             <h3 className="text-lg font-semibold">Từ điển tên riêng</h3>
-            <p className="tf-body">Khóa tên & thuật ngữ bắt buộc trước khi dịch.</p>
+            <p className="tf-body">Khóa tên và thuật ngữ bắt buộc trước khi đưa truyện vào AI dịch.</p>
             <TFInput value={newOriginal} onChange={(e) => setNewOriginal(e.target.value)} placeholder="Tên gốc" />
             <TFInput value={newTranslation} onChange={(e) => setNewTranslation(e.target.value)} placeholder="Tên dịch" />
             {dictionaryRows.length ? (
@@ -140,8 +172,8 @@ export const ToolsPage: React.FC<ToolsPageProps> = ({ onBack, onRequireAuth }) =
             </div>
           </div>
           <div className="tf-card p-4 space-y-3">
-            <h3 className="text-lg font-semibold">Kiểm tra consistency</h3>
-            <p className="tf-body">Quét xưng hô/thuật ngữ trong đoạn văn.</p>
+            <h3 className="text-lg font-semibold">QA consistency cục bộ</h3>
+            <p className="tf-body">Quét nhanh xưng hô và thuật ngữ theo từ điển local, không gọi AI.</p>
             <TFTextarea value={consistencyInput} onChange={(e) => setConsistencyInput(e.target.value)} placeholder="Dán đoạn cần quét..." />
             {consistencyResult.length ? (
               <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-3 text-sm text-slate-300 space-y-2">
@@ -159,7 +191,7 @@ export const ToolsPage: React.FC<ToolsPageProps> = ({ onBack, onRequireAuth }) =
                   notifyApp({ tone: "info", message: "Đã chạy kiểm tra consistency cho đoạn văn." });
                 }}
               >
-                Chạy QA
+                Chạy QA local
               </TFButton>
             </div>
           </div>
@@ -169,7 +201,8 @@ export const ToolsPage: React.FC<ToolsPageProps> = ({ onBack, onRequireAuth }) =
       {tab === "write" && (
         <section className="grid md:grid-cols-2 gap-4">
           <div className="tf-card p-4 space-y-3">
-            <h3 className="text-lg font-semibold">Gợi ý cốt truyện</h3>
+            <h3 className="text-lg font-semibold">Khung ý tưởng nhanh</h3>
+            <TFAlert tone="warn">Đây là bộ khung cục bộ để brainstorm nhanh, không phải AI sinh cốt truyện hoàn chỉnh.</TFAlert>
             <TFTextarea value={ideaBrief} onChange={(e) => setIdeaBrief(e.target.value)} placeholder="Tóm tắt/brief..." />
             {ideaResult ? (
               <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-3 text-sm whitespace-pre-wrap text-slate-300">
@@ -186,10 +219,10 @@ export const ToolsPage: React.FC<ToolsPageProps> = ({ onBack, onRequireAuth }) =
                     return;
                   }
                   setIdeaResult(result);
-                  notifyApp({ tone: "success", message: "Đã tạo gợi ý cốt truyện nhanh." });
+                  notifyApp({ tone: "success", message: "Đã tạo khung ý tưởng nhanh bằng công cụ local." });
                 }}
               >
-                Sinh ý tưởng
+                Tạo khung nhanh
               </TFButton>
             </div>
           </div>
@@ -240,7 +273,7 @@ export const ToolsPage: React.FC<ToolsPageProps> = ({ onBack, onRequireAuth }) =
               Mở kho prompt
             </TFButton>
           </div>
-          <TFAlert tone="warn">Prompt mẫu giờ đã có lưu bền; chỉnh xong đóng/mở lại sẽ không mất.</TFAlert>
+          <TFAlert tone="success">Kho Prompt ở đây là bộ nhớ cục bộ của thiết bị. Prompt đã lưu sẽ được giữ lại kể cả khi đóng/mở lại modal.</TFAlert>
         </section>
       )}
 

@@ -70,6 +70,13 @@ npm run build
 ```
 
 ## Lịch sử cập nhật
+### v0.1a
+- Nâng khả năng quan sát khi AI chạy: overlay giờ hiển thị rõ giai đoạn, phần việc hiện tại và tiến độ thực thay vì chỉ có spinner + số giây.
+- Làm thông báo trong app bớt ồn hơn bằng cách gom nhóm các toast trùng lặp, giới hạn số lượng hiển thị và cho phép đóng tay khi cần.
+- Cải thiện `Kho Prompt`: có trạng thái `Chưa lưu` / `Đã đồng bộ`, tự động lưu khi đổi mục hoặc đóng, và nút `Lưu thay đổi` chỉ bật khi thật sự có chỉnh sửa.
+- Làm rõ `Công cụ` là bộ trợ giúp cục bộ: gắn nhãn không gọi AI, đổi các mô tả dễ gây hiểu nhầm và thêm lối mở sang AI nâng cao.
+- Rút gọn cảm giác quá tải ở form tạo chương bằng checklist các trường quan trọng và tách phần `Tùy chỉnh nâng cao` để người dùng biết nên điền gì trước.
+
 ### v0.0a
 - Nâng prompt và context pack của Writer Pro để AI bám objective, timeline, glossary và Universe Wiki chắc hơn.
 - Tự động khóa glossary sau khi AI sinh nội dung, giảm hiện tượng lệch tên riêng hoặc thuật ngữ.

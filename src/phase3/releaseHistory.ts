@@ -12,6 +12,19 @@ export const CURRENT_WRITER_VERSION = APP_VERSION_LABEL;
 export const WRITER_RELEASE_NOTES: ReleaseNote[] = [
   {
     version: APP_VERSION_LABEL,
+    dateLabel: '2026-03-27',
+    title: 'Tăng AI trust, quan sát tiến trình và độ rõ ràng của workflow',
+    items: [
+      'Nâng overlay AI để hiển thị rõ giai đoạn xử lý, tiến độ thực tế và phần việc đang chạy thay vì chỉ có spinner và số giây.',
+      'Làm hệ thống thông báo bớt ồn hơn: gom nhóm toast trùng lặp, giới hạn số lượng hiển thị và cho phép đóng tay khi cần.',
+      'Sửa Kho Prompt theo hướng dễ tin cậy hơn: có trạng thái Chưa lưu/Đã đồng bộ, tự động lưu khi đổi mục hoặc đóng modal, đồng thời nút Lưu chỉ sáng khi thực sự có thay đổi.',
+      'Làm rõ trang Công cụ là bộ tool cục bộ: gắn nhãn không gọi AI, đổi tên các thao tác dễ gây hiểu nhầm và thêm lối đi rõ ràng sang luồng AI nâng cao.',
+      'Giảm cảm giác quá tải ở form tạo chương bằng cách tách phần cơ bản/nâng cao và bổ sung checklist chỉ ra các trường ảnh hưởng mạnh nhất tới chất lượng đầu ra.',
+      'Đồng bộ phiên bản sản phẩm lên 0.1a và cập nhật Lịch sử cập nhật để người dùng theo dõi những thay đổi vừa triển khai.',
+    ],
+  },
+  {
+    version: '0.0a',
     dateLabel: '2026-03-26',
     title: 'Tăng độ bám context cho Writer Pro',
     items: [

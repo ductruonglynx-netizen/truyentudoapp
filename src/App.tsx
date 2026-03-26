@@ -82,14 +82,24 @@ function cn(...inputs: ClassValue[]) {
 
 interface AppToast {
   id: string;
+  groupKey: string;
+  title?: string;
   message: string;
+  detail?: string;
   tone: AppNoticeTone;
   timeoutMs: number;
+  count: number;
+  persist?: boolean;
 }
 
 interface ActiveAiRun {
   id: string;
   controller: AbortController;
+}
+
+interface AiOverlayProgress {
+  completed: number;
+  total: number;
 }
 
 let mammothModulePromise: Promise<any> | null = null;
@@ -5492,15 +5502,24 @@ const StoryList = ({ onView, refreshKey }: { onView: (story: Story) => void; ref
 const AILoadingOverlay = ({
   isVisible,
   message,
+  stageLabel,
+  detail,
+  progress,
   timer,
   onCancel,
 }: {
   isVisible: boolean,
   message: string,
+  stageLabel?: string,
+  detail?: string,
+  progress?: AiOverlayProgress | null,
   timer: number,
   onCancel?: () => void,
 }) => {
   if (!isVisible) return null;
+  const progressPercent = progress?.total
+    ? Math.max(6, Math.min(100, Math.round((progress.completed / progress.total) * 100)))
+    : 0;
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/80 backdrop-blur-md">
       <motion.div 
@@ -5514,8 +5533,31 @@ const AILoadingOverlay = ({
             <Loader2 className="w-12 h-12 text-indigo-600 animate-spin" />
           </div>
         </div>
-        <h3 className="text-2xl font-serif font-bold text-slate-900 mb-2">AI đang xử lý...</h3>
-        <p className="text-slate-500 font-medium mb-6">{message || "Vui lòng đợi trong giây lát"}</p>
+        <div className="mb-4 flex flex-wrap items-center justify-center gap-2">
+          <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-indigo-600">
+            {stageLabel || "Đang xử lý"}
+          </span>
+          {progress ? (
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-600">
+              {Math.min(progress.completed, progress.total)}/{progress.total} bước
+            </span>
+          ) : null}
+        </div>
+        <h3 className="text-2xl font-serif font-bold text-slate-900 mb-2">{message || "AI đang xử lý..."}</h3>
+        <p className="text-slate-500 font-medium mb-4">{detail || "Vui lòng đợi trong giây lát"}</p>
+        {progress ? (
+          <div className="mb-5 w-full space-y-2">
+            <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
+              <div
+                className="h-full rounded-full bg-indigo-600 transition-all duration-300"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+            <p className="text-xs font-semibold text-slate-500">
+              Tiến độ hiện tại được cập nhật theo từng lô/chương để bạn biết AI đang chạy tới đâu.
+            </p>
+          </div>
+        ) : null}
         <div className="px-6 py-3 bg-indigo-50 rounded-2xl text-indigo-600 font-bold text-sm tracking-widest uppercase">
           Thời gian: {timer} giây
         </div>
@@ -5532,7 +5574,13 @@ const AILoadingOverlay = ({
   );
 };
 
-const AppToastStack = ({ toasts }: { toasts: AppToast[] }) => {
+const AppToastStack = ({
+  toasts,
+  onDismiss,
+}: {
+  toasts: AppToast[],
+  onDismiss: (groupKey: string) => void,
+}) => {
   if (!toasts.length) return null;
   return (
     <div className="fixed right-4 top-24 z-[260] flex w-[min(92vw,380px)] flex-col gap-3">
@@ -5547,7 +5595,37 @@ const AppToastStack = ({ toasts }: { toasts: AppToast[] }) => {
             toast.tone === 'info' && 'border-indigo-200 bg-white text-slate-800',
           )}
         >
-          <p className="text-sm font-semibold leading-6">{toast.message}</p>
+          <div className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="mb-1 flex items-center gap-2">
+                <p className="text-[11px] font-bold uppercase tracking-[0.22em] opacity-70">
+                  {toast.title || (toast.tone === 'success'
+                    ? 'Thành công'
+                    : toast.tone === 'warn'
+                      ? 'Lưu ý'
+                      : toast.tone === 'error'
+                        ? 'Lỗi'
+                        : 'Thông tin')}
+                </p>
+                {toast.count > 1 ? (
+                  <span className="rounded-full bg-black/5 px-2 py-0.5 text-[10px] font-bold">
+                    x{toast.count}
+                  </span>
+                ) : null}
+              </div>
+              <p className="text-sm font-semibold leading-6">{toast.message}</p>
+              {toast.detail ? (
+                <p className="mt-1 text-xs leading-5 opacity-80">{toast.detail}</p>
+              ) : null}
+            </div>
+            <button
+              onClick={() => onDismiss(toast.groupKey)}
+              className="rounded-full p-1.5 text-current/60 transition hover:bg-black/5 hover:text-current"
+              aria-label="Đóng thông báo"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       ))}
     </div>
@@ -6693,14 +6771,48 @@ const AIGenerationModal = ({
   const [showStyleLibrary, setShowStyleLibrary] = useState(false);
   const [isExtractingStyle, setIsExtractingStyle] = useState(false);
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       setOutline(initialOutline);
       setIsAdult(initialIsAdult);
       setPreviousContext(lastChapterContent);
+      setShowAdvancedOptions(false);
     }
   }, [isOpen, initialOutline, initialIsAdult, lastChapterContent]);
+
+  const readinessSignals = [
+    {
+      label: 'Dàn ý / ý tưởng chính',
+      ready: Boolean(outline.trim()) || predictPlot,
+      hint: predictPlot ? 'Đang bật chế độ dự đoán mạch truyện.' : 'Đây là đầu vào ảnh hưởng mạnh nhất đến chất lượng.',
+    },
+    {
+      label: 'Bối cảnh trước đó',
+      ready: Boolean(previousContext.trim()),
+      hint: 'Giúp AI giữ continuity, tránh lặp lại hoặc nhảy mạch.',
+    },
+    {
+      label: 'Chỉ đạo AI / Prompt hệ thống',
+      ready: Boolean(aiInstructions.trim()) || Boolean(selectedRuleId),
+      hint: 'Dùng để khóa style, giới hạn và yêu cầu bắt buộc.',
+    },
+    {
+      label: 'Kịch bản hoặc văn mẫu',
+      ready: Boolean(chapterScript.trim()) || Boolean(styleReference.trim()),
+      hint: 'Rất hữu ích khi muốn giữ nhịp điệu và giọng văn ổn định.',
+    },
+  ];
+  const readinessCount = readinessSignals.filter((item) => item.ready).length;
+  const readinessLabel = readinessCount >= 4 ? 'Rất tốt' : readinessCount >= 3 ? 'Ổn định' : readinessCount >= 2 ? 'Tạm ổn' : 'Cần thêm context';
+  const readinessClassName = readinessCount >= 4
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    : readinessCount >= 3
+      ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+      : readinessCount >= 2
+        ? 'border-amber-200 bg-amber-50 text-amber-700'
+        : 'border-rose-200 bg-rose-50 text-rose-700';
 
   const handleGenerateScript = async () => {
     if (!outline.trim()) {
@@ -6851,6 +6963,44 @@ const AIGenerationModal = ({
         </div>
 
         <div className="tf-modal-content p-6 md:p-8 overflow-y-auto space-y-8">
+          <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-5 space-y-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div className="space-y-2">
+                <p className="text-xs font-bold uppercase tracking-[0.22em] text-slate-400">Writer Pro Guide</p>
+                <h4 className="text-lg font-bold text-slate-900">3 thứ ảnh hưởng mạnh nhất tới chất lượng</h4>
+                <p className="text-sm text-slate-600">
+                  Ưu tiên điền theo thứ tự này: <strong>dàn ý</strong>, <strong>bối cảnh trước đó</strong>, rồi tới
+                  <strong> chỉ đạo AI / văn mẫu</strong>. Phần còn lại là tinh chỉnh thêm, không bắt buộc ngay từ đầu.
+                </p>
+              </div>
+              <div className={cn("rounded-2xl border px-4 py-3 text-sm font-semibold", readinessClassName)}>
+                Mức sẵn sàng: {readinessLabel} ({readinessCount}/{readinessSignals.length})
+              </div>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              {readinessSignals.map((signal) => (
+                <div
+                  key={signal.label}
+                  className={cn(
+                    "rounded-2xl border px-4 py-3",
+                    signal.ready ? "border-emerald-200 bg-white" : "border-slate-200 bg-white/80"
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-800">{signal.label}</p>
+                    <span className={cn(
+                      "rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.16em]",
+                      signal.ready ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+                    )}>
+                      {signal.ready ? 'Đã có' : 'Thiếu'}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">{signal.hint}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -7023,9 +7173,41 @@ const AIGenerationModal = ({
                   </select>
                 </div>
               </div>
+
+              <div className="space-y-4">
+                <label className="block text-sm font-bold text-slate-700">Bối cảnh trước đó (Previous Context)</label>
+                <textarea 
+                  value={previousContext}
+                  onChange={(e) => setPreviousContext(e.target.value)}
+                  placeholder="Tóm tắt các sự kiện đã diễn ra trước chương này để AI duy trì mạch truyện..."
+                  className="w-full h-24 p-3 rounded-xl border border-slate-200 text-sm resize-none tf-mobile-textarea"
+                />
+              </div>
             </div>
 
             <div className="space-y-6">
+              <div className="rounded-[24px] border border-indigo-100 bg-indigo-50/70 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">Tùy chỉnh nâng cao</p>
+                    <p className="text-xs leading-5 text-slate-500">
+                      Mở phần này khi bạn muốn khóa chặt tone, pacing, nhân vật, sự kiện hoặc văn mẫu tham khảo.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowAdvancedOptions((prev) => !prev)}
+                    className={cn(
+                      "rounded-full px-4 py-2 text-xs font-bold transition-colors",
+                      showAdvancedOptions ? "bg-indigo-600 text-white" : "bg-white text-indigo-600 border border-indigo-200"
+                    )}
+                  >
+                    {showAdvancedOptions ? 'Ẩn tùy chỉnh nâng cao' : 'Mở tùy chỉnh nâng cao'}
+                  </button>
+                </div>
+              </div>
+
+              {showAdvancedOptions ? (
+                <>
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-3">Phong cách viết</label>
                 <div className="space-y-4">
@@ -7110,110 +7292,115 @@ const AIGenerationModal = ({
                   </div>
                 </div>
               </div>
+                </>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-4 py-5 text-sm text-slate-500">
+                  Bạn đang ở chế độ cơ bản. Phần này đã ẩn bớt các nút ít quan trọng để dễ tập trung vào outline, context và chỉ đạo AI.
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="space-y-4">
-              <label className="block text-sm font-bold text-slate-700">Nhân vật xuất hiện</label>
-              <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-2 border border-slate-100 rounded-xl">
-                {characters.map(char => (
-                  <button
-                    key={char.id}
-                    onClick={() => {
-                      if (selectedCharacters.includes(char.id)) {
-                        setSelectedCharacters(selectedCharacters.filter(id => id !== char.id));
-                      } else {
-                        setSelectedCharacters([...selectedCharacters, char.id]);
-                      }
-                    }}
-                    className={cn(
-                      "px-3 py-1.5 rounded-full text-xs font-bold transition-all",
-                      selectedCharacters.includes(char.id) ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-500"
-                    )}
-                  >
-                    {char.name}
-                  </button>
-                ))}
-                {characters.length === 0 && <p className="text-xs text-slate-400 italic">Chưa có nhân vật nào trong thư viện.</p>}
-              </div>
-            </div>
+          {showAdvancedOptions ? (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-4">
+                  <label className="block text-sm font-bold text-slate-700">Nhân vật xuất hiện</label>
+                  <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-2 border border-slate-100 rounded-xl">
+                    {characters.map(char => (
+                      <button
+                        key={char.id}
+                        onClick={() => {
+                          if (selectedCharacters.includes(char.id)) {
+                            setSelectedCharacters(selectedCharacters.filter(id => id !== char.id));
+                          } else {
+                            setSelectedCharacters([...selectedCharacters, char.id]);
+                          }
+                        }}
+                        className={cn(
+                          "px-3 py-1.5 rounded-full text-xs font-bold transition-all",
+                          selectedCharacters.includes(char.id) ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-500"
+                        )}
+                      >
+                        {char.name}
+                      </button>
+                    ))}
+                    {characters.length === 0 && <p className="text-xs text-slate-400 italic">Chưa có nhân vật nào trong thư viện.</p>}
+                  </div>
+                </div>
 
-            <div className="space-y-4">
-              <label className="block text-sm font-bold text-slate-700">Sự kiện chính (Key Events)</label>
-              <textarea 
-                value={keyEvents}
-                onChange={(e) => setKeyEvents(e.target.value)}
-                placeholder="Các sự kiện bắt buộc xảy ra..."
-                className="w-full h-24 p-3 rounded-xl border border-slate-200 text-sm resize-none tf-mobile-textarea"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="space-y-4">
-              <label className="block text-sm font-bold text-slate-700">Bối cảnh trước đó (Previous Context)</label>
-              <textarea 
-                value={previousContext}
-                onChange={(e) => setPreviousContext(e.target.value)}
-                placeholder="Tóm tắt các sự kiện đã diễn ra trước chương này để AI duy trì mạch truyện..."
-                className="w-full h-24 p-3 rounded-xl border border-slate-200 text-sm resize-none tf-mobile-textarea"
-              />
-            </div>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <label className="block text-sm font-bold text-slate-700">Văn mẫu tham khảo (Style Reference)</label>
-                <div className="flex gap-2">
-                  <label className="flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold hover:bg-slate-200 cursor-pointer transition-colors">
-                    {isExtractingStyle ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
-                    Tải file
-                    <input type="file" accept=".docx,.txt" onChange={handleStyleFileUpload} className="hidden" />
-                  </label>
-                  <button 
-                    onClick={() => setShowStyleLibrary(true)}
-                    className="flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-bold hover:bg-indigo-100 transition-colors"
-                  >
-                    <Library className="w-3 h-3" />
-                    Thư viện
-                  </button>
+                <div className="space-y-4">
+                  <label className="block text-sm font-bold text-slate-700">Sự kiện chính (Key Events)</label>
+                  <textarea 
+                    value={keyEvents}
+                    onChange={(e) => setKeyEvents(e.target.value)}
+                    placeholder="Các sự kiện bắt buộc xảy ra..."
+                    className="w-full h-24 p-3 rounded-xl border border-slate-200 text-sm resize-none tf-mobile-textarea"
+                  />
                 </div>
               </div>
-              <textarea 
-                value={styleReference}
-                onChange={(e) => setStyleReference(e.target.value)}
-                placeholder="Dán một đoạn văn mẫu bạn muốn AI bắt chước phong cách..."
-                className="w-full h-24 p-3 rounded-xl border border-slate-200 text-sm resize-none tf-mobile-textarea"
-              />
-            </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-4 md:col-start-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-sm font-bold text-slate-700">Văn mẫu tham khảo (Style Reference)</label>
+                    <div className="flex gap-2">
+                      <label className="flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold hover:bg-slate-200 cursor-pointer transition-colors">
+                        {isExtractingStyle ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                        Tải file
+                        <input type="file" accept=".docx,.txt" onChange={handleStyleFileUpload} className="hidden" />
+                      </label>
+                      <button 
+                        onClick={() => setShowStyleLibrary(true)}
+                        className="flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-bold hover:bg-indigo-100 transition-colors"
+                      >
+                        <Library className="w-3 h-3" />
+                        Thư viện
+                      </button>
+                    </div>
+                  </div>
+                  <textarea 
+                    value={styleReference}
+                    onChange={(e) => setStyleReference(e.target.value)}
+                    placeholder="Dán một đoạn văn mẫu bạn muốn AI bắt chước phong cách..."
+                    className="w-full h-24 p-3 rounded-xl border border-slate-200 text-sm resize-none tf-mobile-textarea"
+                  />
+                </div>
 
-            {showStyleLibrary && (
-              <div className="fixed inset-0 z-[200] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="tf-modal-panel bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
-                >
-                  <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-                    <h3 className="text-xl font-serif font-bold">Thư viện văn mẫu</h3>
-                    <button onClick={() => setShowStyleLibrary(false)} className="p-2 hover:bg-slate-100 rounded-full">
-                      <Plus className="w-6 h-6 rotate-45 text-slate-400" />
-                    </button>
+                {showStyleLibrary && (
+                  <div className="fixed inset-0 z-[200] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
+                    <motion.div 
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="tf-modal-panel bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+                    >
+                      <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                        <h3 className="text-xl font-serif font-bold">Thư viện văn mẫu</h3>
+                        <button onClick={() => setShowStyleLibrary(false)} className="p-2 hover:bg-slate-100 rounded-full">
+                          <Plus className="w-6 h-6 rotate-45 text-slate-400" />
+                        </button>
+                      </div>
+                      <div className="tf-modal-content p-6 overflow-y-auto">
+                        <StyleReferenceLibrary 
+                          onSelect={(content) => {
+                            setStyleReference(content);
+                            setShowStyleLibrary(false);
+                          }} 
+                        />
+                      </div>
+                    </motion.div>
                   </div>
-                  <div className="tf-modal-content p-6 overflow-y-auto">
-                    <StyleReferenceLibrary 
-                      onSelect={(content) => {
-                        setStyleReference(content);
-                        setShowStyleLibrary(false);
-                      }} 
-                    />
-                  </div>
-                </motion.div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          ) : null}
+
         </div>
 
-        <div className="p-6 md:p-8 bg-slate-50 border-t border-slate-100 tf-modal-actions">
+        <div className="p-6 md:p-8 bg-slate-50 border-t border-slate-100 tf-modal-actions space-y-4">
+          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+            Tối thiểu để chạy: có <strong>dàn ý</strong> hoặc bật <strong>AI tự dự đoán mạch truyện</strong>.
+            Để kết quả ổn định hơn, nên thêm <strong>bối cảnh trước đó</strong> và <strong>chỉ đạo AI hoặc văn mẫu</strong>.
+          </div>
           <button 
             onClick={() => onGenerate({
               outline, 
@@ -7241,7 +7428,7 @@ const AIGenerationModal = ({
             className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-900/20 disabled:opacity-50 flex items-center justify-center gap-3"
           >
             <Sparkles className="w-5 h-5" />
-            Bắt đầu tạo chương với tùy chỉnh
+            Bắt đầu tạo chương
           </button>
         </div>
       </motion.div>
@@ -7262,6 +7449,9 @@ const AppContent = () => {
   const [isCreating, setIsCreating] = useState(false);
   const [isProcessingAI, setIsProcessingAI] = useState(false);
   const [aiLoadingMessage, setAILoadingMessage] = useState('');
+  const [aiLoadingStage, setAiLoadingStage] = useState('Đang chuẩn bị');
+  const [aiLoadingDetail, setAiLoadingDetail] = useState('');
+  const [aiLoadingProgress, setAiLoadingProgress] = useState<AiOverlayProgress | null>(null);
   const [aiTimer, setAiTimer] = useState(0);
   const [appToasts, setAppToasts] = useState<AppToast[]>([]);
   const [showPromptManager, setShowPromptManager] = useState(false);
@@ -7276,6 +7466,7 @@ const AppContent = () => {
   const [isExportingStory, setIsExportingStory] = useState(false);
   const profileAvatarInputRef = useRef<HTMLInputElement>(null);
   const activeAiRunRef = useRef<ActiveAiRun | null>(null);
+  const toastTimeoutsRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -7290,26 +7481,73 @@ const AppContent = () => {
     };
   }, [isProcessingAI]);
 
+  const dismissToast = useCallback((groupKey: string) => {
+    const existingTimer = toastTimeoutsRef.current.get(groupKey);
+    if (typeof existingTimer === 'number') {
+      window.clearTimeout(existingTimer);
+      toastTimeoutsRef.current.delete(groupKey);
+    }
+    setAppToasts((prev) => prev.filter((item) => item.groupKey !== groupKey));
+  }, []);
+
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<AppNoticePayload>).detail;
       if (!detail?.message) return;
+      const groupKey = detail.groupKey || `${detail.tone || 'info'}:${detail.message}`;
       const toast: AppToast = {
-        id: detail.id || `notice-${Date.now()}`,
+        id: detail.id || groupKey,
+        groupKey,
+        title: detail.title,
         message: detail.message,
+        detail: detail.detail,
         tone: detail.tone || 'info',
         timeoutMs: detail.timeoutMs ?? 3800,
+        count: 1,
+        persist: detail.persist,
       };
-      setAppToasts((prev) => [...prev, toast]);
-      window.setTimeout(() => {
-        setAppToasts((prev) => prev.filter((item) => item.id !== toast.id));
-      }, toast.timeoutMs);
+      setAppToasts((prev) => {
+        const existingIndex = prev.findIndex((item) => item.groupKey === groupKey);
+        if (existingIndex >= 0) {
+          const next = [...prev];
+          const current = next[existingIndex];
+          next[existingIndex] = {
+            ...current,
+            ...toast,
+            count: current.count + 1,
+          };
+          return next;
+        }
+        const next = [...prev, toast];
+        return next.length > 4 ? next.slice(next.length - 4) : next;
+      });
+
+      const existingTimer = toastTimeoutsRef.current.get(groupKey);
+      if (typeof existingTimer === 'number') {
+        window.clearTimeout(existingTimer);
+      }
+      if (!detail.persist) {
+        const timeoutId = window.setTimeout(() => dismissToast(groupKey), toast.timeoutMs);
+        toastTimeoutsRef.current.set(groupKey, timeoutId);
+      }
     };
     window.addEventListener(APP_NOTICE_EVENT, handler as EventListener);
     return () => window.removeEventListener(APP_NOTICE_EVENT, handler as EventListener);
+  }, [dismissToast]);
+
+  useEffect(() => () => {
+    toastTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    toastTimeoutsRef.current.clear();
   }, []);
 
-  const beginAiRun = useCallback((initialMessage: string) => {
+  const beginAiRun = useCallback((
+    initialMessage: string,
+    options?: {
+      stageLabel?: string,
+      detail?: string,
+      progress?: AiOverlayProgress | null,
+    },
+  ) => {
     activeAiRunRef.current?.controller.abort();
     const nextRun: ActiveAiRun = {
       id: `ai-run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -7319,7 +7557,27 @@ const AppContent = () => {
     setIsProcessingAI(true);
     setAiTimer(0);
     setAILoadingMessage(initialMessage);
+    setAiLoadingStage(options?.stageLabel || 'Đang chuẩn bị');
+    setAiLoadingDetail(options?.detail || '');
+    setAiLoadingProgress(options?.progress ?? null);
     return nextRun;
+  }, []);
+
+  const updateAiRun = useCallback((
+    run: ActiveAiRun | null | undefined,
+    payload: {
+      message?: string,
+      stageLabel?: string,
+      detail?: string,
+      progress?: AiOverlayProgress | null,
+    },
+  ) => {
+    if (!run) return;
+    if (activeAiRunRef.current?.id !== run.id) return;
+    if (payload.message !== undefined) setAILoadingMessage(payload.message);
+    if (payload.stageLabel !== undefined) setAiLoadingStage(payload.stageLabel);
+    if (payload.detail !== undefined) setAiLoadingDetail(payload.detail);
+    if (payload.progress !== undefined) setAiLoadingProgress(payload.progress);
   }, []);
 
   const finishAiRun = useCallback((run?: ActiveAiRun | null) => {
@@ -7328,6 +7586,9 @@ const AppContent = () => {
     activeAiRunRef.current = null;
     setIsProcessingAI(false);
     setAILoadingMessage('');
+    setAiLoadingStage('Đã hoàn tất');
+    setAiLoadingDetail('');
+    setAiLoadingProgress(null);
   }, []);
 
   const cancelActiveAiRun = useCallback(() => {
@@ -7337,6 +7598,9 @@ const AppContent = () => {
     activeAiRunRef.current = null;
     setIsProcessingAI(false);
     setAILoadingMessage('');
+    setAiLoadingStage('Đã hủy');
+    setAiLoadingDetail('');
+    setAiLoadingProgress(null);
     notifyApp({ tone: 'warn', message: 'Đã hủy tác vụ AI đang chạy.' });
   }, []);
 
@@ -7549,7 +7813,10 @@ const AppContent = () => {
     input.onchange = async (e: any) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      const aiRun = beginAiRun("Đang đọc file...");
+      const aiRun = beginAiRun("Đang đọc file...", {
+        stageLabel: 'Nạp dữ liệu',
+        detail: 'Hệ thống đang mở tệp và nhận diện định dạng để quyết định luồng AI phù hợp.',
+      });
       try {
         const content = await readImportedStoryFile(file);
         const shouldTranslate = window.confirm('Nhấn OK để DỊCH truyện, hoặc Cancel để VIẾT TIẾP truyện.');
@@ -7652,7 +7919,10 @@ const AppContent = () => {
     if (!user || !translateFileContent) return;
     
     setShowTranslateModal(false);
-    const aiRun = beginAiRun("Đang chuẩn bị dịch thuật...");
+    const aiRun = beginAiRun("Đang chuẩn bị dịch thuật...", {
+      stageLabel: 'Khởi tạo dịch',
+      detail: 'Đang đọc cấu hình, từ điển và chuẩn bị chia truyện thành các lô dịch ổn định hơn.',
+    });
     const abortSignal = aiRun.controller.signal;
 
     try {
@@ -7719,17 +7989,21 @@ const AppContent = () => {
       ];
       const preparationLabel = shouldRunAnalysis ? 'Đang phân tích nội dung gốc...' : 'Đang chuẩn bị dịch theo lô...';
 
-      if (detectedSections.length >= 2 && turboMode && lowQuotaMode) {
-        setAILoadingMessage(`Đã nhận diện ${effectiveUnits.length} chương. Bật chế độ tiết kiệm quota + dịch nhanh...`);
-      } else if (detectedSections.length >= 2 && turboMode) {
-        setAILoadingMessage(`Đã nhận diện ${effectiveUnits.length} chương. Bật chế độ dịch nhanh. ${preparationLabel}`);
-      } else if (detectedSections.length >= 2) {
-        setAILoadingMessage(`Đã nhận diện ${effectiveUnits.length} chương. ${preparationLabel}`);
-      } else if (turboMode) {
-        setAILoadingMessage(`File lớn nên hệ thống bật chế độ dịch nhanh và tự chia đoạn. ${preparationLabel}`);
-      } else {
-        setAILoadingMessage(`Chưa thấy mốc chương rõ ràng, hệ thống sẽ tự chia đoạn. ${preparationLabel}`);
-      }
+      const translationPreparationMessage = detectedSections.length >= 2 && turboMode && lowQuotaMode
+        ? `Đã nhận diện ${effectiveUnits.length} chương. Bật chế độ tiết kiệm quota + dịch nhanh.`
+        : detectedSections.length >= 2 && turboMode
+          ? `Đã nhận diện ${effectiveUnits.length} chương. Bật chế độ dịch nhanh.`
+          : detectedSections.length >= 2
+            ? `Đã nhận diện ${effectiveUnits.length} chương và giữ nguyên cấu trúc chương.`
+            : turboMode
+              ? 'File lớn nên hệ thống sẽ tự chia đoạn và ưu tiên tốc độ.'
+              : 'Chưa thấy mốc chương rõ ràng, hệ thống sẽ tự chia đoạn để dịch ổn định hơn.';
+      updateAiRun(aiRun, {
+        message: 'Đang phân tích cấu trúc truyện...',
+        stageLabel: 'Phân tích cấu trúc',
+        detail: `${translationPreparationMessage} ${preparationLabel}`,
+        progress: { completed: 0, total: Math.max(totalSegments, 1) },
+      });
 
       // 1. Analyze the story for metadata (skip on low quota mode)
       let analysis = {
@@ -8009,9 +8283,15 @@ const AppContent = () => {
         for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
           const batch = batches[batchIndex];
           throwIfAborted(abortSignal);
-          setAILoadingMessage(
-            `Đang dịch chương ${chapterIndex + 1}/${maxTranslateChunks} - lô ${batchIndex + 1}/${batches.length} (${batch.entries.length} đoạn), tiến độ ${Math.min(processedSegments, totalSegments)}/${totalSegments}${turboMode ? ' [Turbo]' : ''}${lowQuotaMode ? ' [Quota-safe]' : ''}...`
-          );
+          updateAiRun(aiRun, {
+            message: 'Đang dịch truyện...',
+            stageLabel: `Dịch chương ${chapterIndex + 1}/${maxTranslateChunks}`,
+            detail: `Lô ${batchIndex + 1}/${batches.length} với ${batch.entries.length} đoạn${turboMode ? ' · Turbo' : ''}${lowQuotaMode ? ' · Quota-safe' : ''}.`,
+            progress: {
+              completed: Math.min(processedSegments + batch.entries.length, totalSegments),
+              total: Math.max(totalSegments, 1),
+            },
+          });
           const batchResult = await translateStoryBatch({
             unitTitle: unit.title || translatedTitle,
             fallbackTitle: translatedTitle || `Chương ${chapterIndex + 1}`,
@@ -8120,7 +8400,11 @@ const AppContent = () => {
     if (!user || !continueFileContent) return;
     
     setShowAIContinueModal(false);
-    const aiRun = beginAiRun("Đang phân tích nội dung truyện...");
+    const aiRun = beginAiRun("Đang phân tích nội dung truyện...", {
+      stageLabel: 'Phân tích truyện',
+      detail: 'Hệ thống đang đọc phần truyện gốc để hiểu văn phong, nhân vật và bối cảnh hiện tại.',
+      progress: { completed: 1, total: 3 },
+    });
     const abortSignal = aiRun.controller.signal;
 
     try {
@@ -8178,7 +8462,12 @@ const AppContent = () => {
         characters: Array.isArray(analysisParsed.characters) ? analysisParsed.characters : [],
         currentContext: String(analysisParsed.currentContext || '').trim(),
       };
-      setAILoadingMessage("Đang lập kế hoạch các chương tiếp theo...");
+      updateAiRun(aiRun, {
+        message: 'Đang lập kế hoạch các chương tiếp theo...',
+        stageLabel: 'Lập kế hoạch',
+        detail: 'Đã phân tích xong truyện gốc. AI đang dựng roadmap cho các chương mới.',
+        progress: { completed: 2, total: 3 },
+      });
 
       // 2. Plan next chapters
       const planPrompt = `
@@ -8244,7 +8533,12 @@ const AppContent = () => {
       for (let i = 0; i < plannedChapters.length; i++) {
         throwIfAborted(abortSignal);
         const ch = plannedChapters[i];
-        setAILoadingMessage(`Đang viết chương ${i + 1}/${plannedChapters.length}: ${ch.title}...`);
+        updateAiRun(aiRun, {
+          message: `Đang viết chương ${i + 1}/${plannedChapters.length}`,
+          stageLabel: 'Viết nội dung',
+          detail: ch.title || `Chương ${i + 1}`,
+          progress: { completed: i + 1, total: Math.max(plannedChapters.length, 1) },
+        });
         
         const chapterPrompt = `
           Hãy viết chương "${ch.title}" cho truyện dựa trên các thông tin sau:
@@ -8379,7 +8673,10 @@ const AppContent = () => {
     } = options;
     if (!user || !selectedStory) return;
     setShowAIGen(false);
-    const aiRun = beginAiRun("Đang chuẩn bị dữ liệu...");
+    const aiRun = beginAiRun("Đang chuẩn bị dữ liệu...", {
+      stageLabel: 'Chuẩn bị đầu vào',
+      detail: 'Đang gom outline, context, quy tắc và thông tin nhân vật trước khi gọi model viết chương.',
+    });
     const abortSignal = aiRun.controller.signal;
 
     try {
@@ -8434,6 +8731,12 @@ const AppContent = () => {
       const predictInstruction = predictPlot 
         ? "AI TỰ DỰ ĐOÁN: Dựa trên dàn ý và nội dung THỰC TẾ của các chương trước (được cung cấp trong phần BỐI CẢNH THỰC TẾ), hãy tự sáng tạo và dự đoán các tình tiết tiếp theo một cách logic. LƯU Ý: Tuyệt đối không lặp lại các tình tiết đã xảy ra, hãy tập trung vào diễn biến MỚI."
         : "BÁM SÁT DÀN Ý: Hãy viết chính xác theo các tình tiết đã được cung cấp trong dàn ý, không tự ý thay đổi mạch truyện chính.";
+
+      updateAiRun(aiRun, {
+        message: 'Đang tổng hợp chỉ dẫn viết chương...',
+        stageLabel: 'Đóng gói prompt',
+        detail: 'Đã nạp xong context và đang chuyển toàn bộ tuỳ chỉnh thành prompt nhất quán cho AI.',
+      });
 
       const chapterWordsTarget = Math.max(350, Number.parseInt(String(chapterLength || '1000'), 10) || 1000);
       const batchMinChars = Math.min(22000, Math.max(1200, Math.round(chapterCount * chapterWordsTarget * 1.5)));
@@ -8627,7 +8930,10 @@ const AppContent = () => {
     const { file, genre, pacing, tone, isAdult, customPacing, customTone, perspective, audience, styleReference } = options;
     if (!user) return;
     setShowAIStoryModal(false);
-    const aiRun = beginAiRun("Đang xử lý file và tạo truyện...");
+    const aiRun = beginAiRun("Đang xử lý file và tạo truyện...", {
+      stageLabel: 'Đọc file nguồn',
+      detail: 'Đang bóc tách nội dung từ tệp để chuẩn bị sinh truyện mới bằng AI.',
+    });
     const abortSignal = aiRun.controller.signal;
 
     try {
@@ -9176,11 +9482,14 @@ const AppContent = () => {
         fileName={translateFileName}
       />
 
-      <AppToastStack toasts={appToasts} />
+      <AppToastStack toasts={appToasts} onDismiss={dismissToast} />
 
       <AILoadingOverlay 
         isVisible={isProcessingAI}
         message={aiLoadingMessage}
+        stageLabel={aiLoadingStage}
+        detail={aiLoadingDetail}
+        progress={aiLoadingProgress}
         timer={aiTimer}
         onCancel={cancelActiveAiRun}
       />
