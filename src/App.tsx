@@ -55,6 +55,7 @@ import { ApiSectionPanel } from './components/tools/ApiSectionPanel';
 import { ToolsPage } from './features/tools/ToolsPage';
 import { PromptLibraryModal as PromptLibraryModalNew } from './features/prompt/PromptLibrary';
 import { CURRENT_WRITER_VERSION, WRITER_RELEASE_NOTES } from './phase3/releaseHistory';
+import { APP_NOTICE_EVENT, notifyApp, type AppNoticePayload, type AppNoticeTone } from './notifications';
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
@@ -77,6 +78,18 @@ import {
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+interface AppToast {
+  id: string;
+  message: string;
+  tone: AppNoticeTone;
+  timeoutMs: number;
+}
+
+interface ActiveAiRun {
+  id: string;
+  controller: AbortController;
 }
 
 let mammothModulePromise: Promise<any> | null = null;
@@ -1358,6 +1371,7 @@ function splitGenConfig(config?: Record<string, unknown>): {
   providerConfig: Record<string, unknown>;
   maxRetries: number;
   minOutputChars: number;
+  signal?: AbortSignal;
 } {
   const raw = { ...(config || {}) } as Record<string, unknown>;
   const maxRetries =
@@ -1368,15 +1382,23 @@ function splitGenConfig(config?: Record<string, unknown>): {
     typeof raw.minOutputChars === 'number'
       ? Math.max(0, Math.round(raw.minOutputChars))
       : undefined;
+  const signal = raw.signal instanceof AbortSignal ? raw.signal : undefined;
 
   delete raw.maxRetries;
   delete raw.minOutputChars;
+  delete raw.signal;
 
   return {
     providerConfig: raw,
     maxRetries: maxRetries ?? 1,
     minOutputChars: minOutputChars ?? 0,
+    signal,
   };
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  throw new Error('AI operation cancelled by user.');
 }
 
 function extractTextFromModelPayload(payload: any): string {
@@ -1505,14 +1527,23 @@ function getGeminiFallbackModels(baseModel: string, kind: 'fast' | 'quality'): s
   return Array.from(new Set(merged));
 }
 
-const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit, timeoutMs: number) => {
+const fetchWithTimeout = async (
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number,
+  outerSignal?: AbortSignal,
+) => {
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  const timer = window.setTimeout(abort, timeoutMs);
+  outerSignal?.addEventListener('abort', abort, { once: true });
   try {
+    throwIfAborted(outerSignal);
     const resp = await fetch(input, { ...init, signal: controller.signal });
     return resp;
   } finally {
     window.clearTimeout(timer);
+    outerSignal?.removeEventListener('abort', abort);
   }
 };
 
@@ -1577,6 +1608,7 @@ async function generateGeminiText(
     const maxAttempts = splitConfig.maxRetries + Math.max(0, modelCandidates.length - 1) + extraRecoveryRetries;
 
     for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
+      throwIfAborted(splitConfig.signal);
       const timeoutMs = calculateAdaptiveTimeoutMs(
         kind,
         Number(attemptConfig.maxOutputTokens || 0) || (kind === 'fast' ? 1800 : 4200),
@@ -1596,9 +1628,9 @@ async function generateGeminiText(
 
           const runDirectRelayToken = async () => {
             if (!relayToken) return false;
-            const resp = await fetchWithTimeout(
-              relayEndpoint,
-              {
+              const resp = await fetchWithTimeout(
+                relayEndpoint,
+                {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -1607,6 +1639,7 @@ async function generateGeminiText(
                 body: JSON.stringify(body),
               },
               timeoutMs + 8000,
+              splitConfig.signal,
             );
             if (!resp.ok) {
               throw new Error(`Direct bearer error ${resp.status}: ${await resp.text()}`);
@@ -1631,6 +1664,7 @@ async function generateGeminiText(
           if (!text) {
             try {
               const raw = await relayGenerateContent(currentModel, body, timeoutMs);
+              throwIfAborted(splitConfig.signal);
               try {
                 const parsed = JSON.parse(raw);
                 if (parsed?.error?.message) {
@@ -1670,6 +1704,7 @@ async function generateGeminiText(
             contents: promptForAttempt,
             config: attemptConfig,
           });
+          throwIfAborted(splitConfig.signal);
           text = response.text || extractTextFromModelPayload(response as any) || '';
         } else if (auth.provider === 'gemini' || auth.provider === 'gcli') {
           const geminiBase = auth.baseUrl || getProviderBaseUrl('gcli');
@@ -1682,15 +1717,15 @@ async function generateGeminiText(
               'Content-Type': 'application/json',
               Authorization: `Bearer ${auth.apiKey}`,
             },
-            body: JSON.stringify({
+              body: JSON.stringify({
               contents: [
                 {
                   parts: [{ text: promptForAttempt }],
                 },
               ],
               generationConfig: attemptConfig,
-            }),
-          }, timeoutMs);
+              }),
+          }, timeoutMs, splitConfig.signal);
           if (!resp.ok) {
             const body = await resp.text();
             throw new Error(`${auth.provider === 'gcli' ? 'GCLI' : 'Gemini'} (Bearer) error ${resp.status}: ${body.slice(0, 200)}`);
@@ -1722,7 +1757,7 @@ async function generateGeminiText(
             method: 'POST',
             headers,
             body: JSON.stringify(bodyPayload),
-          }, timeoutMs);
+          }, timeoutMs, splitConfig.signal);
           if (!resp.ok) {
             const body = await resp.text();
             throw new Error(`${auth.provider === 'custom' ? 'Custom endpoint' : 'OpenAI'} error ${resp.status}: ${body.slice(0, 220)}`);
@@ -1743,7 +1778,7 @@ async function generateGeminiText(
               temperature: typeof attemptConfig.temperature === 'number' ? attemptConfig.temperature : 0.7,
               messages: [{ role: 'user', content: promptForAttempt }],
             }),
-          }, timeoutMs);
+          }, timeoutMs, splitConfig.signal);
           if (!resp.ok) {
             const body = await resp.text();
             throw new Error(`Anthropic error ${resp.status}: ${body.slice(0, 220)}`);
@@ -2262,10 +2297,10 @@ const TranslationNameDictionary = () => {
         const newList = [...newNames, ...names];
         setNames(newList);
         storage.saveTranslationNames(newList);
-        alert("Nhập từ điển thành công!");
+        notifyApp({ tone: 'success', message: "Nhập từ điển thành công!" });
       }
     } catch (error) {
-      alert("Lỗi khi nhập file từ điển.");
+      notifyApp({ tone: 'error', message: "Lỗi khi nhập file từ điển." });
     }
     e.target.value = '';
   };
@@ -3751,7 +3786,7 @@ const ToolsManager = ({
       URL.revokeObjectURL(url);
     } catch (error) {
       console.error("Export failed", error);
-      alert("Xuất dữ liệu thất bại.");
+      notifyApp({ tone: 'error', message: "Xuất dữ liệu thất bại." });
     } finally {
       setIsExporting(false);
     }
@@ -3794,7 +3829,7 @@ const ToolsManager = ({
             const chars = storage.getCharacters();
             storage.saveCharacters([...newChars, ...chars]);
           }
-          alert("Nhập dữ liệu thành công!");
+          notifyApp({ tone: 'success', message: "Nhập dữ liệu thành công!" });
         }
       } else if (fileName.endsWith('.docx')) {
         console.log("Xử lý file DOCX...");
@@ -3827,7 +3862,7 @@ const ToolsManager = ({
           chapters: []
         }, ...stories]);
         bumpStoriesVersion();
-        alert("Nhập file .docx thành công!");
+        notifyApp({ tone: 'success', message: "Nhập file .docx thành công!" });
       } else if (fileName.endsWith('.txt')) {
         console.log("Xử lý file TXT...");
         const text = await file.text();
@@ -3854,14 +3889,14 @@ const ToolsManager = ({
           chapters: []
         }, ...stories]);
         bumpStoriesVersion();
-        alert("Nhập file .txt thành công!");
+        notifyApp({ tone: 'success', message: "Nhập file .txt thành công!" });
       } else {
         console.warn("Định dạng file không được hỗ trợ:", fileName);
-        alert("Định dạng file không được hỗ trợ.");
+        notifyApp({ tone: 'warn', message: "Định dạng file không được hỗ trợ." });
       }
     } catch (error) {
       console.error("Lỗi khi nhập file:", error);
-      alert(`Nhập file thất bại: ${error instanceof Error ? error.message : "Lỗi không xác định"}`);
+      notifyApp({ tone: 'error', message: `Nhập file thất bại: ${error instanceof Error ? error.message : "Lỗi không xác định"}` });
     } finally {
       setIsImporting(false);
       e.target.value = '';
@@ -4020,7 +4055,7 @@ const AIRulesManager = () => {
     setNewName('');
     setNewContent('');
     setIsAdding(false);
-    alert('Thêm quy tắc AI thành công!');
+    notifyApp({ tone: 'success', message: 'Thêm quy tắc AI thành công!' });
   };
 
   const handleDelete = async (id: string) => {
@@ -4163,7 +4198,7 @@ const StyleReferenceLibrary = ({
     setNewName('');
     setNewContent('');
     setIsAdding(false);
-    alert('Thêm văn mẫu thành công!');
+    notifyApp({ tone: 'success', message: 'Thêm văn mẫu thành công!' });
   };
 
   const handleDelete = async (id: string) => {
@@ -4188,7 +4223,7 @@ const StyleReferenceLibrary = ({
       setNewContent(content);
       if (!newName) setNewName(file.name.replace(/\.[^/.]+$/, ""));
     } catch (error) {
-      alert('Lỗi khi đọc file: ' + error);
+      notifyApp({ tone: 'error', message: 'Lỗi khi đọc file: ' + error });
     } finally {
       setIsExtracting(false);
     }
@@ -4344,13 +4379,13 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
     const file = event.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith('image/')) {
-      alert('Chỉ hỗ trợ file ảnh (png, jpg, webp...).');
+      notifyApp({ tone: 'warn', message: 'Chỉ hỗ trợ file ảnh (png, jpg, webp...).' });
       event.target.value = '';
       return;
     }
     const maxSize = 3 * 1024 * 1024;
     if (file.size > maxSize) {
-      alert('Ảnh quá lớn. Vui lòng chọn ảnh nhỏ hơn 3MB.');
+      notifyApp({ tone: 'warn', message: 'Ảnh quá lớn. Vui lòng chọn ảnh nhỏ hơn 3MB.' });
       event.target.value = '';
       return;
     }
@@ -4359,13 +4394,13 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
     reader.onload = () => {
       const value = String(reader.result || '').trim();
       if (!value) {
-        alert('Không đọc được file ảnh.');
+        notifyApp({ tone: 'error', message: 'Không đọc được file ảnh.' });
         return;
       }
       setCoverImageUrl(value);
     };
     reader.onerror = () => {
-      alert('Đọc file ảnh thất bại.');
+      notifyApp({ tone: 'error', message: 'Đọc file ảnh thất bại.' });
     };
     reader.readAsDataURL(file);
     event.target.value = '';
@@ -4373,7 +4408,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
 
   const handleGenerateCover = async () => {
     if (!title.trim()) {
-      alert('Hãy nhập tiêu đề truyện trước khi tạo ảnh bìa.');
+      notifyApp({ tone: 'warn', message: 'Hãy nhập tiêu đề truyện trước khi tạo ảnh bìa.' });
       return;
     }
     setIsGeneratingCover(true);
@@ -4421,7 +4456,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
         prompt = basePrompt;
       }
       if (!prompt) {
-        alert('Không đủ dữ liệu để tạo ảnh bìa.');
+        notifyApp({ tone: 'warn', message: 'Không đủ dữ liệu để tạo ảnh bìa.' });
         return;
       }
       let imageUrl = '';
@@ -4499,7 +4534,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
         if (!coverPrompt.trim()) {
           setCoverPrompt(prompt);
         }
-        alert('Dịch vụ ảnh AI đang bận, hệ thống đã tạo bìa dự phòng để bạn dùng ngay. Bạn có thể bấm tạo lại sau 1-2 phút để lấy bìa AI.');
+        notifyApp({ tone: 'warn', message: 'Dịch vụ ảnh AI đang bận, hệ thống đã tạo bìa dự phòng để bạn dùng ngay. Bạn có thể bấm tạo lại sau 1-2 phút để lấy bìa AI.', timeoutMs: 5200 });
         return;
       }
       setCoverImageUrl(imageUrl);
@@ -4509,7 +4544,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
     } catch (error) {
       console.error('Không thể tạo ảnh bìa AI', error);
       const message = error instanceof Error ? error.message : String(error || '');
-      alert(`Tạo ảnh bìa thất bại. ${message}\nBạn có thể bấm thử lại hoặc tải ảnh từ thiết bị.`);
+      notifyApp({ tone: 'error', message: `Tạo ảnh bìa thất bại. ${message} Bạn có thể bấm thử lại hoặc tải ảnh từ thiết bị.`, timeoutMs: 5200 });
     } finally {
       setIsGeneratingCover(false);
     }
@@ -4517,7 +4552,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
 
   const handleSuggestIdeas = async () => {
     if (!title || !genre || !introduction) {
-      alert("Vui lòng nhập Tiêu đề, Thể loại và Giới thiệu để AI có đủ thông tin gợi ý.");
+      notifyApp({ tone: 'warn', message: "Vui lòng nhập Tiêu đề, Thể loại và Giới thiệu để AI có đủ thông tin gợi ý." });
       return;
     }
 
@@ -4553,7 +4588,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
       }
     } catch (error) {
       console.error("Suggestion failed", error);
-      alert("Không thể tạo gợi ý lúc này.");
+      notifyApp({ tone: 'error', message: "Không thể tạo gợi ý lúc này." });
     } finally {
       setIsSuggesting(false);
     }
@@ -4937,7 +4972,7 @@ const StoryDetail = ({
       setIsEditingChapter(false);
     } catch (error) {
       console.error("Lỗi khi cập nhật chương:", error);
-      alert("Không thể lưu thay đổi chương.");
+      notifyApp({ tone: 'error', message: "Không thể lưu thay đổi chương." });
     }
   };
 
@@ -5454,7 +5489,17 @@ const StoryList = ({ onView, refreshKey }: { onView: (story: Story) => void; ref
   );
 };
 
-const AILoadingOverlay = ({ isVisible, message, timer }: { isVisible: boolean, message: string, timer: number }) => {
+const AILoadingOverlay = ({
+  isVisible,
+  message,
+  timer,
+  onCancel,
+}: {
+  isVisible: boolean,
+  message: string,
+  timer: number,
+  onCancel?: () => void,
+}) => {
   if (!isVisible) return null;
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/80 backdrop-blur-md">
@@ -5474,7 +5519,37 @@ const AILoadingOverlay = ({ isVisible, message, timer }: { isVisible: boolean, m
         <div className="px-6 py-3 bg-indigo-50 rounded-2xl text-indigo-600 font-bold text-sm tracking-widest uppercase">
           Thời gian: {timer} giây
         </div>
+        {onCancel ? (
+          <button
+            onClick={onCancel}
+            className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-2 text-sm font-bold text-rose-600 hover:bg-rose-100"
+          >
+            Hủy tác vụ
+          </button>
+        ) : null}
       </motion.div>
+    </div>
+  );
+};
+
+const AppToastStack = ({ toasts }: { toasts: AppToast[] }) => {
+  if (!toasts.length) return null;
+  return (
+    <div className="fixed right-4 top-24 z-[260] flex w-[min(92vw,380px)] flex-col gap-3">
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          className={cn(
+            'rounded-2xl border px-4 py-3 shadow-xl backdrop-blur',
+            toast.tone === 'success' && 'border-emerald-200 bg-emerald-50 text-emerald-800',
+            toast.tone === 'warn' && 'border-amber-200 bg-amber-50 text-amber-800',
+            toast.tone === 'error' && 'border-rose-200 bg-rose-50 text-rose-800',
+            toast.tone === 'info' && 'border-indigo-200 bg-white text-slate-800',
+          )}
+        >
+          <p className="text-sm font-semibold leading-6">{toast.message}</p>
+        </div>
+      ))}
     </div>
   );
 };
@@ -5766,7 +5841,7 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
                 onClick={() => {
                   const nextList = currentList.map((i) => i.id === selectedId ? { ...i, content: draftContent } : i);
                   setList(nextList);
-                  alert('Đã lưu thay đổi');
+                  notifyApp({ tone: 'success', message: 'Đã lưu thay đổi' });
                 }}
                 className="px-5 py-2 rounded-xl bg-emerald-600 text-white font-bold text-sm hover:bg-emerald-700"
               >
@@ -6330,7 +6405,7 @@ const AIStoryCreationModal = ({
       }
       setStyleReference(content);
     } catch (error) {
-      alert('Lỗi khi đọc file: ' + error);
+      notifyApp({ tone: 'error', message: 'Lỗi khi đọc file: ' + error });
     } finally {
       setIsExtractingStyle(false);
     }
@@ -6629,7 +6704,7 @@ const AIGenerationModal = ({
 
   const handleGenerateScript = async () => {
     if (!outline.trim()) {
-      alert("Vui lòng nhập dàn ý trước khi tạo kịch bản.");
+      notifyApp({ tone: 'warn', message: "Vui lòng nhập dàn ý trước khi tạo kịch bản." });
       return;
     }
     setIsGeneratingScript(true);
@@ -6660,7 +6735,7 @@ const AIGenerationModal = ({
       setChapterScript(scriptText || '');
     } catch (error) {
       console.error("Script generation failed", error);
-      alert("Không thể tạo kịch bản.");
+      notifyApp({ tone: 'error', message: "Không thể tạo kịch bản." });
     } finally {
       setIsGeneratingScript(false);
     }
@@ -6694,7 +6769,7 @@ const AIGenerationModal = ({
       setOutline(outlineText || '');
     } catch (error) {
       console.error("Outline suggestion failed", error);
-      alert("Không thể gợi ý dàn ý.");
+      notifyApp({ tone: 'error', message: "Không thể gợi ý dàn ý." });
     } finally {
       setIsSuggestingOutline(false);
     }
@@ -6714,7 +6789,7 @@ const AIGenerationModal = ({
       }
       setStyleReference(content);
     } catch (error) {
-      alert('Lỗi khi đọc file: ' + error);
+      notifyApp({ tone: 'error', message: 'Lỗi khi đọc file: ' + error });
     } finally {
       setIsExtractingStyle(false);
     }
@@ -7188,6 +7263,7 @@ const AppContent = () => {
   const [isProcessingAI, setIsProcessingAI] = useState(false);
   const [aiLoadingMessage, setAILoadingMessage] = useState('');
   const [aiTimer, setAiTimer] = useState(0);
+  const [appToasts, setAppToasts] = useState<AppToast[]>([]);
   const [showPromptManager, setShowPromptManager] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showReleaseHistoryModal, setShowReleaseHistoryModal] = useState(false);
@@ -7199,6 +7275,7 @@ const AppContent = () => {
   const [isImporting, setIsImporting] = useState(false);
   const [isExportingStory, setIsExportingStory] = useState(false);
   const profileAvatarInputRef = useRef<HTMLInputElement>(null);
+  const activeAiRunRef = useRef<ActiveAiRun | null>(null);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -7212,6 +7289,56 @@ const AppContent = () => {
       if (interval) clearInterval(interval);
     };
   }, [isProcessingAI]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<AppNoticePayload>).detail;
+      if (!detail?.message) return;
+      const toast: AppToast = {
+        id: detail.id || `notice-${Date.now()}`,
+        message: detail.message,
+        tone: detail.tone || 'info',
+        timeoutMs: detail.timeoutMs ?? 3800,
+      };
+      setAppToasts((prev) => [...prev, toast]);
+      window.setTimeout(() => {
+        setAppToasts((prev) => prev.filter((item) => item.id !== toast.id));
+      }, toast.timeoutMs);
+    };
+    window.addEventListener(APP_NOTICE_EVENT, handler as EventListener);
+    return () => window.removeEventListener(APP_NOTICE_EVENT, handler as EventListener);
+  }, []);
+
+  const beginAiRun = useCallback((initialMessage: string) => {
+    activeAiRunRef.current?.controller.abort();
+    const nextRun: ActiveAiRun = {
+      id: `ai-run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      controller: new AbortController(),
+    };
+    activeAiRunRef.current = nextRun;
+    setIsProcessingAI(true);
+    setAiTimer(0);
+    setAILoadingMessage(initialMessage);
+    return nextRun;
+  }, []);
+
+  const finishAiRun = useCallback((run?: ActiveAiRun | null) => {
+    if (!run) return;
+    if (activeAiRunRef.current?.id !== run.id) return;
+    activeAiRunRef.current = null;
+    setIsProcessingAI(false);
+    setAILoadingMessage('');
+  }, []);
+
+  const cancelActiveAiRun = useCallback(() => {
+    const active = activeAiRunRef.current;
+    if (!active) return;
+    active.controller.abort();
+    activeAiRunRef.current = null;
+    setIsProcessingAI(false);
+    setAILoadingMessage('');
+    notifyApp({ tone: 'warn', message: 'Đã hủy tác vụ AI đang chạy.' });
+  }, []);
 
   useEffect(() => {
     setProfileNameDraft(profile.displayName);
@@ -7333,7 +7460,7 @@ const AppContent = () => {
       downloadBlob(blob, `${sanitizeFilename(exportStory.title)}.${ext}`);
       setShowExportModal(false);
     } catch (err) {
-      alert(`Xuất truyện thất bại: ${err instanceof Error ? err.message : err}`);
+      notifyApp({ tone: 'error', message: `Xuất truyện thất bại: ${err instanceof Error ? err.message : err}` });
     } finally {
       setIsExportingStory(false);
     }
@@ -7422,8 +7549,7 @@ const AppContent = () => {
     input.onchange = async (e: any) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      setIsProcessingAI(true);
-      setAILoadingMessage("Đang đọc file...");
+      const aiRun = beginAiRun("Đang đọc file...");
       try {
         const content = await readImportedStoryFile(file);
         const shouldTranslate = window.confirm('Nhấn OK để DỊCH truyện, hoặc Cancel để VIẾT TIẾP truyện.');
@@ -7437,10 +7563,9 @@ const AppContent = () => {
           setShowAIContinueModal(true);
         }
       } catch (err) {
-        alert("Lỗi khi đọc file: " + err);
+        notifyApp({ tone: "error", message: `Lỗi khi đọc file: ${String(err || '')}` });
       } finally {
-        setIsProcessingAI(false);
-        setAILoadingMessage('');
+        finishAiRun(aiRun);
       }
     };
     input.click();
@@ -7527,8 +7652,8 @@ const AppContent = () => {
     if (!user || !translateFileContent) return;
     
     setShowTranslateModal(false);
-    setIsProcessingAI(true);
-    setAILoadingMessage("Đang chuẩn bị dịch thuật...");
+    const aiRun = beginAiRun("Đang chuẩn bị dịch thuật...");
+    const abortSignal = aiRun.controller.signal;
 
     try {
       const ai = createGeminiClient();
@@ -7640,6 +7765,7 @@ const AppContent = () => {
             maxOutputTokens: turboMode ? 1500 : 2600,
             minOutputChars: turboMode ? 120 : 200,
             maxRetries: 1,
+            signal: abortSignal,
           },
         );
 
@@ -7729,6 +7855,7 @@ const AppContent = () => {
             minOutputChars: dynamicMinChars,
             maxRetries: translationRequestRetries,
             safetySettings: sharedSafetySettings,
+            signal: abortSignal,
           },
         );
 
@@ -7748,6 +7875,7 @@ const AppContent = () => {
             minOutputChars: Math.round(dynamicMinChars * 1.08),
             maxRetries: 1,
             safetySettings: sharedSafetySettings,
+            signal: abortSignal,
           });
           const retried = normalizeAiJsonContent(retryRaw || '', params.fallbackTitle);
           const normalizedRetried = {
@@ -7880,8 +8008,7 @@ const AppContent = () => {
 
         for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
           const batch = batches[batchIndex];
-          processedSegments += batch.entries.length;
-
+          throwIfAborted(abortSignal);
           setAILoadingMessage(
             `Đang dịch chương ${chapterIndex + 1}/${maxTranslateChunks} - lô ${batchIndex + 1}/${batches.length} (${batch.entries.length} đoạn), tiến độ ${Math.min(processedSegments, totalSegments)}/${totalSegments}${turboMode ? ' [Turbo]' : ''}${lowQuotaMode ? ' [Quota-safe]' : ''}...`
           );
@@ -7894,6 +8021,7 @@ const AppContent = () => {
             totalSegmentsInUnit: meaningfulEntries.length,
             previousTranslatedTail,
           });
+          processedSegments += batch.entries.length;
 
           const parsedTitle = String(batchResult.title || '').trim();
           if (parsedTitle && (batchIndex === 0 || /^chương\s*\d+$/i.test(translatedTitle))) {
@@ -7960,21 +8088,26 @@ const AppContent = () => {
       bumpStoriesVersion();
 
       const elapsedSeconds = Math.max(1, Math.round((Date.now() - translateStartedAt) / 1000));
-      alert(`Đã dịch thành công ${translatedChapters.length} chương (${processedSegments} phân đoạn) trong ${elapsedSeconds}s${turboMode ? ' [Turbo]' : ''}.`);
+      notifyApp({
+        tone: 'success',
+        message: `Đã dịch thành công ${translatedChapters.length} chương (${processedSegments} phân đoạn) trong ${elapsedSeconds}s${turboMode ? ' [Turbo]' : ''}.`,
+        timeoutMs: 5200,
+      });
       setView('stories');
     } catch (error) {
       console.error("Lỗi khi dịch truyện:", error);
       const rawMessage = error instanceof Error ? error.message : String(error || '');
-      if (isQuotaOrRateLimitError(error)) {
-        alert(`AI đang chạm giới hạn quota/rate limit.\n${rawMessage}\n\nBạn có thể đổi model trong phần API hoặc chờ quota reset rồi dịch lại.`);
+      if (/cancelled by user/i.test(rawMessage)) {
+        notifyApp({ tone: 'warn', message: 'Đã hủy quá trình dịch truyện.' });
+      } else if (isQuotaOrRateLimitError(error)) {
+        notifyApp({ tone: 'warn', message: `AI đang chạm quota/rate limit. ${rawMessage}` , timeoutMs: 5200});
       } else if (isTransientAiServiceError(error)) {
-        alert(`Model AI đang quá tải tạm thời (503/high demand).\n${rawMessage}\n\nMình đã tự retry nhiều lần nhưng vẫn chưa ổn. Bạn thử lại sau 1-2 phút hoặc đổi model khác trong mục API.`);
+        notifyApp({ tone: 'warn', message: `Model AI đang quá tải tạm thời. ${rawMessage}`, timeoutMs: 5200 });
       } else {
-        alert(`Có lỗi xảy ra trong quá trình AI dịch truyện.\n${rawMessage.slice(0, 260)}`);
+        notifyApp({ tone: 'error', message: `Có lỗi khi AI dịch truyện: ${rawMessage.slice(0, 260)}`, timeoutMs: 5200 });
       }
     } finally {
-      setIsProcessingAI(false);
-      setAILoadingMessage('');
+      finishAiRun(aiRun);
     }
   };
 
@@ -7987,8 +8120,8 @@ const AppContent = () => {
     if (!user || !continueFileContent) return;
     
     setShowAIContinueModal(false);
-    setIsProcessingAI(true);
-    setAILoadingMessage("Đang phân tích nội dung truyện...");
+    const aiRun = beginAiRun("Đang phân tích nội dung truyện...");
+    const abortSignal = aiRun.controller.signal;
 
     try {
       let finalInstructions = options.additionalInstructions;
@@ -8035,6 +8168,7 @@ const AppContent = () => {
           maxOutputTokens: 3200,
           minOutputChars: 260,
           maxRetries: 2,
+          signal: abortSignal,
         },
       ) || '{}';
       const analysisParsed = tryParseJson<any>(analysisText, 'object') || {};
@@ -8072,6 +8206,7 @@ const AppContent = () => {
           maxOutputTokens: Math.min(5200, Math.max(1600, options.chapterCount * 700)),
           minOutputChars: Math.max(200, options.chapterCount * 70),
           maxRetries: 2,
+          signal: abortSignal,
         },
       ) || '{}';
       const planParsed = tryParseJson<any>(planText, 'object');
@@ -8107,6 +8242,7 @@ const AppContent = () => {
       const chapterMaxTokens = Math.min(16384, Math.max(3600, Math.round(minChapterWords * 2.4)));
       const minChapterChars = Math.max(1100, Math.round(minChapterWords * 2.2));
       for (let i = 0; i < plannedChapters.length; i++) {
+        throwIfAborted(abortSignal);
         const ch = plannedChapters[i];
         setAILoadingMessage(`Đang viết chương ${i + 1}/${plannedChapters.length}: ${ch.title}...`);
         
@@ -8140,7 +8276,8 @@ const AppContent = () => {
               { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
               { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
               { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
-            ]
+            ],
+            signal: abortSignal,
           },
         );
 
@@ -8158,7 +8295,8 @@ const AppContent = () => {
                 { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
                 { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
                 { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
-              ]
+              ],
+              signal: abortSignal,
             },
           );
         }
@@ -8197,14 +8335,18 @@ const AppContent = () => {
       storage.saveStories([newStory, ...stories]);
       bumpStoriesVersion();
 
-      alert(`Đã viết tiếp thành công ${options.chapterCount} chương!`);
+      notifyApp({ tone: 'success', message: `Đã viết tiếp thành công ${options.chapterCount} chương!`, timeoutMs: 5200 });
       setView('stories');
     } catch (error) {
       console.error("Lỗi khi viết tiếp truyện:", error);
-      alert("Có lỗi xảy ra trong quá trình AI viết tiếp truyện.");
+      const rawMessage = error instanceof Error ? error.message : String(error || '');
+      if (/cancelled by user/i.test(rawMessage)) {
+        notifyApp({ tone: 'warn', message: 'Đã hủy quá trình viết tiếp truyện.' });
+      } else {
+        notifyApp({ tone: 'error', message: `Có lỗi khi AI viết tiếp truyện: ${rawMessage.slice(0, 260)}`, timeoutMs: 5200 });
+      }
     } finally {
-      setIsProcessingAI(false);
-      setAILoadingMessage('');
+      finishAiRun(aiRun);
     }
   };
 
@@ -8237,9 +8379,8 @@ const AppContent = () => {
     } = options;
     if (!user || !selectedStory) return;
     setShowAIGen(false);
-    setIsProcessingAI(true);
-    setAiTimer(0);
-    setAILoadingMessage("Đang chuẩn bị dữ liệu...");
+    const aiRun = beginAiRun("Đang chuẩn bị dữ liệu...");
+    const abortSignal = aiRun.controller.signal;
 
     try {
       let finalInstructions = aiInstructions;
@@ -8358,7 +8499,8 @@ const AppContent = () => {
             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          ]
+          ],
+          signal: abortSignal,
         },
       );
 
@@ -8418,12 +8560,17 @@ const AppContent = () => {
 
       setSelectedStory(updatedStory);
 
-      alert(`Đã tạo thành công ${newChapters.length} chương mới!`);
+      notifyApp({ tone: 'success', message: `Đã tạo thành công ${newChapters.length} chương mới!`, timeoutMs: 5200 });
     } catch (error) {
       console.error("AI Generation Error:", error);
-      alert(error instanceof Error ? error.message : "Có lỗi xảy ra khi tạo chương bằng AI.");
+      const rawMessage = error instanceof Error ? error.message : String(error || '');
+      if (/cancelled by user/i.test(rawMessage)) {
+        notifyApp({ tone: 'warn', message: 'Đã hủy quá trình tạo chương.' });
+      } else {
+        notifyApp({ tone: 'error', message: rawMessage || "Có lỗi xảy ra khi tạo chương bằng AI.", timeoutMs: 5200 });
+      }
     } finally {
-      setIsProcessingAI(false);
+      finishAiRun(aiRun);
     }
   };
 
@@ -8480,7 +8627,8 @@ const AppContent = () => {
     const { file, genre, pacing, tone, isAdult, customPacing, customTone, perspective, audience, styleReference } = options;
     if (!user) return;
     setShowAIStoryModal(false);
-    setIsProcessingAI(true);
+    const aiRun = beginAiRun("Đang xử lý file và tạo truyện...");
+    const abortSignal = aiRun.controller.signal;
 
     try {
       let content = "";
@@ -8555,7 +8703,8 @@ const AppContent = () => {
             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          ]
+          ],
+          signal: abortSignal,
         },
       );
 
@@ -8610,7 +8759,8 @@ const AppContent = () => {
               { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
               { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
               { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            ]
+            ],
+            signal: abortSignal,
           },
         );
         const fallbackClean = stripJsonFence(fallbackText || '');
@@ -8663,15 +8813,20 @@ const AppContent = () => {
         storage.saveStories([newStory, ...stories]);
         bumpStoriesVersion();
 
-        alert("AI đã tạo truyện thành công từ file của bạn!");
+        notifyApp({ tone: 'success', message: 'AI đã tạo truyện thành công từ file của bạn!', timeoutMs: 5200 });
       } else {
         throw new Error("Không nhận được phản hồi hợp lệ từ AI. Hãy kiểm tra kết nối Relay hoặc khóa API.");
       }
     } catch (error) {
       console.error("AI Creation failed", error);
-      alert(`Lỗi khi xử lý AI: ${error instanceof Error ? error.message : "Lỗi không xác định"}`);
+      const rawMessage = error instanceof Error ? error.message : String(error || '');
+      if (/cancelled by user/i.test(rawMessage)) {
+        notifyApp({ tone: 'warn', message: 'Đã hủy quá trình AI tạo truyện.' });
+      } else {
+        notifyApp({ tone: 'error', message: `Lỗi khi xử lý AI: ${rawMessage || "Lỗi không xác định"}`, timeoutMs: 5200 });
+      }
     } finally {
-      setIsProcessingAI(false);
+      finishAiRun(aiRun);
     }
   };
 
@@ -8721,14 +8876,7 @@ const AppContent = () => {
       <PromptLibraryModalNew
         isOpen={showPromptManager}
         onClose={() => setShowPromptManager(false)}
-        onSelect={(prompt) => {
-          try {
-            navigator.clipboard?.writeText(prompt);
-          } catch {
-            // ignore
-          }
-          alert('Đã sao chép prompt vào clipboard.');
-        }}
+        onSelect={() => setShowPromptManager(false)}
       />
 
       <ExportStoryModal
@@ -9028,10 +9176,13 @@ const AppContent = () => {
         fileName={translateFileName}
       />
 
+      <AppToastStack toasts={appToasts} />
+
       <AILoadingOverlay 
         isVisible={isProcessingAI}
         message={aiLoadingMessage}
         timer={aiTimer}
+        onCancel={cancelActiveAiRun}
       />
 
       <footer className={cn(

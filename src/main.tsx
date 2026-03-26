@@ -10,23 +10,6 @@ const Phase3App = lazy(() => import('./phase3/Phase3App.tsx'));
 const Phase4App = lazy(() => import('./phase4/Phase4App.tsx'));
 const Phase5App = lazy(() => import('./phase5/Phase5App.tsx'));
 
-// Shim to prevent libraries from overwriting fetch and causing errors
-if (typeof window !== 'undefined') {
-  try {
-    const originalFetch = window.fetch;
-    // We try to redefine fetch with a no-op setter to avoid "only a getter" errors
-    Object.defineProperty(window, 'fetch', {
-      get() { return originalFetch; },
-      set() { console.warn('Something tried to overwrite window.fetch. This was prevented to avoid errors.'); },
-      configurable: true,
-      enumerable: true
-    });
-  } catch (e) {
-    // If it's not configurable, we can't do much here
-    console.warn('Could not redefine window.fetch:', e);
-  }
-}
-
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <Suspense

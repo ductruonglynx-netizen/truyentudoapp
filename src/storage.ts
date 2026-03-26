@@ -1,3 +1,7 @@
+import { loadBudgetState, saveBudgetState, type BudgetState } from './finops';
+import { loadPromptLibraryState, savePromptLibraryState } from './promptLibraryStore';
+
+const SAFE_IMPORT_BACKUP_KEY = 'safe_import_backup_v1';
 
 const normalizeDate = (value: any) => {
   if (!value) return new Date().toISOString();
@@ -30,6 +34,30 @@ const normalizeStory = (story: any) => ({
   chapters: normalizeChapters(story?.chapters),
 });
 
+function safeParseArray(raw: string | null): any[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+export interface StorageExportReport {
+  filename: string;
+  excludedSecrets: string[];
+}
+
+export interface StorageImportReport {
+  restoredSections: string[];
+  skippedSections: string[];
+}
+
 export const storage = {
   getStories: () => {
     const data = localStorage.getItem('stories');
@@ -39,86 +67,136 @@ export const storage = {
   saveStories: (stories: any[]) => {
     localStorage.setItem('stories', JSON.stringify(stories));
   },
-  getCharacters: () => {
-    const data = localStorage.getItem('characters');
-    return data ? JSON.parse(data) : [];
-  },
+  getCharacters: () => safeParseArray(localStorage.getItem('characters')),
   saveCharacters: (characters: any[]) => {
     localStorage.setItem('characters', JSON.stringify(characters));
   },
-  getAIRules: () => {
-    const data = localStorage.getItem('ai_rules');
-    return data ? JSON.parse(data) : [];
-  },
+  getAIRules: () => safeParseArray(localStorage.getItem('ai_rules')),
   saveAIRules: (rules: any[]) => {
     localStorage.setItem('ai_rules', JSON.stringify(rules));
   },
-  getStyleReferences: () => {
-    const data = localStorage.getItem('style_references');
-    return data ? JSON.parse(data) : [];
-  },
+  getStyleReferences: () => safeParseArray(localStorage.getItem('style_references')),
   saveStyleReferences: (refs: any[]) => {
     localStorage.setItem('style_references', JSON.stringify(refs));
   },
-  getTranslationNames: () => {
-    const data = localStorage.getItem('translation_names');
-    return data ? JSON.parse(data) : [];
-  },
+  getTranslationNames: () => safeParseArray(localStorage.getItem('translation_names')),
   saveTranslationNames: (names: any[]) => {
     localStorage.setItem('translation_names', JSON.stringify(names));
   },
-  getApiKeys: () => {
-    const data = localStorage.getItem('api_keys');
-    return data ? JSON.parse(data) : [];
-  },
+  getApiKeys: () => safeParseArray(localStorage.getItem('api_keys')),
   saveApiKeys: (keys: any[]) => {
     localStorage.setItem('api_keys', JSON.stringify(keys));
   },
-  
-  // Export all data to JSON
-  exportData: () => {
+
+  exportData: (): StorageExportReport => {
     const profileRaw = localStorage.getItem('ui_profile_v1');
-    const apiRuntimeRaw = localStorage.getItem('api_runtime_config_v1');
     const themeRaw = localStorage.getItem('ui_theme_v1');
     const viewportRaw = localStorage.getItem('ui_viewport_mode_v1');
     const finops = loadBudgetState();
+    const promptLibrary = loadPromptLibraryState();
     const data = {
+      schemaVersion: 2,
       stories: storage.getStories(),
       characters: storage.getCharacters(),
       ai_rules: storage.getAIRules(),
       style_references: storage.getStyleReferences(),
       translation_names: storage.getTranslationNames(),
-      api_keys: storage.getApiKeys(),
-      api_runtime_config: apiRuntimeRaw ? JSON.parse(apiRuntimeRaw) : null,
+      prompt_library: promptLibrary,
       ui_profile: profileRaw ? JSON.parse(profileRaw) : null,
       ui_theme: themeRaw || 'light',
       ui_viewport_mode: viewportRaw || 'desktop',
       finops_budget: finops,
       exportDate: new Date().toISOString(),
+      note: 'API keys va runtime secrets duoc loai khoi backup de tranh ro ri thong tin nhay cam.',
     };
+    const filename = `truyenforge-backup-${new Date().toISOString().split('T')[0]}.json`;
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `truyenforge-backup-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+    return {
+      filename,
+      excludedSecrets: ['api_keys', 'api_runtime_config'],
+    };
   },
-  
-  // Import data from JSON
-  importData: (jsonData: any) => {
-    if (jsonData.stories) storage.saveStories(jsonData.stories);
-    if (jsonData.characters) storage.saveCharacters(jsonData.characters);
-    if (jsonData.ai_rules) storage.saveAIRules(jsonData.ai_rules);
-    if (jsonData.style_references) storage.saveStyleReferences(jsonData.style_references);
-    if (jsonData.translation_names) storage.saveTranslationNames(jsonData.translation_names);
-    if (jsonData.api_keys) storage.saveApiKeys(jsonData.api_keys);
-    if (jsonData.api_runtime_config) localStorage.setItem('api_runtime_config_v1', JSON.stringify(jsonData.api_runtime_config));
-    if (jsonData.ui_profile) localStorage.setItem('ui_profile_v1', JSON.stringify(jsonData.ui_profile));
-    if (jsonData.ui_theme) localStorage.setItem('ui_theme_v1', jsonData.ui_theme);
-    if (jsonData.ui_viewport_mode) localStorage.setItem('ui_viewport_mode_v1', jsonData.ui_viewport_mode);
-    if (jsonData.finops_budget) saveBudgetState(jsonData.finops_budget);
-    window.location.reload();
-  }
+
+  importData: (jsonData: any): StorageImportReport => {
+    if (!isPlainObject(jsonData)) {
+      throw new Error('File backup khong hop le.');
+    }
+
+    const backupSnapshot = {
+      exportedAt: new Date().toISOString(),
+      stories: storage.getStories(),
+      characters: storage.getCharacters(),
+      ai_rules: storage.getAIRules(),
+      style_references: storage.getStyleReferences(),
+      translation_names: storage.getTranslationNames(),
+      prompt_library: loadPromptLibraryState(),
+      ui_profile: localStorage.getItem('ui_profile_v1'),
+      ui_theme: localStorage.getItem('ui_theme_v1'),
+      ui_viewport_mode: localStorage.getItem('ui_viewport_mode_v1'),
+      finops_budget: loadBudgetState(),
+    };
+    localStorage.setItem(SAFE_IMPORT_BACKUP_KEY, JSON.stringify(backupSnapshot));
+
+    const restoredSections: string[] = [];
+    const skippedSections: string[] = [];
+
+    if (Array.isArray(jsonData.stories)) {
+      storage.saveStories(jsonData.stories.map(normalizeStory));
+      restoredSections.push('stories');
+    }
+    if (Array.isArray(jsonData.characters)) {
+      storage.saveCharacters(jsonData.characters);
+      restoredSections.push('characters');
+    }
+    if (Array.isArray(jsonData.ai_rules)) {
+      storage.saveAIRules(jsonData.ai_rules);
+      restoredSections.push('ai_rules');
+    }
+    if (Array.isArray(jsonData.style_references)) {
+      storage.saveStyleReferences(jsonData.style_references);
+      restoredSections.push('style_references');
+    }
+    if (Array.isArray(jsonData.translation_names)) {
+      storage.saveTranslationNames(jsonData.translation_names);
+      restoredSections.push('translation_names');
+    }
+    if (isPlainObject(jsonData.prompt_library)) {
+      savePromptLibraryState({
+        core: Array.isArray(jsonData.prompt_library.core) ? jsonData.prompt_library.core : [],
+        genre: Array.isArray(jsonData.prompt_library.genre) ? jsonData.prompt_library.genre : [],
+      });
+      restoredSections.push('prompt_library');
+    }
+    if (isPlainObject(jsonData.ui_profile)) {
+      localStorage.setItem('ui_profile_v1', JSON.stringify(jsonData.ui_profile));
+      restoredSections.push('ui_profile');
+    }
+    if (typeof jsonData.ui_theme === 'string') {
+      localStorage.setItem('ui_theme_v1', jsonData.ui_theme);
+      restoredSections.push('ui_theme');
+    }
+    if (typeof jsonData.ui_viewport_mode === 'string') {
+      localStorage.setItem('ui_viewport_mode_v1', jsonData.ui_viewport_mode);
+      restoredSections.push('ui_viewport_mode');
+    }
+    if (isPlainObject(jsonData.finops_budget)) {
+      saveBudgetState(jsonData.finops_budget as unknown as BudgetState);
+      restoredSections.push('finops_budget');
+    }
+
+    if ('api_keys' in jsonData) skippedSections.push('api_keys');
+    if ('api_runtime_config' in jsonData) skippedSections.push('api_runtime_config');
+
+    if (!restoredSections.length) {
+      throw new Error('Backup khong chua du lieu hop le de khoi phuc.');
+    }
+
+    return { restoredSections, skippedSections };
+  },
 };
-import { loadBudgetState, saveBudgetState } from './finops';

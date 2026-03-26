@@ -76,6 +76,9 @@ npm run build
 - Bổ sung chỉ số `Context Readiness` để báo khi dữ liệu đầu vào còn thiếu, giúp người dùng biết lúc nào AI sẽ hoạt động tốt nhất.
 - Cải thiện tạo ảnh bìa bằng cách dựng prompt thông minh hơn và tăng chất lượng bìa fallback khi dịch vụ ảnh AI lỗi.
 - Cải thiện dịch truyện bằng cơ chế dịch theo lô nhiều đoạn, giữ ngữ cảnh giữa các lô và chỉ nạp các mục từ điển thật sự xuất hiện để tăng tốc rõ rệt.
+- Thêm khả năng hủy tác vụ AI đang chạy và chuyển các thông báo chính sang kiểu toast để thao tác bớt bị chặn bởi popup.
+- Sửa Kho Prompt để nút `Lưu thay đổi` lưu bền vào local storage; đồng thời các nút trong trang `Công cụ` giờ đã có hành vi thực tế.
+- Siết backup/import theo hướng an toàn hơn: không đưa API key vào file backup, có validate đầu vào và giữ lại một bản sao an toàn trước khi khôi phục.
 - Khắc phục 2 mục Writer Pro: `Tone` và `Context` nay cập nhật đúng context/runtime và hỗ trợ đưa kết quả ngược về workspace.
 - Thêm mục `Lịch sử cập nhật` nhỏ ngay trong giao diện Writer Pro để theo dõi thay đổi của phiên bản.
 

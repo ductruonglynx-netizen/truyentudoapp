@@ -5,10 +5,15 @@ import clsx from "clsx";
 import { TFTabs } from "../../ui/tabs";
 import { TFButton } from "../../ui/buttons";
 import { TFTextarea } from "../../ui/inputs";
-
-type TabKey = "core" | "genre";
-
-type MasterItem = { id: string; title: string; content: string };
+import {
+  loadPromptLibraryState,
+  resetPromptLibraryState,
+  savePromptLibraryState,
+  type PromptLibraryItem,
+  type PromptLibraryState,
+  type PromptLibraryTabKey,
+} from "../../promptLibraryStore";
+import { notifyApp } from "../../notifications";
 
 type PromptLibraryProps = {
   isOpen: boolean;
@@ -16,38 +21,56 @@ type PromptLibraryProps = {
   onSelect: (prompt: string) => void;
 };
 
-export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClose, onSelect }) => {
-  const [selectedGroup, setSelectedGroup] = React.useState<TabKey>("core");
-  const [coreRules, setCoreRules] = React.useState<MasterItem[]>([
-    { id: "terms", title: "Danh từ riêng / Thuật ngữ", content: "- Giữ nguyên tên riêng, thuật ngữ khóa (Kho Name/Glossary).\n- Không phiên âm sai; nếu thiếu mapping, giữ nguyên gốc.\n- Thêm chú thích ngắn trong ngoặc khi cần làm rõ." },
-    { id: "must", title: "Yêu cầu bắt buộc", content: "- Ưu tiên: Quy tắc thể loại → Kho Name → Glossary/Term lock → Timeline.\n- Không bịa sự kiện; nếu thiếu dữ liệu đánh dấu [thiếu dữ liệu].\n- Giữ consistency nhân xưng, địa danh, mốc thời gian." },
-    { id: "blacklist", title: "Các điều cấm (Blacklist)", content: "- Cấm thêm 18+/nhạy cảm nếu đầu vào không có.\n- Cấm chèn link/contact/API key.\n- Cấm sai lệch fact, phá OOC không lý do.\n- Cấm meme, viết tắt chat trong văn bản." },
-  ]);
-  const [genreRules, setGenreRules] = React.useState<MasterItem[]>([
-    { id: "co-dai", title: "Cổ đại / Tiên hiệp", content: "- Giọng văn: Cổ phong, ước lệ; nhịp chậm-trung.\n- Xưng hô: tôn ti (trẫm/vi thần/thần thiếp, bổn vương/tại hạ...).\n- Từ vựng: Hán Việt chọn lọc; tránh công nghệ/meme.\n- Cấu trúc: câu 2-3 vế, tả cảnh → tâm/cơ mưu.\n- Cấm: wow/emoji, tiếng lóng, pha tiếng Anh." },
-    { id: "hien-dai", title: "Hiện đại / Hào môn", content: "- Giọng văn: Nhanh, trực diện; hào môn lạnh/sang.\n- Xưng hô: tôi/anh/em/cô + chức danh.\n- Từ vựng: business/showbiz đúng cảnh; tránh Hán Việt cổ.\n- Cấu trúc: đoạn 3-6 câu, nhiều thoại.\n- Cấm: viết tắt chat (ko, j), brand >2/đoạn." },
-    { id: "khoa-hoc", title: "Võng du / Khoa học", content: "- Giọng văn: Lý tính, mô tả hệ thống rõ.\n- Xưng hô: linh hoạt theo thế giới thật/ảo.\n- Từ vựng: game chuẩn (level, cooldown, buff/debuff, PK), sci-fi (cơ giáp, gene, warp).\n- Cấu trúc: log/bảng trạng thái ngắn; ví dụ sau mô tả.\n- Cấm: bùa tiên hiệp mơ hồ; số liệu không khớp." },
-  ]);
+function updatePromptLibraryList(
+  state: PromptLibraryState,
+  group: PromptLibraryTabKey,
+  nextList: PromptLibraryItem[],
+): PromptLibraryState {
+  return {
+    ...state,
+    [group]: nextList,
+  };
+}
 
-  const currentList = selectedGroup === "core" ? coreRules : genreRules;
-  const [selectedId, setSelectedId] = React.useState(currentList[0].id);
-  const [draftContent, setDraftContent] = React.useState(currentList[0].content);
+export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClose, onSelect }) => {
+  const [selectedGroup, setSelectedGroup] = React.useState<PromptLibraryTabKey>("core");
+  const [libraryState, setLibraryState] = React.useState<PromptLibraryState>(() => loadPromptLibraryState());
+  const currentList = libraryState[selectedGroup];
+  const [selectedId, setSelectedId] = React.useState(currentList[0]?.id || "");
+  const [draftContent, setDraftContent] = React.useState(currentList[0]?.content || "");
+  const [notice, setNotice] = React.useState("");
   const selectedItem = currentList.find((i) => i.id === selectedId) || currentList[0];
 
-  React.useEffect(() => {
-    const list = selectedGroup === "core" ? coreRules : genreRules;
-    setSelectedId(list[0].id);
-    setDraftContent(list[0].content);
-  }, [selectedGroup]);
+  const commitLibraryState = React.useCallback((nextState: PromptLibraryState) => {
+    setLibraryState(nextState);
+    savePromptLibraryState(nextState);
+  }, []);
 
   React.useEffect(() => {
-    const item = currentList.find((i) => i.id === selectedId);
-    if (item) setDraftContent(item.content);
-  }, [selectedId]);
+    if (!isOpen) return;
+    const nextState = loadPromptLibraryState();
+    setLibraryState(nextState);
+  }, [isOpen]);
+
+  React.useEffect(() => {
+    const list = libraryState[selectedGroup];
+    const fallbackItem = list.find((item) => item.id === selectedId) || list[0];
+    if (!fallbackItem) {
+      setSelectedId("");
+      setDraftContent("");
+      return;
+    }
+    setSelectedId(fallbackItem.id);
+    setDraftContent(fallbackItem.content);
+  }, [selectedGroup, libraryState, selectedId]);
+
+  React.useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(""), 2400);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   if (!isOpen) return null;
-
-  const setList = selectedGroup === "core" ? setCoreRules : setGenreRules;
 
   return (
     <div className="fixed inset-0 z-[300] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
@@ -66,7 +89,22 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
               <h3 className="text-xl font-bold tf-break-long">Quy tắc & Prompt</h3>
             </div>
           </div>
-          <button onClick={onClose} className="tf-btn tf-btn-ghost px-3 py-2 shrink-0">Đóng</button>
+          <div className="flex items-center gap-2 shrink-0">
+            <TFButton
+              variant="ghost"
+              onClick={() => {
+                const resetState = resetPromptLibraryState();
+                setLibraryState(resetState);
+                setSelectedGroup("core");
+                setSelectedId(resetState.core[0]?.id || "");
+                setDraftContent(resetState.core[0]?.content || "");
+                setNotice("Đã khôi phục prompt mặc định.");
+              }}
+            >
+              Khôi phục mặc định
+            </TFButton>
+            <button onClick={onClose} className="tf-btn tf-btn-ghost px-3 py-2 shrink-0">Đóng</button>
+          </div>
         </div>
 
         <div className="px-4 md:px-6 pt-4">
@@ -76,19 +114,21 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
               { key: "genre", label: "Theo Thể loại" },
             ]}
             active={selectedGroup}
-            onChange={(k) => setSelectedGroup(k as TabKey)}
+            onChange={(k) => setSelectedGroup(k as PromptLibraryTabKey)}
             variant="pill"
             className="w-full"
           />
         </div>
 
         <div className="tf-modal-content flex flex-col md:flex-row flex-1 overflow-hidden min-h-[420px] bg-slate-950">
-          {/* Sidebar */}
           <div className="w-full md:w-[34%] border-b md:border-b-0 md:border-r border-white/10 bg-slate-900/80 overflow-y-auto p-4 space-y-2">
             {currentList.map((item) => (
               <button
                 key={item.id}
-                onClick={() => setSelectedId(item.id)}
+                onClick={() => {
+                  setSelectedId(item.id);
+                  setDraftContent(item.content);
+                }}
                 className={clsx(
                   "w-full text-left px-4 py-3 rounded-md font-semibold transition-colors border tf-break-long",
                   selectedId === item.id
@@ -102,10 +142,16 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
             <button
               onClick={() => {
                 const id = `new-${Date.now()}`;
-                const newItem = { id, title: selectedGroup === "core" ? "Quy tắc mới" : "Nhóm mới", content: "" };
-                setList((p) => [...p, newItem]);
+                const newItem = {
+                  id,
+                  title: selectedGroup === "core" ? "Quy tắc mới" : "Nhóm mới",
+                  content: "",
+                };
+                const nextList = [...currentList, newItem];
+                commitLibraryState(updatePromptLibraryList(libraryState, selectedGroup, nextList));
                 setSelectedId(id);
                 setDraftContent("");
+                setNotice("Đã thêm mục prompt mới.");
               }}
               className="w-full mt-3 tf-btn tf-btn-ghost justify-center"
             >
@@ -113,13 +159,19 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
             </button>
           </div>
 
-          {/* Content */}
           <div className="w-full md:w-[66%] p-4 md:p-6 overflow-y-auto relative space-y-4">
+            {notice ? (
+              <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-200">
+                {notice}
+              </div>
+            ) : null}
             <input
               value={selectedItem?.title || ""}
               onChange={(e) => {
-                const next = currentList.map((i) => (i.id === selectedId ? { ...i, title: e.target.value } : i));
-                setList(next);
+                const next = currentList.map((item) => (
+                  item.id === selectedId ? { ...item, title: e.target.value } : item
+                ));
+                setLibraryState(updatePromptLibraryList(libraryState, selectedGroup, next));
               }}
               className="tf-input text-lg font-bold tf-break-long"
             />
@@ -131,8 +183,19 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
             <div className="flex flex-col sm:flex-row justify-end gap-3 tf-actions-mobile">
               <TFButton
                 variant="ghost"
-                onClick={() => {
-                  onSelect(draftContent);
+                onClick={async () => {
+                  const prompt = draftContent.trim();
+                  if (!prompt) {
+                    setNotice("Chưa có nội dung để sao chép.");
+                    return;
+                  }
+                  onSelect(prompt);
+                  try {
+                    await navigator.clipboard.writeText(prompt);
+                    notifyApp({ tone: 'success', message: 'Đã sao chép prompt vào clipboard.' });
+                  } catch {
+                    notifyApp({ tone: 'warn', message: 'Không thể ghi clipboard, nhưng prompt vẫn được chuyển vào ô đích.' });
+                  }
                   onClose();
                 }}
               >
@@ -141,8 +204,12 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
               <TFButton
                 variant="primary"
                 onClick={() => {
-                  const next = currentList.map((i) => (i.id === selectedId ? { ...i, content: draftContent } : i));
-                  setList(next);
+                  const next = currentList.map((item) => (
+                    item.id === selectedId ? { ...item, content: draftContent } : item
+                  ));
+                  const nextState = updatePromptLibraryList(libraryState, selectedGroup, next);
+                  commitLibraryState(nextState);
+                  setNotice("Đã lưu thay đổi vào Kho prompt.");
                 }}
               >
                 Lưu thay đổi

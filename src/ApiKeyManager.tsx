@@ -4,6 +4,7 @@ import { storage } from './storage';
 import { Plus, Trash2, Check, X, Shield, Zap, AlertTriangle, Loader2 } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { motion, AnimatePresence } from 'motion/react';
+import { notifyApp } from './notifications';
 
 interface ApiKey {
   id: string;
@@ -83,11 +84,11 @@ export const ApiKeyManager = ({ onBack }: { onBack: () => void }) => {
         lastTested: new Date().toISOString(),
         usage: { ...k.usage, requests: k.usage.requests + 1 }
       } : k));
-      alert(`Kết quả test: ${text}`);
+      notifyApp({ tone: 'success', message: `Kết quả test: ${text}` });
     } catch (error) {
       console.error("API Key test failed", error);
       saveKeys(keys.map(k => k.id === id ? { ...k, status: 'invalid', lastTested: new Date().toISOString() } : k));
-      alert("API Key không hợp lệ hoặc đã hết hạn.");
+      notifyApp({ tone: 'error', message: "API Key không hợp lệ hoặc đã hết hạn." });
     } finally {
       setIsTesting(null);
     }

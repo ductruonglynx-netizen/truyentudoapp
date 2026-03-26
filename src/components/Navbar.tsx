@@ -4,6 +4,7 @@ import { BookOpen, Users, Settings, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Lib
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { storage } from '../storage';
+import { notifyApp } from '../notifications';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -170,7 +171,12 @@ export function Navbar({
   }, []);
 
   function handleExport() {
-    storage.exportData();
+    const result = storage.exportData();
+    notifyApp({
+      tone: 'success',
+      message: `Đã xuất backup ${result.filename}. Secret đã được loại khỏi file.`,
+      timeoutMs: 5200,
+    });
   }
 
   function handleImport() {
@@ -185,9 +191,15 @@ export function Navbar({
       reader.onload = (event) => {
         try {
           const data = JSON.parse((event.target?.result as string) || '{}');
-          storage.importData(data);
+          const report = storage.importData(data);
+          notifyApp({
+            tone: 'success',
+            message: `Đã khôi phục ${report.restoredSections.join(', ')}${report.skippedSections.length ? `. Bỏ qua ${report.skippedSections.join(', ')} vì chứa secret.` : ''}`,
+            timeoutMs: 5200,
+          });
+          window.setTimeout(() => window.location.reload(), 600);
         } catch {
-          alert('Lỗi khi đọc file backup.');
+          notifyApp({ tone: 'error', message: 'Lỗi khi đọc hoặc khôi phục file backup.' });
         }
       };
       reader.readAsText(file);
@@ -348,7 +360,18 @@ export function Navbar({
       {!isMobile && (
       <nav ref={navRef} data-density={navDensity} className={cn('app-navbar fixed top-0 left-0 right-0 z-50 flex h-20 items-center justify-between border-b px-6 backdrop-blur-xl navbar-appear', surfaceClass)}>
         <div ref={leftRef} className="app-navbar__left flex items-center gap-5 lg:gap-8">
-          <div className="flex items-center gap-3 cursor-pointer group transition-all duration-300" onClick={onHome}>
+          <div
+            className="flex items-center gap-3 cursor-pointer group transition-all duration-300"
+            onClick={onHome}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onHome();
+              }
+            }}
+            role="button"
+            tabIndex={0}
+          >
             <img
               src={themeMode === 'dark' ? '/logo-dark.jpg' : '/logo-light.jpg'}
               alt="TruyenForge"
