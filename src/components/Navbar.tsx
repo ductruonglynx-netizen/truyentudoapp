@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { BookOpen, Users, Settings, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Library } from 'lucide-react';
+import { BookOpen, Users, Settings, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Library, History } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { storage } from '../storage';
@@ -23,6 +23,7 @@ interface NavbarProps {
   onHome: () => void;
   onCreateStory: () => void;
   onOpenPromptManager: () => void;
+  onOpenReleaseHistory: () => void;
   onShowAuth: () => void;
   onLogout: () => void;
   onOpenProfile: () => void;
@@ -33,6 +34,7 @@ interface NavbarProps {
   profile: UiProfile;
   finopsWarning?: string;
   authEmail?: string;
+  versionLabel?: string;
 }
 
 export function Navbar({
@@ -41,6 +43,7 @@ export function Navbar({
   onHome,
   onCreateStory,
   onOpenPromptManager,
+  onOpenReleaseHistory,
   onShowAuth,
   onLogout,
   onOpenProfile,
@@ -51,6 +54,7 @@ export function Navbar({
   profile,
   finopsWarning,
   authEmail,
+  versionLabel,
 }: NavbarProps) {
   const viewportModeValue: ViewportMode = viewportMode;
   const isMobile = viewportModeValue === 'mobile';
@@ -93,9 +97,10 @@ export function Navbar({
         : []),
       { key: 'create', label: 'Viết truyện mới', icon: Plus, action: onCreateStory, tone: 'brand' as const },
       { key: 'prompt', label: 'Kho prompt', icon: Library, action: onOpenPromptManager, tone: 'neutral' as const },
+      { key: 'release', label: 'Cập nhật', icon: History, action: onOpenReleaseHistory, tone: 'neutral' as const },
       { key: 'theme', label: isDark ? 'Nền sáng' : 'Nền tối', icon: isDark ? Sun : Moon, action: onToggleTheme, tone: 'neutral' as const },
     ],
-    [isDark, isMobile, onCreateStory, onHome, onOpenPromptManager, onToggleTheme, setView],
+    [isDark, isMobile, onCreateStory, onHome, onOpenPromptManager, onOpenReleaseHistory, onToggleTheme, setView],
   );
 
   const surfaceClass = isDark
@@ -208,6 +213,9 @@ export function Navbar({
                 <div className="px-3 py-2">
                   <p className="text-xs text-slate-500">Đăng nhập với Supabase</p>
                   <p className="font-bold text-slate-800 truncate">{authEmail || 'Chưa đăng nhập'}</p>
+                  {versionLabel ? (
+                    <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-500">{versionLabel}</p>
+                  ) : null}
                 </div>
                 <button
                   onClick={() => {
@@ -217,6 +225,15 @@ export function Navbar({
                   className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
                 >
                   {authEmail ? 'Đổi tài khoản' : 'Đăng nhập / Đăng ký'}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowProfileMenu(false);
+                    onOpenReleaseHistory();
+                  }}
+                  className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
+                >
+                  Lịch sử cập nhật
                 </button>
                 <button
                   onClick={() => {
@@ -279,6 +296,11 @@ export function Navbar({
                 <p className={cn('text-[11px] font-bold uppercase tracking-[0.25em]', isDark ? 'text-cyan-300/70' : 'text-indigo-500/70')}>
                   Bảng nhanh
                 </p>
+                {versionLabel ? (
+                  <p className={cn('mt-1 text-[11px] font-semibold uppercase tracking-[0.16em]', isDark ? 'text-cyan-200' : 'text-indigo-600')}>
+                    {versionLabel}
+                  </p>
+                ) : null}
               </div>
             </div>
             <div className="space-y-2 flex-1 overflow-y-auto pr-1">
@@ -332,7 +354,14 @@ export function Navbar({
               alt="TruyenForge"
               className="w-11 h-11 rounded-2xl shadow-lg shadow-indigo-900/40 group-hover:scale-105 transition-transform duration-300 object-cover"
             />
-            <span className={cn('text-xl font-serif font-bold tracking-tight hidden sm:block', titleClass)}>TruyenForge</span>
+            <div className="hidden sm:flex sm:flex-col sm:gap-1">
+              <span className={cn('text-xl font-serif font-bold tracking-tight', titleClass)}>TruyenForge</span>
+              {versionLabel ? (
+                <span className={cn('inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]', isDark ? 'bg-cyan-500/12 text-cyan-200' : 'bg-indigo-100 text-indigo-700')}>
+                  {versionLabel}
+                </span>
+              ) : null}
+            </div>
           </div>
 
           <div ref={segmentsRef} className={cn('app-navbar__segments relative grid grid-cols-4 gap-1 p-1 rounded-2xl overflow-hidden', segmentedClass)}>
@@ -382,6 +411,16 @@ export function Navbar({
           >
             <Library className="w-4 h-4" /> Prompt
           </button>
+          <button
+            onClick={onOpenReleaseHistory}
+            className={cn(
+              'hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300',
+              isDark ? 'text-cyan-200 border border-cyan-400/25 hover:bg-cyan-500/10' : 'text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100',
+            )}
+            title="Lịch sử cập nhật"
+          >
+            <History className="w-4 h-4" /> Cập nhật
+          </button>
           <div className={cn('app-navbar-divider h-8 w-[1px] mx-1 md:mx-2', dividerClass)} />
           <button
             onClick={onToggleTheme}
@@ -409,6 +448,9 @@ export function Navbar({
                   <div className="px-3 py-2">
                     <p className="text-xs text-slate-500">Đăng nhập với Supabase</p>
                     <p className="font-bold text-slate-800 truncate">{authEmail || 'Khách/Local'}</p>
+                    {versionLabel ? (
+                      <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-500">{versionLabel}</p>
+                    ) : null}
                   </div>
                   <button
                     onClick={() => {
@@ -418,6 +460,15 @@ export function Navbar({
                     className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
                   >
                     {authEmail ? 'Đổi tài khoản' : 'Đăng nhập / Đăng ký'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      onOpenReleaseHistory();
+                    }}
+                    className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
+                  >
+                    Lịch sử cập nhật
                   </button>
                   <button
                     onClick={() => {

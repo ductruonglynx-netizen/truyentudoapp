@@ -214,14 +214,11 @@ export function ApiSectionPanel({
     return url.toString();
   }, [relayCode, relayConnectUrl, relayPublishUrl, relayWebBase]);
 
-  useEffect(() => {
-    if (!relayConnectUrl) return;
-    if (relayUrl === relayConnectUrl) return;
-    onRelayUrlChange(relayConnectUrl);
-  }, [onRelayUrlChange, relayConnectUrl, relayUrl]);
-
   const handleStartRelayListening = () => {
     if (!relayCode) return;
+    if (relayConnectUrl && relayUrl !== relayConnectUrl) {
+      onRelayUrlChange(relayConnectUrl);
+    }
     onConnectRelay(relayCode);
   };
 

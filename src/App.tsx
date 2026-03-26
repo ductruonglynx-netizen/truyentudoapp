@@ -54,6 +54,7 @@ import { loadBudgetState } from './finops';
 import { ApiSectionPanel } from './components/tools/ApiSectionPanel';
 import { ToolsPage } from './features/tools/ToolsPage';
 import { PromptLibraryModal as PromptLibraryModalNew } from './features/prompt/PromptLibrary';
+import { CURRENT_WRITER_VERSION, WRITER_RELEASE_NOTES } from './phase3/releaseHistory';
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
@@ -6919,6 +6920,7 @@ const AppContent = () => {
   const [aiTimer, setAiTimer] = useState(0);
   const [showPromptManager, setShowPromptManager] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showReleaseHistoryModal, setShowReleaseHistoryModal] = useState(false);
   const [profileNameDraft, setProfileNameDraft] = useState(profile.displayName);
   const [profileAvatarDraft, setProfileAvatarDraft] = useState(profile.avatarUrl);
   const [profileAvatarError, setProfileAvatarError] = useState('');
@@ -8406,6 +8408,39 @@ const AppContent = () => {
           </div>
         </div>
       )}
+      {showReleaseHistoryModal && (
+        <div className="fixed inset-0 z-[265] tf-modal-overlay bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="tf-modal-panel w-full max-w-2xl tf-card p-6 space-y-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Phiên bản hiện tại</p>
+                <h3 className="text-xl font-bold">TruyenForge {CURRENT_WRITER_VERSION}</h3>
+              </div>
+              <button className="tf-btn tf-btn-ghost px-3 py-1" onClick={() => setShowReleaseHistoryModal(false)}>Đóng</button>
+            </div>
+            <div className="space-y-3">
+              {WRITER_RELEASE_NOTES.map((note) => (
+                <div key={note.version} className="rounded-2xl border border-white/10 bg-slate-900/40 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-white">v{note.version}</p>
+                      <p className="text-xs text-slate-400">{note.dateLabel}</p>
+                    </div>
+                    <span className="rounded-full bg-indigo-500/15 px-3 py-1 text-xs font-semibold text-indigo-200">
+                      {note.title}
+                    </span>
+                  </div>
+                  <div className="mt-3 space-y-2 text-sm text-slate-200">
+                    {note.items.map((item, idx) => (
+                      <p key={`${note.version}-${idx}`}>- {item}</p>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       <AuthModal
         isOpen={showAuthModal}
         onClose={() => setShowAuthModal(false)}
@@ -8446,12 +8481,14 @@ const AppContent = () => {
         viewportMode={viewportMode}
         onToggleViewportMode={handleToggleViewportMode}
         profile={profile}
+        versionLabel={CURRENT_WRITER_VERSION}
         finopsWarning={finopsWarning}
         authEmail={user?.email}
         onShowAuth={() => setShowAuthModal(true)} 
         onLogout={logout}
         onOpenProfile={() => setShowProfileModal(true)} 
         onOpenPromptManager={() => setShowPromptManager(true)}
+        onOpenReleaseHistory={() => setShowReleaseHistoryModal(true)}
       />
 
       <div className="app-shell__body">
