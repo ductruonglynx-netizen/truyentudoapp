@@ -74,6 +74,9 @@ npm run build
 - Nâng prompt và context pack của Writer Pro để AI bám objective, timeline, glossary và Universe Wiki chắc hơn.
 - Tự động khóa glossary sau khi AI sinh nội dung, giảm hiện tượng lệch tên riêng hoặc thuật ngữ.
 - Bổ sung chỉ số `Context Readiness` để báo khi dữ liệu đầu vào còn thiếu, giúp người dùng biết lúc nào AI sẽ hoạt động tốt nhất.
+- Cải thiện tạo ảnh bìa bằng cách dựng prompt thông minh hơn và tăng chất lượng bìa fallback khi dịch vụ ảnh AI lỗi.
+- Cải thiện dịch truyện bằng cơ chế giữ ngữ cảnh giữa các đoạn và siết lại từ điển tên riêng sau hậu xử lý.
+- Khắc phục 2 mục Writer Pro: `Tone` và `Context` nay cập nhật đúng context/runtime và hỗ trợ đưa kết quả ngược về workspace.
 - Thêm mục `Lịch sử cập nhật` nhỏ ngay trong giao diện Writer Pro để theo dõi thay đổi của phiên bản.
 
 > Lưu ý: Đây là playground mô phỏng sản phẩm; kết nối model thật cần đặt API key ở Phase 1/3 và cân nhắc chính sách data retention của nhà cung cấp.

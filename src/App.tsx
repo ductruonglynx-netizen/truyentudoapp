@@ -783,6 +783,11 @@ interface ChapterTranslationUnit {
   segments: string[];
 }
 
+interface TranslationDictionaryEntry {
+  original: string;
+  translation: string;
+}
+
 const CHAPTER_HEADING_PATTERNS: RegExp[] = [
   /^(?:#{1,6}\s*)?第\s*[0-9０-９一二三四五六七八九十百千万兩两零〇IVXLCDMivxlcdm]+\s*[章节回卷部集篇](?:\s*[:：\-—.．、]\s*.*)?$/,
   /^(?:#{1,6}\s*)?(?:chương|chuong)\s*[0-9ivxlcdm]+(?:\s*[:：\-—.．、]\s*.*)?$/i,
@@ -969,6 +974,43 @@ function splitTextForTranslation(text: string, maxChars: number): string[] {
   return units.map((unit) => `${unit.title}\n${unit.source}`.trim());
 }
 
+function normalizeTranslationDictionary(
+  rows: Array<{ original?: string; translation?: string }>,
+): TranslationDictionaryEntry[] {
+  const seen = new Set<string>();
+  return rows
+    .map((row) => ({
+      original: String(row?.original || '').trim(),
+      translation: String(row?.translation || '').trim(),
+    }))
+    .filter((row) => row.original && row.translation)
+    .filter((row) => {
+      const key = `${row.original.toLowerCase()}=>${row.translation.toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function applyTranslationDictionaryToText(
+  sourceText: string,
+  translatedText: string,
+  dictionary: TranslationDictionaryEntry[],
+): string {
+  let output = String(translatedText || '');
+  dictionary.forEach((entry) => {
+    if (!sourceText.includes(entry.original) && !output.includes(entry.original)) return;
+    output = output.replace(new RegExp(entry.original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), entry.translation);
+  });
+  return output.trim();
+}
+
+function extractTranslationContextTail(text: string, maxChars = 900): string {
+  const clean = String(text || '').trim();
+  if (clean.length <= maxChars) return clean;
+  return clean.slice(clean.length - maxChars).trim();
+}
+
 function sanitizePromptForUrl(prompt: string): string {
   const raw = String(prompt || '');
   if (!raw) return '';
@@ -1015,15 +1057,63 @@ async function probeImageUrl(url: string, timeoutMs = 18000): Promise<boolean> {
   });
 }
 
+function escapeSvgText(input: string): string {
+  return String(input || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function wrapSvgText(input: string, maxCharsPerLine: number, maxLines: number): string[] {
+  const words = String(input || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  if (!words.length) return [];
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > maxCharsPerLine) {
+      if (current) lines.push(current);
+      current = word;
+      if (lines.length >= maxLines - 1) break;
+    } else {
+      current = next;
+    }
+  }
+  if (current && lines.length < maxLines) lines.push(current);
+  return lines.slice(0, maxLines);
+}
+
+function getCoverGenrePalette(genre: string): { accent: string; accentSoft: string; mood: string } {
+  const value = String(genre || '').toLowerCase();
+  if (/tiên|kiem|kiếm|huyền|fantasy|ảo/.test(value)) {
+    return { accent: '#7C3AED', accentSoft: '#C4B5FD', mood: 'epic fantasy atmosphere' };
+  }
+  if (/đô thị|lang man|lãng|romance|tình|thanh xuân/.test(value)) {
+    return { accent: '#DB2777', accentSoft: '#F9A8D4', mood: 'romantic modern atmosphere' };
+  }
+  if (/kinh dị|horror|dark|u tối|trinh thám|bí ẩn/.test(value)) {
+    return { accent: '#DC2626', accentSoft: '#FCA5A5', mood: 'dark mysterious atmosphere' };
+  }
+  if (/sci|khoa học|cyber|tương lai/.test(value)) {
+    return { accent: '#0891B2', accentSoft: '#67E8F9', mood: 'futuristic sci-fi atmosphere' };
+  }
+  return { accent: '#0F766E', accentSoft: '#99F6E4', mood: 'cinematic literary atmosphere' };
+}
+
 function buildFallbackCoverDataUrl(title: string, genre: string, prompt: string): string {
   const safeTitle = String(title || 'Untitled Story').slice(0, 64);
   const safeGenre = String(genre || 'Fiction').slice(0, 32);
   const safeHint = String(prompt || '').replace(/\s+/g, ' ').slice(0, 78);
+  const palette = getCoverGenrePalette(genre);
+  const titleLines = wrapSvgText(safeTitle, 16, 3);
+  const hintLines = wrapSvgText(safeHint, 42, 3);
   const svg = `
 <svg xmlns="http://www.w3.org/2000/svg" width="896" height="1344" viewBox="0 0 896 1344">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0f766e"/>
+      <stop offset="0%" stop-color="${palette.accent}"/>
       <stop offset="55%" stop-color="#1f2937"/>
       <stop offset="100%" stop-color="#c2410c"/>
     </linearGradient>
@@ -1035,10 +1125,12 @@ function buildFallbackCoverDataUrl(title: string, genre: string, prompt: string)
   <rect width="896" height="1344" fill="url(#bg)"/>
   <circle cx="760" cy="160" r="220" fill="rgba(255,255,255,0.14)"/>
   <circle cx="130" cy="1140" r="250" fill="rgba(255,255,255,0.08)"/>
+  <circle cx="750" cy="1080" r="130" fill="${palette.accentSoft}" opacity="0.18"/>
   <rect x="70" y="70" width="756" height="1204" rx="38" fill="url(#glass)" stroke="rgba(255,255,255,0.35)" stroke-width="2"/>
-  <text x="110" y="220" fill="#ffffff" opacity="0.9" font-family="Georgia, serif" font-size="36" letter-spacing="4">${safeGenre.toUpperCase()}</text>
-  <text x="110" y="520" fill="#ffffff" font-family="Georgia, serif" font-weight="700" font-size="84">${safeTitle}</text>
-  <text x="110" y="1100" fill="#ffffff" opacity="0.85" font-family="Verdana, sans-serif" font-size="24">${safeHint}</text>
+  <text x="110" y="220" fill="#ffffff" opacity="0.9" font-family="Georgia, serif" font-size="36" letter-spacing="4">${escapeSvgText(safeGenre.toUpperCase())}</text>
+  ${titleLines.map((line, index) => `<text x="110" y="${470 + index * 100}" fill="#ffffff" font-family="Georgia, serif" font-weight="700" font-size="84">${escapeSvgText(line)}</text>`).join('\n  ')}
+  <text x="110" y="1030" fill="${palette.accentSoft}" opacity="0.95" font-family="Verdana, sans-serif" font-size="22">${escapeSvgText(palette.mood)}</text>
+  ${hintLines.map((line, index) => `<text x="110" y="${1090 + index * 34}" fill="#ffffff" opacity="0.85" font-family="Verdana, sans-serif" font-size="24">${escapeSvgText(line)}</text>`).join('\n  ')}
 </svg>`;
   const encodedSvg = window.btoa(unescape(encodeURIComponent(svg)));
   return `data:image/svg+xml;base64,${encodedSvg}`;
@@ -4103,11 +4195,13 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
 
   const buildCoverPrompt = () => {
     const intro = String(introduction || '').replace(/\s+/g, ' ').trim().slice(0, 220);
+    const palette = getCoverGenrePalette(genre);
     const promptParts = [
-      title ? `Bìa truyện "${title}"` : 'Bìa truyện fantasy',
-      genre ? `thể loại ${genre}` : 'văn học hiện đại',
-      intro ? `bối cảnh: ${intro}` : '',
-      'illustration, cinematic, high detail, dramatic lighting, vertical book cover, no text, no watermark',
+      title ? `book cover for "${title}"` : 'fantasy novel book cover',
+      genre ? `genre ${genre}` : 'literary fiction',
+      palette.mood,
+      intro ? `story premise: ${intro}` : '',
+      'single focal subject, elegant composition, premium illustration, cinematic lighting, high detail, vertical book cover, no text, no watermark, no logo',
     ];
     return promptParts.filter(Boolean).join(', ');
   };
@@ -4154,7 +4248,48 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
     }
     setIsGeneratingCover(true);
     try {
-      const prompt = sanitizePromptForUrl(String(coverPrompt || buildCoverPrompt()).trim());
+      const typedPrompt = sanitizePromptForUrl(String(coverPrompt || '').trim());
+      const basePrompt = sanitizePromptForUrl(buildCoverPrompt());
+      let prompt = typedPrompt;
+      let ai: AiAuth | null = null;
+
+      try {
+        ai = createGeminiClient();
+      } catch {
+        ai = null;
+      }
+
+      if (!prompt && ai) {
+        try {
+          const generatedPrompt = await generateGeminiText(
+            ai,
+            'fast',
+            [
+              'Write one concise English prompt for an AI book cover generator.',
+              'Keep it under 220 characters, no markdown, no quotes.',
+              'Must describe visual subject, mood, genre cues, and composition.',
+              'Always include: vertical book cover, no text, no watermark.',
+              `Title: ${title}`,
+              `Genre: ${genre || 'literary fiction'}`,
+              `Introduction: ${String(introduction || '').slice(0, 500)}`,
+            ].join('\n'),
+            {
+              responseMimeType: 'text/plain',
+              temperature: 0.6,
+              maxOutputTokens: 120,
+              minOutputChars: 70,
+              maxRetries: 1,
+            },
+          );
+          prompt = sanitizePromptForUrl(generatedPrompt);
+        } catch (error) {
+          console.warn('Không tạo được prompt ảnh bìa bằng AI, chuyển sang prompt nội suy.', error);
+        }
+      }
+
+      if (!prompt) {
+        prompt = basePrompt;
+      }
       if (!prompt) {
         alert('Không đủ dữ liệu để tạo ảnh bìa.');
         return;
@@ -4163,8 +4298,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
 
       // Try OpenAI image API first when user is configured with OpenAI/custom endpoint.
       try {
-        const ai = createGeminiClient();
-        if ((ai.provider === 'openai' || ai.provider === 'custom') && ai.apiKey.trim()) {
+        if (ai && (ai.provider === 'openai' || ai.provider === 'custom') && ai.apiKey.trim()) {
           const openAiBase = ai.baseUrl || getProviderBaseUrl(ai.provider === 'custom' ? 'custom' : 'openai');
           const imageEndpoint = /\/images\/generations$/i.test(openAiBase)
             ? openAiBase
@@ -4186,7 +4320,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
             const data = await resp.json();
             const url = String(data?.data?.[0]?.url || '').trim();
             const b64 = String(data?.data?.[0]?.b64_json || '').trim();
-            if (url) {
+            if (url && await probeImageUrl(url, 25000)) {
               imageUrl = url;
             } else if (b64) {
               imageUrl = `data:image/png;base64,${b64}`;
@@ -4200,22 +4334,28 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
       // Fallback to public AI image service.
       if (!imageUrl) {
         const seed = Math.floor(Math.random() * 1000000000);
-        const encoded = encodeURIComponent(prompt);
-        const buildCandidates = (offset: number) => ([
-          `https://image.pollinations.ai/prompt/${encoded}?width=896&height=1344&seed=${seed + offset}&nologo=true&enhance=true&model=flux`,
-          `https://image.pollinations.ai/prompt/${encoded}?width=896&height=1344&seed=${seed + offset}&nologo=true&enhance=true&model=turbo`,
-          `https://image.pollinations.ai/prompt/${encoded}?width=768&height=1152&seed=${seed + offset}&nologo=true&model=sdxl`,
-          `https://image.pollinations.ai/prompt/${encoded}?width=768&height=1152&seed=${seed + offset}&nologo=true`,
-        ]);
+        const promptVariants = Array.from(new Set([prompt, basePrompt].filter(Boolean)));
+        const buildCandidates = (variant: string, offset: number) => {
+          const encoded = encodeURIComponent(variant);
+          return [
+            `https://image.pollinations.ai/prompt/${encoded}?width=896&height=1344&seed=${seed + offset}&nologo=true&enhance=true&model=flux`,
+            `https://image.pollinations.ai/prompt/${encoded}?width=896&height=1344&seed=${seed + offset}&nologo=true&enhance=true&model=turbo`,
+            `https://image.pollinations.ai/prompt/${encoded}?width=768&height=1152&seed=${seed + offset}&nologo=true&model=sdxl`,
+            `https://image.pollinations.ai/prompt/${encoded}?width=768&height=1152&seed=${seed + offset}&nologo=true`,
+          ];
+        };
 
         for (let attempt = 0; attempt < 3 && !imageUrl; attempt += 1) {
-          const candidates = buildCandidates(attempt * 97);
-          for (const candidate of candidates) {
-            const ok = await probeImageUrl(candidate, 45000);
-            if (ok) {
-              imageUrl = candidate;
-              break;
+          for (const variant of promptVariants) {
+            const candidates = buildCandidates(variant, attempt * 97);
+            for (const candidate of candidates) {
+              const ok = await probeImageUrl(candidate, 45000);
+              if (ok) {
+                imageUrl = candidate;
+                break;
+              }
             }
+            if (imageUrl) break;
           }
           if (!imageUrl && attempt < 2) {
             await sleepMs(1200 * (attempt + 1));
@@ -7265,21 +7405,24 @@ const AppContent = () => {
       const translateStartedAt = Date.now();
       
       let dictionaryContext = "";
+      let dictionaryEntries: TranslationDictionaryEntry[] = [];
       if (options.useDictionary) {
         try {
           const q = query(collection(db, 'translation_names'), where('authorId', '==', user.uid));
           const namesSnapshot = await getDocs(q);
-          const names = namesSnapshot.docs.map(doc => doc.data());
+          const names = normalizeTranslationDictionary(namesSnapshot.docs.map(doc => doc.data() as { original?: string; translation?: string }));
           if (names.length > 0) {
+            dictionaryEntries = names;
             dictionaryContext = "SỬ DỤNG TỪ ĐIỂN TÊN RIÊNG SAU ĐÂY (Ưu tiên tuyệt đối):\n" +
               names.map(n => `- ${n.original} -> ${n.translation}`).join('\n');
           }
         } catch (err) {
           if (isFirestorePermissionError(err)) {
-            const names = storage.getTranslationNames();
+            const names = normalizeTranslationDictionary(storage.getTranslationNames());
             if (names.length > 0) {
+              dictionaryEntries = names;
               dictionaryContext = "SỬ DỤNG TỪ ĐIỂN TÊN RIÊNG SAU ĐÂY (Ưu tiên tuyệt đối):\n" +
-                names.map((n: { original: string; translation: string }) => `- ${n.original} -> ${n.translation}`).join('\n');
+                names.map((n) => `- ${n.original} -> ${n.translation}`).join('\n');
             }
           } else {
             console.warn("Không thể tải từ điển tên riêng", err);
@@ -7406,6 +7549,7 @@ const AppContent = () => {
         const sourceSegments = unit.segments.length ? unit.segments : [unit.source];
         const translatedSegments: string[] = [];
         let translatedTitle = String(unit.title || `Chương ${chapterIndex + 1}`).trim() || `Chương ${chapterIndex + 1}`;
+        let previousTranslatedTail = '';
 
         for (let segmentIndex = 0; segmentIndex < sourceSegments.length; segmentIndex++) {
           const segment = sourceSegments[segmentIndex];
@@ -7426,6 +7570,7 @@ const AppContent = () => {
             ${adultContentInstruction}
             ${dictionaryContext}
             YÊU CẦU BỔ SUNG: ${options.additionalInstructions}
+            ${previousTranslatedTail ? `NGỮ CẢNH NGAY TRƯỚC (để giữ xưng hô, nhịp văn và continuity):\n${previousTranslatedTail}` : ''}
             
             NỘI DUNG CẦN DỊCH:
             ${segment}
@@ -7462,6 +7607,10 @@ const AppContent = () => {
           );
 
           let translated = normalizeAiJsonContent(translateTextRaw || '', translatedTitle || `Chương ${chapterIndex + 1}`);
+          translated = {
+            title: applyTranslationDictionaryToText(unit.title || translatedTitle, translated.title, dictionaryEntries) || translated.title,
+            content: applyTranslationDictionaryToText(segment, translated.content, dictionaryEntries),
+          };
           const shortThreshold = turboMode
             ? Math.max(120, Math.round(dynamicMinChars * 0.55))
             : Math.max(180, Math.round(dynamicMinChars * 0.7));
@@ -7480,7 +7629,11 @@ const AppContent = () => {
               ]
             });
             const retried = normalizeAiJsonContent(retryRaw || '', translatedTitle || `Chương ${chapterIndex + 1}`);
-            if (retried.content.length > translated.content.length) translated = retried;
+            const normalizedRetried = {
+              title: applyTranslationDictionaryToText(unit.title || translatedTitle, retried.title, dictionaryEntries) || retried.title,
+              content: applyTranslationDictionaryToText(segment, retried.content, dictionaryEntries),
+            };
+            if (normalizedRetried.content.length > translated.content.length) translated = normalizedRetried;
           }
 
           const parsedTitle = String(translated.title || '').trim();
@@ -7489,6 +7642,7 @@ const AppContent = () => {
           }
           if (translated.content.trim()) {
             translatedSegments.push(translated.content.trim());
+            previousTranslatedTail = extractTranslationContextTail(translated.content, turboMode ? 680 : 920);
           }
         }
 

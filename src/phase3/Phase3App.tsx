@@ -255,6 +255,8 @@ export default function Phase3App() {
         universe: wikiStore,
       });
       setToneResult(result.payload);
+      setGraphContext(result.graphContext || []);
+      setBundleContext(result.bundleContext || '');
       applyMeta({
         provider: result.provider,
         model: result.model,
@@ -281,6 +283,7 @@ export default function Phase3App() {
       });
       setContextResult(result.payload);
       setGraphContext(result.graphContext || []);
+      setBundleContext(result.bundleContext || '');
       applyMeta({
         provider: result.provider,
         model: result.model,
@@ -300,6 +303,8 @@ export default function Phase3App() {
         sourceText: workspace.wikiSource || workspace.draftText,
       });
       setWikiResult(result.payload);
+      setGraphContext([]);
+      setBundleContext('');
       applyMeta({
         provider: result.provider,
         model: result.model,
@@ -315,6 +320,27 @@ export default function Phase3App() {
     if (!wikiResult) return;
     setWikiStore((prev) => mergeWikiState(prev, wikiResult));
     setNotice('Da luu ket qua trich xuat vao Universe Wiki local store.');
+  };
+
+  const applyContextAnswerToTimeline = () => {
+    if (!contextResult?.answer) return;
+    setWorkspace((prev) => ({
+      ...prev,
+      timelineNotes: [prev.timelineNotes.trim(), contextResult.answer.trim()].filter(Boolean).join('\n\n'),
+    }));
+    setNotice('Da dua ket qua Context vao Timeline notes.');
+  };
+
+  const applyWikiTimelineToWorkspace = () => {
+    if (!wikiResult?.timeline?.length) return;
+    const timelineText = wikiResult.timeline
+      .map((item) => `- ${item.title}${item.when ? ` (${item.when})` : ''}: ${item.detail}`.trim())
+      .join('\n');
+    setWorkspace((prev) => ({
+      ...prev,
+      timelineNotes: [prev.timelineNotes.trim(), timelineText].filter(Boolean).join('\n\n'),
+    }));
+    setNotice('Da dua timeline tu Wiki vao workspace.');
   };
 
   const updateBudgetMonthly = () => {
@@ -637,6 +663,12 @@ export default function Phase3App() {
                     >
                       Replace Draft
                     </button>
+                    <button
+                      onClick={() => setWorkspace((prev) => ({ ...prev, draftText: `${prev.draftText}\n\n${toneResult.rewritten}`.trim() }))}
+                      className="mt-2 ml-2 rounded-lg border border-[#D9E2EC] px-2 py-1 text-xs"
+                    >
+                      Append to Draft
+                    </button>
                   </div>
                 ) : (
                   <p className="text-sm text-[#52606D]">Chua co ket qua tone shift.</p>
@@ -670,6 +702,12 @@ export default function Phase3App() {
                         ))}
                       </div>
                     )}
+                    <button
+                      onClick={applyContextAnswerToTimeline}
+                      className="rounded-lg border border-[#D9E2EC] px-2 py-1 text-xs"
+                    >
+                      Add to Timeline Notes
+                    </button>
                   </div>
                 ) : (
                   <p className="text-sm text-[#52606D]">Chua co ket qua context.</p>
@@ -700,6 +738,13 @@ export default function Phase3App() {
                     className="rounded-lg border border-[#D9E2EC] px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
                   >
                     Save to Universe
+                  </button>
+                  <button
+                    onClick={applyWikiTimelineToWorkspace}
+                    disabled={!wikiResult?.timeline?.length}
+                    className="rounded-lg border border-[#D9E2EC] px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
+                  >
+                    Add Timeline to Workspace
                   </button>
                 </div>
                 {wikiResult ? (
