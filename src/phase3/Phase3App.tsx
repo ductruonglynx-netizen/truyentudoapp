@@ -9,6 +9,7 @@ import {
   Sparkles,
   Wand2,
 } from 'lucide-react';
+import { CURRENT_WRITER_VERSION, WRITER_RELEASE_NOTES } from './releaseHistory';
 import {
   extractWiki,
   generateAutocomplete,
@@ -37,6 +38,13 @@ type TaskMeta = {
 };
 
 type TabKey = 'autocomplete' | 'plot' | 'tone' | 'context' | 'wiki';
+
+type ContextReadiness = {
+  score: number;
+  statusLabel: string;
+  summary: string;
+  checks: Array<{ label: string; ready: boolean; detail: string }>;
+};
 
 function mergeUniqueByName<T extends { name: string }>(oldRows: T[], newRows: T[]): T[] {
   const map = new Map<string, T>();
@@ -123,6 +131,54 @@ export default function Phase3App() {
     return sections.join('\n');
   }, [workspace]);
 
+  const contextReadiness = useMemo<ContextReadiness>(() => {
+    const checks = [
+      {
+        label: 'Objective',
+        ready: workspace.chapterObjective.trim().length >= 20,
+        detail: workspace.chapterObjective.trim().length >= 20 ? 'Da co muc tieu chuong ro.' : 'Nen ghi ro muc tieu chuong hien tai.',
+      },
+      {
+        label: 'Style profile',
+        ready: workspace.styleProfile.trim().length >= 16,
+        detail: workspace.styleProfile.trim().length >= 16 ? 'AI da co tone/style anchor.' : 'Them huong dan van phong de giam drift.',
+      },
+      {
+        label: 'Recent summaries',
+        ready: workspace.recentChapterSummaries.trim().length >= 120,
+        detail: workspace.recentChapterSummaries.trim().length >= 120 ? 'Da co ngu canh chuong gan day.' : 'Tom tat chuong gan day de AI bam continuity tot hon.',
+      },
+      {
+        label: 'Timeline',
+        ready: workspace.timelineNotes.trim().length >= 40,
+        detail: workspace.timelineNotes.trim().length >= 40 ? 'Timeline du de khoa logic co ban.' : 'Them moc thoi gian/su kien quan trong.',
+      },
+      {
+        label: 'Glossary',
+        ready: workspace.glossaryTerms.trim().length >= 8,
+        detail: workspace.glossaryTerms.trim().length >= 8 ? 'Da co thuat ngu/ten rieng can giu.' : 'Them glossary neu truyen co ten rieng hoac thuat ngu lap lai.',
+      },
+      {
+        label: 'Universe Wiki',
+        ready: wikiStore.characters.length + wikiStore.locations.length + wikiStore.items.length + wikiStore.timeline.length >= 3,
+        detail:
+          wikiStore.characters.length + wikiStore.locations.length + wikiStore.items.length + wikiStore.timeline.length >= 3
+            ? 'GraphRAG da co du lieu de neo ket qua.'
+            : 'Nen trich xuat wiki hoac them tay de tang grounding.',
+      },
+    ];
+    const readyCount = checks.filter((item) => item.ready).length;
+    const score = Math.round((readyCount / checks.length) * 100);
+    const statusLabel = score >= 84 ? 'AI grounded' : score >= 60 ? 'On dinh' : 'Can bo sung context';
+    const summary =
+      score >= 84
+        ? 'Bo context hien tai du tot de AI giu continuity va glossary.'
+        : score >= 60
+          ? 'AI co the cho ket qua on, nhung van nen bo sung them timeline/wiki.'
+          : 'Nen bo sung objective, tom tat hoac glossary truoc khi chay task lon.';
+    return { score, statusLabel, summary, checks };
+  }, [wikiStore, workspace]);
+
   const applyMeta = (meta: TaskMeta) => {
     setTaskMeta(meta);
     if (meta.failoverTrail.length) {
@@ -168,6 +224,7 @@ export default function Phase3App() {
         chapterObjective: workspace.chapterObjective,
         recentChapterSummaries: workspace.recentChapterSummaries,
         timelineNotes: workspace.timelineNotes,
+        glossaryTerms: workspace.glossaryTerms,
         universe: wikiStore,
       });
       setPlotResult(result.payload);
@@ -191,6 +248,11 @@ export default function Phase3App() {
       const result = await rewriteTone({
         sourceText: toneInput || workspace.draftText,
         tonePreset,
+        chapterObjective: workspace.chapterObjective,
+        styleProfile: workspace.styleProfile,
+        timelineNotes: workspace.timelineNotes,
+        glossaryTerms: workspace.glossaryTerms,
+        universe: wikiStore,
       });
       setToneResult(result.payload);
       applyMeta({
@@ -210,6 +272,8 @@ export default function Phase3App() {
     try {
       const result = await runContextQuery({
         question: workspace.contextQuestion,
+        chapterObjective: workspace.chapterObjective,
+        styleProfile: workspace.styleProfile,
         recentChapterSummaries: workspace.recentChapterSummaries,
         timelineNotes: workspace.timelineNotes,
         glossaryTerms: workspace.glossaryTerms,
@@ -293,6 +357,9 @@ export default function Phase3App() {
               <h1 className="font-serif text-2xl font-bold text-[#1F2933]">Co-writer · Plot · Tone · Context · Wiki</h1>
             </div>
             <div className="flex flex-wrap gap-2 text-xs">
+              <span className="rounded-full border border-[#D9E2EC] px-3 py-1 bg-[#EEF2FF] text-[#4338CA]">
+                Version {CURRENT_WRITER_VERSION}
+              </span>
               <span className="rounded-full border border-[#D9E2EC] px-3 py-1 bg-[#DFF6F4] text-[#0F766E]">
                 Universe chars: {wikiStore.characters.length}
               </span>
@@ -339,9 +406,36 @@ export default function Phase3App() {
               </span>
             </div>
           </div>
-          <div className="mt-3 rounded-xl border border-[#D9E2EC] bg-[#F6F7F4] p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-[#52606D]">Context Bundle Preview</p>
-            <pre className="mt-2 whitespace-pre-wrap text-xs text-[#52606D]">{contextBundlePreview}</pre>
+          <div className="mt-3 grid gap-3 lg:grid-cols-[1.15fr_0.85fr]">
+            <div className="rounded-xl border border-[#D9E2EC] bg-[#F6F7F4] p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#52606D]">Context Bundle Preview</p>
+              <pre className="mt-2 whitespace-pre-wrap text-xs text-[#52606D]">{contextBundlePreview}</pre>
+            </div>
+            <div className="rounded-xl border border-[#D9E2EC] bg-white p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#52606D]">Context Readiness</p>
+                  <p className="mt-1 text-2xl font-bold text-[#0F766E]">{contextReadiness.score}%</p>
+                </div>
+                <span className="rounded-full bg-[#DFF6F4] px-3 py-1 text-xs font-semibold text-[#0F766E]">
+                  {contextReadiness.statusLabel}
+                </span>
+              </div>
+              <p className="mt-2 text-sm text-[#52606D]">{contextReadiness.summary}</p>
+              <div className="mt-3 space-y-2">
+                {contextReadiness.checks.map((item) => (
+                  <div key={item.label} className="rounded-lg border border-[#D9E2EC] bg-[#F6F7F4] px-3 py-2">
+                    <div className="flex items-center justify-between gap-2 text-xs font-semibold">
+                      <span>{item.label}</span>
+                      <span className={item.ready ? 'text-[#0F766E]' : 'text-[#C2410C]'}>
+                        {item.ready ? 'OK' : 'Can them'}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-[#52606D]">{item.detail}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </header>
 
@@ -685,6 +779,30 @@ export default function Phase3App() {
               <p>Items: {wikiStore.items.length}</p>
               <p>Timeline events: {wikiStore.timeline.length}</p>
               <p>Updated: {wikiStore.updatedAt === new Date(0).toISOString() ? 'N/A' : new Date(wikiStore.updatedAt).toLocaleString()}</p>
+            </div>
+            <div className="rounded-xl border border-[#D9E2EC] bg-white p-3 text-xs text-[#52606D]">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-semibold uppercase tracking-wide">Lich su cap nhat</p>
+                <span className="rounded-full bg-[#EEF2FF] px-2 py-1 text-[11px] font-semibold text-[#4338CA]">
+                  {CURRENT_WRITER_VERSION}
+                </span>
+              </div>
+              <div className="mt-3 space-y-3">
+                {WRITER_RELEASE_NOTES.map((note) => (
+                  <div key={note.version} className="rounded-lg border border-[#D9E2EC] bg-[#F6F7F4] p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-semibold text-[#1F2933]">v{note.version}</p>
+                      <span>{note.dateLabel}</span>
+                    </div>
+                    <p className="mt-1 text-[#1F2933]">{note.title}</p>
+                    <div className="mt-2 space-y-1">
+                      {note.items.map((item, idx) => (
+                        <p key={`${note.version}-${idx}`}>- {item}</p>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </aside>
         </section>

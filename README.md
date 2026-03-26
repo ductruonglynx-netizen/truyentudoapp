@@ -69,4 +69,11 @@ npm run lint -- --noEmit
 npm run build
 ```
 
+## Lịch sử cập nhật
+### v0.0a
+- Nâng prompt và context pack của Writer Pro để AI bám objective, timeline, glossary và Universe Wiki chắc hơn.
+- Tự động khóa glossary sau khi AI sinh nội dung, giảm hiện tượng lệch tên riêng hoặc thuật ngữ.
+- Bổ sung chỉ số `Context Readiness` để báo khi dữ liệu đầu vào còn thiếu, giúp người dùng biết lúc nào AI sẽ hoạt động tốt nhất.
+- Thêm mục `Lịch sử cập nhật` nhỏ ngay trong giao diện Writer Pro để theo dõi thay đổi của phiên bản.
+
 > Lưu ý: Đây là playground mô phỏng sản phẩm; kết nối model thật cần đặt API key ở Phase 1/3 và cân nhắc chính sách data retention của nhà cung cấp.

@@ -57,6 +57,7 @@ const TASK_CACHE_KEY = 'phase3_writer_task_cache_v1';
 const TASK_CACHE_TTL_MS = 1000 * 60 * 20;
 const TASK_CACHE_LIMIT = 200;
 const GRAPH_CONTEXT_LIMIT = 12;
+const GLOSSARY_LIMIT = 18;
 
 function readText(value: unknown): string {
   return String(value || '').trim();
@@ -321,6 +322,89 @@ function trimText(input: string, limit: number): string {
   const clean = readText(input);
   if (clean.length <= limit) return clean;
   return `${clean.slice(0, limit - 3)}...`;
+}
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function parseGlossaryPairs(input: string): Array<{ source: string; target: string }> {
+  return readText(input)
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(.+?)(?:=>|->|=|:)(.+)$/);
+      if (!match) return null;
+      const source = readText(match[1]);
+      const target = readText(match[2]);
+      if (!source || !target) return null;
+      return { source, target };
+    })
+    .filter((row): row is { source: string; target: string } => Boolean(row))
+    .slice(0, GLOSSARY_LIMIT);
+}
+
+function buildGlossaryGuard(glossaryTerms: string): string {
+  const pairs = parseGlossaryPairs(glossaryTerms);
+  if (!pairs.length) return '(empty)';
+  return pairs.map((pair) => `- ${pair.source} => ${pair.target}`).join('\n');
+}
+
+function applyGlossaryLocks(text: string, glossaryTerms: string): string {
+  let next = readText(text);
+  parseGlossaryPairs(glossaryTerms).forEach((pair) => {
+    next = next.replace(new RegExp(escapeRegExp(pair.source), 'g'), pair.target);
+  });
+  return next;
+}
+
+function normalizeGeneratedText(text: string): string {
+  return readText(text)
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function buildContinuityGuard(input: {
+  chapterObjective: string;
+  recentChapterSummaries: string;
+  timelineNotes: string;
+  draftText?: string;
+}): string {
+  const recentFocus = takeLastWords(input.recentChapterSummaries, 80);
+  const draftTail = takeLastWords(input.draftText || '', 60);
+  return [
+    `Objective lock: ${trimText(input.chapterObjective, 180) || '(none)'}`,
+    `Recent continuity: ${trimText(recentFocus, 260) || '(none)'}`,
+    `Timeline lock: ${trimText(input.timelineNotes, 220) || '(none)'}`,
+    `Draft tail: ${trimText(draftTail, 220) || '(none)'}`,
+  ].join('\n');
+}
+
+function shouldUseStrongModel(input: {
+  chapterObjective?: string;
+  recentChapterSummaries?: string;
+  timelineNotes?: string;
+  glossaryTerms?: string;
+  universe?: UniverseWikiState;
+  desiredWords?: 50 | 100 | 200;
+  sourceText?: string;
+}): boolean {
+  let score = 0;
+  if (readText(input.chapterObjective).length >= 80) score += 1;
+  if (readText(input.recentChapterSummaries).length >= 500) score += 1;
+  if (readText(input.timelineNotes).length >= 120) score += 1;
+  if (parseGlossaryPairs(input.glossaryTerms || '').length >= 4) score += 1;
+  if ((input.universe?.characters.length || 0) + (input.universe?.locations.length || 0) + (input.universe?.items.length || 0) >= 8) score += 1;
+  if ((input.universe?.timeline.length || 0) >= 4) score += 1;
+  if ((input.desiredWords || 0) >= 200) score += 1;
+  if (readText(input.sourceText).length >= 900) score += 1;
+  return score >= 3;
+}
+
+function normalizeSuggestionList(rows: string[]): string[] {
+  return rows.map((row) => normalizeGeneratedText(row)).filter(Boolean);
 }
 
 function buildHierarchicalContext(input: {
@@ -787,22 +871,34 @@ export async function generateAutocomplete(input: {
     [input.chapterObjective, input.recentChapterSummaries, input.draftText, input.timelineNotes].join(' '),
     input.universe,
   );
+  const continuityGuard = buildContinuityGuard(input);
+  const glossaryGuard = buildGlossaryGuard(input.glossaryTerms);
   const result = await runTaskWithFallback({
     taskKey: 'autocomplete',
-    preferStrongModel: false,
+    preferStrongModel: shouldUseStrongModel({
+      chapterObjective: input.chapterObjective,
+      recentChapterSummaries: input.recentChapterSummaries,
+      timelineNotes: input.timelineNotes,
+      glossaryTerms: input.glossaryTerms,
+      universe: input.universe,
+      desiredWords: input.desiredWords,
+      sourceText: input.draftText,
+    }),
     systemPrompt: [
       'Ban la dong tac gia van hoc chuyen nghiep.',
       'Nhiem vu: viet tiep dung giong dieu va khong pha vo fact.',
+      'Phai ton trong objective, timeline, continuity va glossary lock.',
       'Tra ve JSON: {"variants":[{"mode":"conservative|balanced|bold","text":"...","confidence":0.0}]}',
-      'Moi text nen gan do dai yeu cau va co tinh lien mach.',
+      'Moi text nen gan do dai yeu cau, viet thuần van xuoi tieng Viet va co tinh lien mach.',
     ].join('\n'),
     userPrompt: [
       `Desired words: ${input.desiredWords}`,
       `Chapter objective:\n${readText(input.chapterObjective)}`,
       `Style profile:\n${readText(input.styleProfile)}`,
       `Hierarchical context (da rut gon nhieu cap):\n${bundleContext}`,
+      `Continuity guard:\n${continuityGuard}`,
       `GraphRAG nodes/edges:\n${graphContext.join('\n')}`,
-      `Must-use glossary terms (se giu nguyen trong dau ra):\n${readText(input.glossaryTerms)}`,
+      `Must-use glossary terms:\n${glossaryGuard}`,
       `Current draft context:\n${readText(input.draftText)}`,
     ].join('\n\n'),
     normalize: normalizeVariants,
@@ -815,6 +911,12 @@ export async function generateAutocomplete(input: {
   });
   return {
     ...result,
+    payload: {
+      variants: result.payload.variants.map((variant) => ({
+        ...variant,
+        text: applyGlossaryLocks(normalizeGeneratedText(variant.text), input.glossaryTerms),
+      })),
+    },
     graphContext,
     bundleContext,
   };
@@ -824,6 +926,7 @@ export async function generatePlotSuggestions(input: {
   chapterObjective: string;
   recentChapterSummaries: string;
   timelineNotes: string;
+  glossaryTerms: string;
   universe: UniverseWikiState;
 }): Promise<TaskRunResult<PlotSuggestion>> {
   const bundleContext = buildHierarchicalContext({
@@ -831,23 +934,34 @@ export async function generatePlotSuggestions(input: {
     styleProfile: '',
     recentChapterSummaries: input.recentChapterSummaries,
     timelineNotes: input.timelineNotes,
+    glossaryTerms: input.glossaryTerms,
   });
   const graphContext = buildGraphContext(
     [input.chapterObjective, input.recentChapterSummaries, input.timelineNotes].join(' '),
     input.universe,
   );
+  const continuityGuard = buildContinuityGuard(input);
   const result = await runTaskWithFallback({
     taskKey: 'plot',
-    preferStrongModel: true,
+    preferStrongModel: shouldUseStrongModel({
+      chapterObjective: input.chapterObjective,
+      recentChapterSummaries: input.recentChapterSummaries,
+      timelineNotes: input.timelineNotes,
+      glossaryTerms: input.glossaryTerms,
+      universe: input.universe,
+    }),
     systemPrompt: [
       'Ban la story architect.',
       'Phan tich boi canh va de xuat 3 huong tiep theo + plot twist + risk logic.',
+      'Khong de xuat huong di lam vo glossary, timeline hoac du lieu Universe.',
       'Tra ve JSON: {"directions":["..."],"twists":["..."],"risks":["..."]}',
     ].join('\n'),
     userPrompt: [
       `Chapter objective:\n${readText(input.chapterObjective)}`,
       `Hierarchical context (rut gon):\n${bundleContext}`,
+      `Continuity guard:\n${continuityGuard}`,
       `Timeline notes:\n${readText(input.timelineNotes)}`,
+      `Must-use glossary terms:\n${buildGlossaryGuard(input.glossaryTerms)}`,
       `GraphRAG nodes/edges:\n${graphContext.join('\n')}`,
     ].join('\n\n'),
     normalize: normalizePlot,
@@ -859,6 +973,11 @@ export async function generatePlotSuggestions(input: {
   });
   return {
     ...result,
+    payload: {
+      directions: normalizeSuggestionList(result.payload.directions),
+      twists: normalizeSuggestionList(result.payload.twists),
+      risks: normalizeSuggestionList(result.payload.risks),
+    },
     graphContext,
     bundleContext,
   };
@@ -867,17 +986,46 @@ export async function generatePlotSuggestions(input: {
 export async function rewriteTone(input: {
   sourceText: string;
   tonePreset: TonePreset;
+  chapterObjective: string;
+  styleProfile: string;
+  timelineNotes: string;
+  glossaryTerms: string;
+  universe: UniverseWikiState;
 }): Promise<TaskRunResult<ToneShiftResult>> {
-  return runTaskWithFallback({
+  const bundleContext = buildHierarchicalContext({
+    chapterObjective: input.chapterObjective,
+    styleProfile: input.styleProfile,
+    recentChapterSummaries: '',
+    timelineNotes: input.timelineNotes,
+    glossaryTerms: input.glossaryTerms,
+  });
+  const graphContext = buildGraphContext(
+    [input.chapterObjective, input.timelineNotes, input.sourceText].join(' '),
+    input.universe,
+  );
+  const result = await runTaskWithFallback({
     taskKey: `tone:${input.tonePreset}`,
-    preferStrongModel: false,
+    preferStrongModel: shouldUseStrongModel({
+      chapterObjective: input.chapterObjective,
+      timelineNotes: input.timelineNotes,
+      glossaryTerms: input.glossaryTerms,
+      universe: input.universe,
+      sourceText: input.sourceText,
+    }),
     systemPrompt: [
       'Ban la bien tap vien van hoc.',
       'Nhiem vu: doi giong dieu nhung khong thay doi fact/su kien/chu the.',
+      'Phai giu nguyen ten rieng/thuat ngu trong glossary lock, khong duoc doi timeline.',
       'Tra ve JSON: {"rewritten":"...","notes":["..."]}',
     ].join('\n'),
     userPrompt: [
       `Tone preset: ${input.tonePreset}`,
+      `Chapter objective:\n${readText(input.chapterObjective)}`,
+      `Style profile:\n${readText(input.styleProfile)}`,
+      `Hierarchical context:\n${bundleContext}`,
+      `Timeline notes:\n${readText(input.timelineNotes)}`,
+      `Must-use glossary terms:\n${buildGlossaryGuard(input.glossaryTerms)}`,
+      `GraphRAG nodes/edges:\n${graphContext.join('\n')}`,
       `Source text:\n${readText(input.sourceText)}`,
     ].join('\n\n'),
     normalize: normalizeToneShift,
@@ -887,32 +1035,67 @@ export async function rewriteTone(input: {
         preset: input.tonePreset,
       }),
   });
+  return {
+    ...result,
+    payload: {
+      rewritten: applyGlossaryLocks(normalizeGeneratedText(result.payload.rewritten), input.glossaryTerms),
+      notes: Array.from(
+        new Set(
+          [
+            parseGlossaryPairs(input.glossaryTerms).length ? 'Glossary lock da duoc ap vao ban doi giong.' : '',
+            ...result.payload.notes.map((note) => normalizeGeneratedText(note)),
+          ].filter(Boolean),
+        ),
+      ),
+    },
+    graphContext,
+    bundleContext,
+  };
 }
 
 export async function runContextQuery(input: {
   question: string;
+  chapterObjective: string;
+  styleProfile: string;
   recentChapterSummaries: string;
   timelineNotes: string;
   glossaryTerms: string;
   universe: UniverseWikiState;
 }): Promise<TaskRunResult<ContextAnswer>> {
+  const bundleContext = buildHierarchicalContext({
+    chapterObjective: input.chapterObjective,
+    styleProfile: input.styleProfile,
+    recentChapterSummaries: input.recentChapterSummaries,
+    timelineNotes: input.timelineNotes,
+    glossaryTerms: input.glossaryTerms,
+  });
   const graphContext = buildGraphContext(
-    [input.question, input.recentChapterSummaries, input.timelineNotes, input.glossaryTerms].join(' '),
+    [input.question, input.chapterObjective, input.recentChapterSummaries, input.timelineNotes, input.glossaryTerms].join(' '),
     input.universe,
   );
   const result = await runTaskWithFallback({
     taskKey: 'context_query',
-    preferStrongModel: true,
+    preferStrongModel: shouldUseStrongModel({
+      chapterObjective: input.chapterObjective,
+      recentChapterSummaries: input.recentChapterSummaries,
+      timelineNotes: input.timelineNotes,
+      glossaryTerms: input.glossaryTerms,
+      universe: input.universe,
+    }),
     systemPrompt: [
       'Ban la context analyst cho truyen dai ky.',
       'Chi tra loi dua tren du lieu boi canh da cho. Neu thieu thong tin, noi ro.',
+      'Uu tien su dung objective, timeline, glossary va graph nodes lam diem tua de tra loi.',
       'Tra ve JSON: {"answer":"...","references":[{"source":"chapter|timeline|wiki","lineHint":"..."}]}',
     ].join('\n'),
     userPrompt: [
       `Question:\n${readText(input.question)}`,
+      `Chapter objective:\n${readText(input.chapterObjective)}`,
+      `Style profile:\n${readText(input.styleProfile)}`,
+      `Hierarchical context:\n${bundleContext}`,
       `Recent chapter summaries:\n${readText(input.recentChapterSummaries)}`,
       `Timeline notes:\n${readText(input.timelineNotes)}`,
-      `Glossary terms:\n${readText(input.glossaryTerms)}`,
+      `Glossary terms:\n${buildGlossaryGuard(input.glossaryTerms)}`,
       `GraphRAG nodes/edges tu Universe:\n${graphContext.join('\n')}`,
     ].join('\n\n'),
     normalize: normalizeContext,
@@ -925,7 +1108,15 @@ export async function runContextQuery(input: {
   });
   return {
     ...result,
+    payload: {
+      answer: applyGlossaryLocks(normalizeGeneratedText(result.payload.answer), input.glossaryTerms),
+      references: result.payload.references.map((ref) => ({
+        ...ref,
+        lineHint: normalizeGeneratedText(ref.lineHint),
+      })),
+    },
     graphContext,
+    bundleContext,
   };
 }
 
