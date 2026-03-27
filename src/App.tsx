@@ -5427,12 +5427,16 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
         4. Thế lực & Tổ chức: Các phe phái đối lập hoặc đồng minh.
         5. Phong cách hành văn gợi ý: Giọng văn, cách dùng từ.
         6. Các yếu tố đặc sắc khác.
+
+        Yêu cầu bắt buộc:
+        - Viết đủ 6 mục trên, mỗi mục tối thiểu 2-3 gạch đầu dòng rõ ràng.
+        - Không cắt ngắn giữa chừng, không bỏ mục.
         
         Trả về kết quả dưới dạng Markdown chuyên nghiệp, rõ ràng.`,
         {
-          maxOutputTokens: 3800,
-          minOutputChars: 320,
-          maxRetries: 2,
+          maxOutputTokens: 6400,
+          minOutputChars: 900,
+          maxRetries: 3,
         },
       );
 
