@@ -633,6 +633,21 @@ function storeWorkspaceRecoverySnapshot(snapshot: AccountWorkspaceSnapshot, sour
   }
 }
 
+function loadWorkspaceRecoverySnapshot(): AccountWorkspaceSnapshot | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(WORKSPACE_RECOVERY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { payload?: AccountWorkspaceSnapshot };
+    if (parsed?.payload && typeof parsed.payload === 'object') {
+      return parsed.payload as AccountWorkspaceSnapshot;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function buildAccountWorkspaceSnapshot(defaultName?: string, defaultAvatar?: string): AccountWorkspaceSnapshot {
   const meta = loadLocalWorkspaceMeta();
   return {
@@ -9067,11 +9082,26 @@ const AppContent = () => {
             : (remoteSnapshot.updatedAt || new Date(0).toISOString()),
         }
       : null;
-    const mergedSnapshot = remotePayload
-      ? mergeAccountWorkspaceSnapshots(localSnapshot, remotePayload)
-      : localSnapshot;
+  const mergedSnapshot = remotePayload
+    ? mergeAccountWorkspaceSnapshots(localSnapshot, remotePayload)
+    : localSnapshot;
 
-    const serialized = JSON.stringify(mergedSnapshot);
+    // Nếu cả local + remote đều trống phần stories/characters nhưng có recovery, ưu tiên recovery
+    if ((!mergedSnapshot.stories?.length || mergedSnapshot.stories.length === 0) && !mergedSnapshot.characters?.length) {
+      const recovery = loadWorkspaceRecoverySnapshot();
+      if (recovery && Array.isArray(recovery.stories) && recovery.stories.length > 0) {
+        mergedSnapshot.stories = recovery.stories;
+        mergedSnapshot.sectionUpdatedAt.stories = recovery.sectionUpdatedAt?.stories || recovery.updatedAt || new Date().toISOString();
+        mergedSnapshot.updatedAt = recovery.updatedAt || mergedSnapshot.updatedAt;
+        notifyApp({
+          tone: 'warn',
+          message: 'Đã khôi phục truyện từ bản sao lưu cục bộ.',
+          groupKey: 'account-sync-restore-recovery',
+        });
+      }
+    }
+
+  const serialized = JSON.stringify(mergedSnapshot);
     if (serialized === workspaceSyncRef.current.lastSerialized) return;
 
     const localSerialized = JSON.stringify(localSnapshot);
@@ -9114,9 +9144,24 @@ const AppContent = () => {
         if (cancelled) return;
 
         if (!remoteSnapshot.payload) {
-          await saveServerWorkspace(user.uid, localSnapshot);
-          storeWorkspaceRecoverySnapshot(localSnapshot, 'account-sync-bootstrap');
-          workspaceSyncRef.current.lastSerialized = localSerialized;
+          const recovery = loadWorkspaceRecoverySnapshot();
+          const snapshotToSave = recovery && Array.isArray(recovery.stories) && recovery.stories.length > 0
+            ? mergeAccountWorkspaceSnapshots(localSnapshot, recovery)
+            : localSnapshot;
+          await saveServerWorkspace(user.uid, snapshotToSave);
+          storeWorkspaceRecoverySnapshot(snapshotToSave, 'account-sync-bootstrap');
+          workspaceSyncRef.current.lastSerialized = JSON.stringify(snapshotToSave);
+          if (recovery && recovery.stories?.length) {
+            applyAccountWorkspaceSnapshot(snapshotToSave, user.displayName || undefined, user.photoURL || undefined);
+            setProfile(loadUiProfile(user.displayName || undefined, user.photoURL || undefined));
+            setThemeMode(loadThemeMode());
+            setViewportMode(loadViewportMode());
+            notifyApp({
+              tone: 'warn',
+              message: 'Đã khôi phục truyện từ bản sao lưu cục bộ và lưu lại lên tài khoản.',
+              groupKey: 'account-sync-restore-recovery',
+            });
+          }
           return;
         }
 
@@ -9124,7 +9169,19 @@ const AppContent = () => {
         const remoteUpdatedAt = typeof remoteData.updatedAt === 'string'
           ? remoteData.updatedAt
           : (remoteSnapshot.updatedAt || new Date(0).toISOString());
-        const mergedSnapshot = mergeAccountWorkspaceSnapshots(localSnapshot, { ...remoteData, updatedAt: remoteUpdatedAt });
+        let mergedSnapshot = mergeAccountWorkspaceSnapshots(localSnapshot, { ...remoteData, updatedAt: remoteUpdatedAt });
+
+        if ((!mergedSnapshot.stories?.length || mergedSnapshot.stories.length === 0) && !mergedSnapshot.characters?.length) {
+          const recovery = loadWorkspaceRecoverySnapshot();
+          if (recovery && Array.isArray(recovery.stories) && recovery.stories.length > 0) {
+            mergedSnapshot = mergeAccountWorkspaceSnapshots(mergedSnapshot, recovery);
+            notifyApp({
+              tone: 'warn',
+              message: 'Phát hiện dữ liệu trống, đã khôi phục truyện từ bản sao lưu cục bộ.',
+              groupKey: 'account-sync-restore-recovery',
+            });
+          }
+        }
         const mergedSerialized = JSON.stringify(mergedSnapshot);
 
         if (mergedSerialized !== localSerialized) {
