@@ -3,7 +3,7 @@ import { ChevronLeft, Trash2, Zap } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { AiProfileMode, ApiModelOption, ApiProvider, StoredApiKeyRecord } from '../../apiVault';
-import { PROVIDER_LABELS, PROVIDER_MODEL_OPTIONS } from '../../apiVault';
+import { API_PROVIDER_META, PROVIDER_LABELS, PROVIDER_MODEL_OPTIONS } from '../../apiVault';
 import { IMAGE_AI_PROVIDER_META, IMAGE_AI_PROVIDER_ORDER, type ImageAiProvider } from '../../imageAiProviders';
 
 function cn(...inputs: ClassValue[]) {
@@ -189,6 +189,8 @@ export function ApiSectionPanel({
   const lastSyncedRelayUrlCodeRef = React.useRef('');
   const imageProviderMeta = IMAGE_AI_PROVIDER_META[imageAiProvider];
   const imageModelOptions = imageProviderMeta.models;
+  const textProviderMeta = API_PROVIDER_META[effectiveDraftProvider === 'unknown' ? 'gemini' : effectiveDraftProvider];
+  const selectedTextModelMeta = availableDraftModels.find((item) => item.value === apiEntryModel);
 
   useEffect(() => {
     try {
@@ -259,7 +261,7 @@ export function ApiSectionPanel({
       <div className="flex items-center gap-3">
         <button onClick={onBack} className="p-2 rounded-full hover:bg-slate-100 transition-colors shrink-0"><ChevronLeft /></button>
         <div>
-          <h2 className="text-2xl font-serif font-bold">Kết nối AI</h2>
+          <h2 className="text-2xl font-serif font-bold">AI Văn bản</h2>
         </div>
       </div>
 
@@ -286,7 +288,7 @@ export function ApiSectionPanel({
             </div>
             <div className="min-w-0">
               <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold">Phương thức</p>
-              <h3 className="text-lg font-semibold text-white">Kết nối trực tiếp</h3>
+              <h3 className="text-lg font-semibold text-white">AI Văn bản</h3>
               <p className="text-xs text-slate-400">Phần Relay đang được ẩn tạm thời vì chưa đủ rõ ràng cho người dùng phổ thông.</p>
             </div>
           </div>
@@ -324,10 +326,41 @@ export function ApiSectionPanel({
                 className="tf-input"
               >
                 <option value="gemini">Gemini</option>
+                <option value="xai">xAI / Grok</option>
+                <option value="groq">Groq</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="mistral">Mistral AI</option>
                 <option value="openai">OpenAI</option>
                 <option value="anthropic">Anthropic</option>
                 <option value="custom">Custom</option>
               </select>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-slate-950/30 p-4 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-semibold text-white">{textProviderMeta.title}</p>
+                <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-semibold text-slate-200">
+                  {selectedTextModelMeta?.label || apiEntryModel || 'Chưa chọn model'}
+                </span>
+              </div>
+              <p className="text-sm text-slate-300">Ưu điểm: {textProviderMeta.strengths}</p>
+              <p className="text-sm text-amber-200">Điểm yếu / lưu ý: {textProviderMeta.tradeoffs}</p>
+              {selectedTextModelMeta ? (
+                <div className="rounded-xl border border-white/10 bg-slate-900/60 px-3 py-2 text-xs text-slate-300">
+                  {selectedTextModelMeta.description}
+                </div>
+              ) : null}
+              <div className="flex flex-wrap gap-3 text-sm">
+                {textProviderMeta.keyUrl ? (
+                  <a href={textProviderMeta.keyUrl} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">
+                    Lấy API key
+                  </a>
+                ) : null}
+                <a href={textProviderMeta.docsUrl} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">
+                  Xem tài liệu
+                </a>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

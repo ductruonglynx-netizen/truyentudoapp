@@ -600,7 +600,19 @@ function getApiRuntimeConfig(): ApiRuntimeConfig {
       relayToken: parsed.relayToken || '',
       relayUpdatedAt: parsed.relayUpdatedAt || '',
       aiProfile: parsed.aiProfile === 'economy' || parsed.aiProfile === 'quality' ? parsed.aiProfile : 'balanced',
-      selectedProvider: parsed.selectedProvider === 'gcli' || parsed.selectedProvider === 'openai' || parsed.selectedProvider === 'anthropic' || parsed.selectedProvider === 'custom' || parsed.selectedProvider === 'unknown' ? parsed.selectedProvider : 'gemini',
+      selectedProvider:
+        parsed.selectedProvider === 'gcli' ||
+        parsed.selectedProvider === 'openai' ||
+        parsed.selectedProvider === 'anthropic' ||
+        parsed.selectedProvider === 'xai' ||
+        parsed.selectedProvider === 'groq' ||
+        parsed.selectedProvider === 'deepseek' ||
+        parsed.selectedProvider === 'openrouter' ||
+        parsed.selectedProvider === 'mistral' ||
+        parsed.selectedProvider === 'custom' ||
+        parsed.selectedProvider === 'unknown'
+          ? parsed.selectedProvider
+          : 'gemini',
       selectedModel: parsed.selectedModel || '',
       activeApiKeyId: parsed.activeApiKeyId || '',
       enableCache: parsed.enableCache !== false,
@@ -806,30 +818,13 @@ function getProfileModel(kind: 'fast' | 'quality', provider?: ApiProvider): stri
   if (runtime.selectedModel && (!provider || resolvedProvider === provider || provider === 'unknown')) {
     return runtime.selectedModel;
   }
-  if (resolvedProvider === 'gemini') {
-    if (runtime.aiProfile === 'economy') return 'gemini-2.0-flash';
-    if (runtime.aiProfile === 'quality') return kind === 'fast' ? 'gemini-2.0-flash' : 'gemini-3.1-pro-preview';
-    return kind === 'fast' ? 'gemini-2.0-flash' : 'gemini-2.5-flash';
-  }
-  if (resolvedProvider === 'gcli') {
-    if (runtime.aiProfile === 'economy') return 'gemini-2.0-flash';
-    if (runtime.aiProfile === 'quality') return kind === 'fast' ? 'gemini-2.0-flash' : 'gemini-3.1-pro-preview';
-    return kind === 'fast' ? 'gemini-2.0-flash' : 'gemini-2.5-flash';
-  }
-  if (resolvedProvider === 'openai') {
-    if (runtime.aiProfile === 'economy') return 'gpt-4.1-mini';
-    if (runtime.aiProfile === 'quality') return 'gpt-4.1';
-    return kind === 'fast' ? 'gpt-4.1-mini' : 'gpt-4o';
-  }
-  if (resolvedProvider === 'anthropic') {
-    if (runtime.aiProfile === 'economy') return 'claude-3-5-haiku-latest';
-    if (runtime.aiProfile === 'quality') return 'claude-3-7-sonnet-latest';
-    return kind === 'fast' ? 'claude-3-5-haiku-latest' : 'claude-3-5-sonnet-latest';
-  }
   if (resolvedProvider === 'custom') {
     return runtime.selectedModel || 'custom-model';
   }
-  return getDefaultModelForProvider('gemini', runtime.aiProfile);
+  if (runtime.aiProfile === 'quality' && kind === 'fast') {
+    return getDefaultModelForProvider(resolvedProvider, 'balanced');
+  }
+  return getDefaultModelForProvider(resolvedProvider, runtime.aiProfile);
 }
 
 function readGeminiCache(): Record<string, { text: string; ts: number }> {
@@ -2236,8 +2231,16 @@ async function generateGeminiText(
           }
           const data = await resp.json();
           text = extractTextFromModelPayload(data) || '';
-        } else if (auth.provider === 'openai' || auth.provider === 'custom') {
-          const openAiBase = auth.baseUrl || getProviderBaseUrl(auth.provider === 'custom' ? 'custom' : 'openai');
+        } else if (
+          auth.provider === 'openai' ||
+          auth.provider === 'custom' ||
+          auth.provider === 'xai' ||
+          auth.provider === 'groq' ||
+          auth.provider === 'deepseek' ||
+          auth.provider === 'openrouter' ||
+          auth.provider === 'mistral'
+        ) {
+          const openAiBase = auth.baseUrl || getProviderBaseUrl(auth.provider);
           const completionEndpoint = /\/chat\/completions$/i.test(openAiBase)
             ? openAiBase
             : `${openAiBase.replace(/\/+$/, '')}/chat/completions`;
@@ -2246,6 +2249,10 @@ async function generateGeminiText(
           };
           if (auth.apiKey.trim()) {
             headers.Authorization = `Bearer ${auth.apiKey}`;
+          }
+          if (auth.provider === 'openrouter') {
+            headers['HTTP-Referer'] = typeof window !== 'undefined' ? window.location.origin : 'https://truyenforge.local';
+            headers['X-Title'] = 'TruyenForge';
           }
           const wantsJson = String(attemptConfig.responseMimeType || '').toLowerCase().includes('json');
           const bodyPayload: Record<string, unknown> = {
@@ -2264,7 +2271,10 @@ async function generateGeminiText(
           }, timeoutMs, splitConfig.signal);
           if (!resp.ok) {
             const body = await resp.text();
-            throw new Error(`${auth.provider === 'custom' ? 'Custom endpoint' : 'OpenAI'} error ${resp.status}: ${body.slice(0, 220)}`);
+            const providerLabel = auth.provider === 'custom'
+              ? 'Custom endpoint'
+              : (PROVIDER_LABELS[auth.provider] || 'OpenAI-compatible provider');
+            throw new Error(`${providerLabel} error ${resp.status}: ${body.slice(0, 220)}`);
           }
           const data = await resp.json();
           text = data?.choices?.[0]?.message?.content || extractTextFromModelPayload(data) || '';
@@ -3613,7 +3623,15 @@ const ToolsManager = ({
   }, []);
 
   const detectedDraftProvider = detectApiProviderFromValue(apiEntryText.trim());
-  const effectiveDraftProvider = detectedDraftProvider !== 'unknown' ? detectedDraftProvider : apiEntryProvider;
+  const autoDetectedDraftProvider =
+    detectedDraftProvider === 'gemini' ||
+    detectedDraftProvider === 'gcli' ||
+    detectedDraftProvider === 'anthropic' ||
+    detectedDraftProvider === 'groq' ||
+    detectedDraftProvider === 'openrouter'
+      ? detectedDraftProvider
+      : 'unknown';
+  const effectiveDraftProvider = autoDetectedDraftProvider !== 'unknown' ? autoDetectedDraftProvider : apiEntryProvider;
   const displayedDraftProvider = effectiveDraftProvider === 'gcli' ? 'gemini' : effectiveDraftProvider;
   const availableDraftModels = effectiveDraftProvider === 'unknown' ? [] : PROVIDER_MODEL_OPTIONS[effectiveDraftProvider];
   const currentApiEntry = apiVault.find((item) => item.id === activeApiKeyId) || getActiveApiKeyRecord(apiVault);
@@ -3699,7 +3717,9 @@ const ToolsManager = ({
     const raw = apiEntryText.trim();
     if (!raw) return;
     const detected = detectApiProviderFromValue(raw);
-    const provider = detected !== 'unknown' ? detected : apiEntryProvider;
+    const provider = detected === 'gemini' || detected === 'gcli' || detected === 'anthropic' || detected === 'groq' || detected === 'openrouter'
+      ? detected
+      : apiEntryProvider;
     const key = provider === 'gcli' ? (extractGcliTokenFromText(raw) || raw.replace(/^Bearer\s+/i, '').trim()) : raw;
     const model = (provider === 'custom' ? apiEntryModel.trim() : apiEntryModel) || getDefaultModelForProvider(provider, aiProfile);
     const baseUrl = apiEntryBaseUrl.trim() || getProviderBaseUrl(provider);
