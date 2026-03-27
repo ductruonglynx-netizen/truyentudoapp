@@ -84,11 +84,8 @@ npm run build
 
 ## Lịch sử cập nhật
 ### v0.1b
-- Dọn lại toàn bộ khu `Sao lưu & khôi phục` theo hướng tự nhiên và dễ hiểu hơn: đổi tên các nút, các trạng thái Google Drive và phần mô tả để bớt cảm giác “mùi dev”.
-- Giữ đúng một file sao lưu hiện hành trên Google Drive cho mỗi tài khoản đã liên kết, không tiếp tục tạo thêm file mới mỗi lần sao lưu.
-- Làm rõ luồng `Liên kết Google Drive` để một tài khoản TruyenForge chỉ đi với đúng một Gmail, giảm nguy cơ lưu nhầm dữ liệu sang tài khoản khác.
-- Sửa phần lịch sử sao lưu để các cảnh báo cũ không còn làm người dùng tưởng rằng app vẫn thiếu cấu hình sau khi đã thêm biến môi trường và redeploy.
-- Nâng phiên bản hiển thị lên `0.1b`.
+- Sửa một vài lỗi nhỏ trong giao diện và cách hiển thị trạng thái để trải nghiệm sử dụng ổn định, dễ hiểu và gọn gàng hơn.
+- Bổ sung hệ thống sao lưu lên Google Drive để dữ liệu quan trọng luôn có thêm một lớp bảo vệ, giúp yên tâm hơn khi viết, chỉnh sửa và lưu trữ truyện.
 
 ### v0.1a
 - Chuyển hệ lưu trữ tài khoản từ Firestore/Google sang Supabase để truyện, nhân vật, AI Rules, từ điển dịch và cấu hình làm việc được đồng bộ về một backend thống nhất hơn.
