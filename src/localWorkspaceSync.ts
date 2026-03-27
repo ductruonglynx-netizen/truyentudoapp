@@ -2,6 +2,9 @@ export const LOCAL_WORKSPACE_CHANGED_EVENT = 'truyenforge:local-workspace-change
 const LOCAL_WORKSPACE_META_KEY = 'truyenforge:local-workspace-meta-v1';
 
 export type LocalWorkspaceSection =
+  | 'stories'
+  | 'characters'
+  | 'ai_rules'
   | 'style_references'
   | 'translation_names'
   | 'prompt_library'

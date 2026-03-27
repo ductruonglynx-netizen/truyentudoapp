@@ -15,6 +15,8 @@ export const WRITER_RELEASE_NOTES: ReleaseNote[] = [
     dateLabel: '2026-03-27',
     title: 'Tăng AI trust, quan sát tiến trình và độ rõ ràng của workflow',
     items: [
+      'Chuyển lưu trữ workspace tài khoản từ Firestore/Google sang Supabase: truyện, nhân vật, AI Rules, từ điển dịch, văn mẫu và các cấu hình cục bộ giờ đồng bộ về một server thống nhất hơn.',
+      'Bổ sung schema Supabase mẫu cho user_workspaces và qa_reports để việc triển khai backend lưu trữ mới rõ ràng, dễ kiểm tra và ít phụ thuộc hơn vào cấu hình cũ của Firebase.',
       'Nâng overlay AI để hiển thị rõ giai đoạn xử lý, tiến độ thực tế và phần việc đang chạy thay vì chỉ có spinner và số giây.',
       'Làm hệ thống thông báo bớt ồn hơn: gom nhóm toast trùng lặp, giới hạn số lượng hiển thị và cho phép đóng tay khi cần.',
       'Sửa Kho Prompt theo hướng dễ tin cậy hơn: có trạng thái Chưa lưu/Đã đồng bộ, tự động lưu khi đổi mục hoặc đóng modal, đồng thời nút Lưu chỉ sáng khi thực sự có thay đổi.',

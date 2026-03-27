@@ -2,8 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth, AuthProvider } from './AuthContext';
 import { supabase, hasSupabase } from './supabaseClient';
 import { storage } from './storage';
-import { db } from './firebase';
-import { collection, addDoc, getDocs, query, where, getDocFromServer, doc, Timestamp, updateDoc, orderBy, onSnapshot, setDoc } from 'firebase/firestore';
 import { 
   Plus, 
   LogOut, 
@@ -59,6 +57,7 @@ import { CURRENT_WRITER_VERSION, WRITER_RELEASE_NOTES } from './phase3/releaseHi
 import { APP_NOTICE_EVENT, notifyApp, type AppNoticePayload, type AppNoticeTone } from './notifications';
 import { loadPromptLibraryState, savePromptLibraryState, type PromptLibraryState } from './promptLibraryStore';
 import { LOCAL_WORKSPACE_CHANGED_EVENT, emitLocalWorkspaceChanged, loadLocalWorkspaceMeta, markLocalWorkspaceHydrated } from './localWorkspaceSync';
+import { loadServerWorkspace, saveQaReport, saveServerWorkspace, SUPABASE_STORAGE_TABLES } from './supabaseWorkspace';
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
@@ -379,6 +378,9 @@ interface AccountWorkspaceSnapshot {
   uiProfile: UiProfile;
   uiTheme: ThemeMode;
   uiViewportMode: ViewportMode;
+  stories: Story[];
+  characters: Character[];
+  aiRules: AIRule[];
   styleReferences: any[];
   translationNames: any[];
   promptLibrary: PromptLibraryState;
@@ -393,6 +395,9 @@ function buildAccountWorkspaceSnapshot(defaultName?: string, defaultAvatar?: str
     uiProfile: loadUiProfile(defaultName, defaultAvatar),
     uiTheme: loadThemeMode(),
     uiViewportMode: loadViewportMode(),
+    stories: storage.getStories(),
+    characters: storage.getCharacters(),
+    aiRules: storage.getAIRules(),
     styleReferences: storage.getStyleReferences(),
     translationNames: storage.getTranslationNames(),
     promptLibrary: loadPromptLibraryState(),
@@ -413,6 +418,15 @@ function applyAccountWorkspaceSnapshot(snapshot: Partial<AccountWorkspaceSnapsho
   }
   if (snapshot.uiViewportMode === 'desktop' || snapshot.uiViewportMode === 'mobile') {
     saveViewportMode(snapshot.uiViewportMode);
+  }
+  if (Array.isArray(snapshot.stories)) {
+    storage.saveStories(snapshot.stories);
+  }
+  if (Array.isArray(snapshot.characters)) {
+    storage.saveCharacters(snapshot.characters);
+  }
+  if (Array.isArray(snapshot.aiRules)) {
+    storage.saveAIRules(snapshot.aiRules);
   }
   if (Array.isArray(snapshot.styleReferences)) {
     storage.saveStyleReferences(snapshot.styleReferences);
@@ -622,6 +636,13 @@ function normalizeChaptersForLocal<T extends { createdAt?: unknown }>(chapters: 
 function bumpStoriesVersion(): void {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new Event(STORIES_UPDATED_EVENT));
+}
+
+function createClientId(prefix: string): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function extractRelayPayload(rawMessage: string): { longId: string; codeId: string; token: string } {
@@ -3811,18 +3832,16 @@ const ToolsManager = ({
       responseMimeType: 'application/json',
     });
     const parsed = parseQaJson(result).length ? parseQaJson(result) : parseQaBullets(result);
-    // Lưu Firestore nếu có user
     if (user?.uid) {
       try {
-        await addDoc(collection(db, 'qa_reports'), {
-          authorId: user.uid,
+        await saveQaReport(user.uid, {
           textPreview: text.slice(0, 500),
           issueCount: parsed.length,
           issues: parsed,
-          createdAt: Timestamp.now(),
+          createdAt: new Date().toISOString(),
         });
       } catch (err) {
-        console.warn('Lưu QA report thất bại', err);
+        console.warn('Lưu QA report lên Supabase thất bại', err);
       }
     }
     return parsed;
@@ -3847,17 +3866,10 @@ const ToolsManager = ({
     if (!user) return;
     setIsExporting(true);
     try {
-      // Fetch all stories and characters
-      const storiesQ = query(collection(db, 'stories'), where('authorId', '==', user.uid));
-      const charsQ = query(collection(db, 'characters'), where('authorId', '==', user.uid));
-      
-      const storiesDocs = await getDocs(storiesQ);
-      const charsDocs = await getDocs(charsQ);
-
       const data = {
         exportDate: new Date().toISOString(),
-        stories: storiesDocs.docs.map(d => ({ id: d.id, ...d.data() })),
-        characters: charsDocs.docs.map(d => ({ id: d.id, ...d.data() })),
+        stories: storage.getStories().filter((story: Story) => story.authorId === user.uid),
+        characters: storage.getCharacters().filter((character: Character) => character.authorId === user.uid),
       };
 
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -3890,11 +3902,17 @@ const ToolsManager = ({
         const text = await file.text();
         const data = JSON.parse(text);
         if (window.confirm(`Bạn có muốn nhập ${data.stories?.length || 0} truyện và ${data.characters?.length || 0} nhân vật?`)) {
-          const newStories = [];
+          const newStories: Story[] = [];
           for (const story of (data.stories || [])) {
             const { id, ...rest } = story;
-            const docRef = await addDoc(collection(db, 'stories'), { ...rest, authorId: user.uid, updatedAt: Timestamp.now() });
-            newStories.push({ ...rest, id: docRef.id, authorId: user.uid, updatedAt: new Date().toISOString() });
+            newStories.push({
+              ...rest,
+              id: createClientId('story'),
+              authorId: user.uid,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              chapters: normalizeChaptersForLocal(Array.isArray(rest.chapters) ? rest.chapters : []),
+            } as Story);
           }
           if (newStories.length > 0) {
             const stories = storage.getStories();
@@ -3902,11 +3920,15 @@ const ToolsManager = ({
             bumpStoriesVersion();
           }
 
-          const newChars = [];
+          const newChars: Character[] = [];
           for (const char of (data.characters || [])) {
             const { id, ...rest } = char;
-            const docRef = await addDoc(collection(db, 'characters'), { ...rest, authorId: user.uid, createdAt: Timestamp.now() });
-            newChars.push({ ...rest, id: docRef.id, authorId: user.uid, createdAt: new Date().toISOString() });
+            newChars.push({
+              ...rest,
+              id: createClientId('char'),
+              authorId: user.uid,
+              createdAt: new Date().toISOString(),
+            } as Character);
           }
           if (newChars.length > 0) {
             const chars = storage.getCharacters();
@@ -3925,17 +3947,9 @@ const ToolsManager = ({
           throw new Error("File .docx không có nội dung văn bản.");
         }
 
-        const docRef = await addDoc(collection(db, 'stories'), {
-          authorId: user.uid,
-          title: String(file.name).replace(/\.docx$/i, '').substring(0, 480),
-          content: String(text).substring(0, 1999900),
-          isPublic: false,
-          createdAt: Timestamp.now(),
-          updatedAt: Timestamp.now(),
-        });
         const stories = storage.getStories();
         storage.saveStories([{
-          id: docRef.id,
+          id: createClientId('story'),
           authorId: user.uid,
           title: String(file.name).replace(/\.docx$/i, '').substring(0, 480),
           content: String(text).substring(0, 1999900),
@@ -3952,17 +3966,9 @@ const ToolsManager = ({
         if (!text.trim()) {
           throw new Error("File .txt không có nội dung.");
         }
-        const docRef = await addDoc(collection(db, 'stories'), {
-          authorId: user.uid,
-          title: String(file.name).replace(/\.txt$/i, '').substring(0, 480),
-          content: String(text).substring(0, 1999900),
-          isPublic: false,
-          createdAt: Timestamp.now(),
-          updatedAt: Timestamp.now(),
-        });
         const stories = storage.getStories();
         storage.saveStories([{
-          id: docRef.id,
+          id: createClientId('story'),
           authorId: user.uid,
           title: String(file.name).replace(/\.txt$/i, '').substring(0, 480),
           content: String(text).substring(0, 1999900),
@@ -6375,11 +6381,11 @@ const AIContinueStoryModal = ({
 
   useEffect(() => {
     if (isOpen && user) {
-      const q = query(collection(db, 'ai_rules'), where('authorId', '==', user.uid));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        setAiRules(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as AIRule)));
-      });
-      return unsubscribe;
+      const rules = storage
+        .getAIRules()
+        .filter((rule: AIRule) => rule.authorId === user.uid)
+        .sort((a: AIRule, b: AIRule) => new Date(String(b.createdAt || 0)).getTime() - new Date(String(a.createdAt || 0)).getTime());
+      setAiRules(rules);
     }
   }, [isOpen, user]);
 
@@ -6982,31 +6988,15 @@ const AIGenerationModal = ({
 
   useEffect(() => {
     if (isOpen && user) {
-      const q = query(
-        collection(db, 'characters'),
-        where('authorId', '==', user.uid)
-      );
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const list: Character[] = [];
-        snapshot.forEach((doc) => {
-          list.push({ id: doc.id, ...doc.data() } as Character);
-        });
-        setCharacters(list);
-      });
-
-      const qRules = query(
-        collection(db, 'ai_rules'),
-        where('authorId', '==', user.uid),
-        orderBy('createdAt', 'desc')
-      );
-      const unsubscribeRules = onSnapshot(qRules, (snapshot) => {
-        setAiRules(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AIRule)));
-      });
-
-      return () => {
-        unsubscribe();
-        unsubscribeRules();
-      };
+      const nextCharacters = storage
+        .getCharacters()
+        .filter((character: Character) => character.authorId === user.uid);
+      const nextRules = storage
+        .getAIRules()
+        .filter((rule: AIRule) => rule.authorId === user.uid)
+        .sort((a: AIRule, b: AIRule) => new Date(String(b.createdAt || 0)).getTime() - new Date(String(a.createdAt || 0)).getTime());
+      setCharacters(nextCharacters);
+      setAiRules(nextRules);
     }
   }, [isOpen, user]);
 
@@ -7874,16 +7864,16 @@ const AppContent = () => {
   }, []);
 
   const syncWorkspaceToAccount = useCallback(async () => {
-    if (!user || workspaceSyncRef.current.isHydrating) return;
+    if (!user || !hasSupabase || workspaceSyncRef.current.isHydrating) return;
     const payload = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined);
     const serialized = JSON.stringify(payload);
     if (serialized === workspaceSyncRef.current.lastSerialized) return;
-    await setDoc(doc(db, 'user_settings', user.uid), payload, { merge: true });
+    await saveServerWorkspace(user.uid, payload);
     workspaceSyncRef.current.lastSerialized = serialized;
-  }, [user]);
+  }, [user, hasSupabase]);
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !hasSupabase) {
       workspaceSyncRef.current.lastSerialized = '';
       workspaceSyncRef.current.isHydrating = false;
       return;
@@ -7896,22 +7886,19 @@ const AppContent = () => {
         const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined);
         const localSerialized = JSON.stringify(localSnapshot);
         const localUpdatedAt = new Date(localSnapshot.updatedAt || new Date(0).toISOString()).getTime();
-        const workspaceRef = doc(db, 'user_settings', user.uid);
-        const remoteSnapshot = await getDocFromServer(workspaceRef);
+        const remoteSnapshot = await loadServerWorkspace<AccountWorkspaceSnapshot>(user.uid);
         if (cancelled) return;
 
-        if (!remoteSnapshot.exists()) {
-          await setDoc(workspaceRef, localSnapshot, { merge: true });
+        if (!remoteSnapshot.payload) {
+          await saveServerWorkspace(user.uid, localSnapshot);
           workspaceSyncRef.current.lastSerialized = localSerialized;
           return;
         }
 
-        const remoteData = remoteSnapshot.data() as Partial<AccountWorkspaceSnapshot> & { updatedAt?: any };
+        const remoteData = remoteSnapshot.payload as Partial<AccountWorkspaceSnapshot>;
         const remoteUpdatedAt = typeof remoteData.updatedAt === 'string'
           ? remoteData.updatedAt
-          : (remoteData.updatedAt && typeof remoteData.updatedAt.toDate === 'function'
-            ? remoteData.updatedAt.toDate().toISOString()
-            : new Date(0).toISOString());
+          : (remoteSnapshot.updatedAt || new Date(0).toISOString());
         const remoteUpdatedMs = new Date(remoteUpdatedAt).getTime();
 
         if (remoteUpdatedMs > localUpdatedAt) {
@@ -7928,13 +7915,13 @@ const AppContent = () => {
           return;
         }
 
-        await setDoc(workspaceRef, localSnapshot, { merge: true });
+        await saveServerWorkspace(user.uid, localSnapshot);
         workspaceSyncRef.current.lastSerialized = localSerialized;
       } catch (error) {
         console.warn('Không thể đồng bộ workspace theo tài khoản.', error);
         notifyApp({
           tone: 'warn',
-          message: 'Không thể đồng bộ dữ liệu cục bộ lên tài khoản ở thời điểm này.',
+          message: hasSupabase ? `Không thể đồng bộ dữ liệu lên Supabase (${SUPABASE_STORAGE_TABLES.workspaces}).` : 'Không thể đồng bộ dữ liệu cục bộ lên tài khoản ở thời điểm này.',
           detail: error instanceof Error ? error.message : undefined,
           groupKey: 'account-sync-failed',
           timeoutMs: 4800,
@@ -7948,10 +7935,10 @@ const AppContent = () => {
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [user, hasSupabase]);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !user) return;
+    if (typeof window === 'undefined' || !user || !hasSupabase) return;
     let syncTimer: number | null = null;
     const handler = () => {
       if (workspaceSyncRef.current.isHydrating) return;
@@ -7967,7 +7954,7 @@ const AppContent = () => {
       if (syncTimer) window.clearTimeout(syncTimer);
       window.removeEventListener(LOCAL_WORKSPACE_CHANGED_EVENT, handler as EventListener);
     };
-  }, [syncWorkspaceToAccount, user]);
+  }, [syncWorkspaceToAccount, user, hasSupabase]);
 
   const readImportedStoryFile = async (file: File): Promise<string> => {
     if (file.name.endsWith('.pdf')) return parsePDF(file);
@@ -8078,12 +8065,6 @@ const AppContent = () => {
     setViewportMode((prev) => (prev === 'desktop' ? 'mobile' : 'desktop'));
   };
 
-  const isFirestorePermissionError = (err: unknown): boolean => {
-    const message = err instanceof Error ? err.message : String(err || '');
-    const code = (err as { code?: string })?.code;
-    return code === 'permission-denied' || message.includes('Missing or insufficient permissions');
-  };
-
   const handleTranslateStory = async (options: {
     isAdult: boolean,
     additionalInstructions: string,
@@ -8104,22 +8085,13 @@ const AppContent = () => {
       
       let dictionaryEntries: TranslationDictionaryEntry[] = [];
       if (options.useDictionary) {
-        try {
-          const q = query(collection(db, 'translation_names'), where('authorId', '==', user.uid));
-          const namesSnapshot = await getDocs(q);
-          const names = normalizeTranslationDictionary(namesSnapshot.docs.map(doc => doc.data() as { original?: string; translation?: string }));
-          if (names.length > 0) {
-            dictionaryEntries = names;
-          }
-        } catch (err) {
-          if (isFirestorePermissionError(err)) {
-            const names = normalizeTranslationDictionary(storage.getTranslationNames());
-            if (names.length > 0) {
-              dictionaryEntries = names;
-            }
-          } else {
-            console.warn("Không thể tải từ điển tên riêng", err);
-          }
+        const names = normalizeTranslationDictionary(
+          storage
+            .getTranslationNames()
+            .filter((entry: TranslationName) => entry.authorId === user.uid),
+        );
+        if (names.length > 0) {
+          dictionaryEntries = names;
         }
       }
       const storyTranslationMemory = normalizeTranslationDictionary(dictionaryEntries);
@@ -8225,30 +8197,7 @@ const AppContent = () => {
         };
       }
       
-      // 2. Create the story record
-      let storyRef: ReturnType<typeof doc> | null = null;
-      try {
-        storyRef = await addDoc(collection(db, 'stories'), {
-          authorId: user.uid,
-          title: String(translateFileName || "Truyện dịch").replace(/\.[^/.]+$/, "").substring(0, 480) + " (Bản dịch)",
-          content: String(translateFileContent || "").substring(0, 5000) + "...",
-          introduction: String(analysis.summary || "").substring(0, 4900),
-          genre: String(analysis.genre || "Dịch thuật").substring(0, 190),
-          type: 'translated',
-          isAdult: Boolean(options.isAdult),
-          isPublic: false,
-          translationMemory: storyTranslationMemory,
-          createdAt: Timestamp.now(),
-          updatedAt: Timestamp.now(),
-          chapters: []
-        });
-      } catch (err) {
-        if (isFirestorePermissionError(err)) {
-          console.warn("Không có quyền Firestore, sẽ lưu cục bộ.", err);
-        } else {
-          throw err;
-        }
-      }
+      const storyId = createClientId('story');
 
       // 3. Split content into chapters/chunks and translate
       const maxTranslateChunks = effectiveUnits.length;
@@ -8494,11 +8443,11 @@ const AppContent = () => {
         if (!mergedChapterContent) return null;
 
         return {
-          id: `tr-${Date.now()}-${chapterIndex}`,
+          id: createClientId('chapter'),
           title: translatedTitle,
           content: mergedChapterContent,
           order: chapterIndex + 1,
-          createdAt: Timestamp.now()
+          createdAt: new Date().toISOString(),
         } as Chapter;
       });
       const translatedChapters = chapterResults.filter((chapter): chapter is Chapter => Boolean(chapter));
@@ -8507,25 +8456,10 @@ const AppContent = () => {
         throw new Error('Không thể nhận diện nội dung hợp lệ để dịch. Vui lòng kiểm tra lại file nguồn.');
       }
 
-      if (storyRef) {
-        try {
-          await updateDoc(storyRef, {
-            chapters: translatedChapters,
-            updatedAt: Timestamp.now()
-          });
-        } catch (err) {
-          if (isFirestorePermissionError(err)) {
-            console.warn("Không có quyền Firestore khi cập nhật chương, đã lưu cục bộ.", err);
-          } else {
-            throw err;
-          }
-        }
-      }
-
       // Save to local storage so it shows up in the UI
       const localChapters = normalizeChaptersForLocal(translatedChapters);
       const newStory = {
-        id: storyRef ? storyRef.id : `local-${Date.now()}`,
+        id: storyId,
         authorId: user.uid,
         title: String(translateFileName || "Truyện dịch").replace(/\.[^/.]+$/, "").substring(0, 480) + " (Bản dịch)",
         content: String(translateFileContent || "").substring(0, 5000) + "...",
@@ -8586,13 +8520,11 @@ const AppContent = () => {
     try {
       let finalInstructions = options.additionalInstructions;
       if (options.selectedRuleId) {
-        try {
-          const ruleDoc = await getDocFromServer(doc(db, 'ai_rules', options.selectedRuleId));
-          if (ruleDoc.exists()) {
-            finalInstructions = ruleDoc.data().content + "\n\n" + finalInstructions;
-          }
-        } catch (e) {
-          console.warn("Could not fetch AI rule", e);
+        const selectedRule = storage
+          .getAIRules()
+          .find((rule: AIRule) => rule.id === options.selectedRuleId && rule.authorId === user.uid);
+        if (selectedRule?.content) {
+          finalInstructions = selectedRule.content + "\n\n" + finalInstructions;
         }
       }
 
@@ -8687,19 +8619,7 @@ const AppContent = () => {
       }
       
       // 3. Create the story
-      const storyRef = await addDoc(collection(db, 'stories'), {
-        authorId: user.uid,
-        title: String(continueFileName || "Truyện viết tiếp").replace(/\.[^/.]+$/, "").substring(0, 480) + " (Viết tiếp)",
-        content: String(continueFileContent || "").substring(0, 5000) + "...", // Store a snippet as content
-        introduction: String(analysis.summary || "").substring(0, 4900),
-        genre: "Viết tiếp",
-        type: 'continued',
-        isAdult: Boolean(options.isAdult),
-        isPublic: false,
-        createdAt: Timestamp.now(),
-        updatedAt: Timestamp.now(),
-        chapters: []
-      });
+      const storyId = createClientId('story');
 
       // 4. Generate chapters
       const generatedChapters: Chapter[] = [];
@@ -8772,23 +8692,18 @@ const AppContent = () => {
         }
 
         generatedChapters.push({
-          id: `ch-${Date.now()}-${i}`,
+          id: createClientId('chapter'),
           title: ch.title,
           content: chapterText || '',
           order: i + 1,
-          createdAt: Timestamp.now()
+          createdAt: new Date().toISOString(),
         });
       }
-
-      await updateDoc(storyRef, {
-        chapters: generatedChapters,
-        updatedAt: Timestamp.now()
-      });
 
       // Save to local storage so it shows up in the UI
       const localChapters = normalizeChaptersForLocal(generatedChapters);
       const newStory = {
-        id: storyRef.id,
+        id: storyId,
         authorId: user.uid,
         title: String(continueFileName || "Truyện viết tiếp").replace(/\.[^/.]+$/, "").substring(0, 480) + " (Viết tiếp)",
         content: String(continueFileContent || "").substring(0, 5000) + "...",
@@ -8858,23 +8773,20 @@ const AppContent = () => {
     try {
       let finalInstructions = aiInstructions;
       if (selectedRuleId) {
-        try {
-          const ruleDoc = await getDocFromServer(doc(db, 'ai_rules', selectedRuleId));
-          if (ruleDoc.exists()) {
-            finalInstructions = ruleDoc.data().content + "\n\n" + finalInstructions;
-          }
-        } catch (e) {
-          console.warn("Could not fetch AI rule", e);
+        const selectedRule = storage
+          .getAIRules()
+          .find((rule: AIRule) => rule.id === selectedRuleId && rule.authorId === user.uid);
+        if (selectedRule?.content) {
+          finalInstructions = selectedRule.content + "\n\n" + finalInstructions;
         }
       }
 
       // Fetch character details
       let charContext = "";
       if (selectedCharacters.length > 0) {
-        const charDocs = await getDocs(query(collection(db, 'characters'), where('authorId', '==', user.uid)));
-        const selectedChars = charDocs.docs
-          .map(d => ({ id: d.id, ...d.data() } as Character))
-          .filter(c => selectedCharacters.includes(c.id));
+        const selectedChars = storage
+          .getCharacters()
+          .filter((character: Character) => character.authorId === user.uid && selectedCharacters.includes(character.id));
         
         charContext = selectedChars.map(c => 
           `Nhân vật: ${c.name}\nNgoại hình: ${c.appearance}\nTính cách: ${c.personality}`
@@ -9010,11 +8922,11 @@ const AppContent = () => {
         const sourceContent = typeof c === 'object' && c ? String((c as any).content || '') : String(c || '');
         const normalizedChapter = normalizeAiJsonContent(sourceContent, sourceTitle || `Chương mới ${i + 1}`);
         const chapter: any = {
-          id: Math.random().toString(36).substr(2, 9),
+          id: createClientId('chapter'),
           title: String(sourceTitle || normalizedChapter.title || `Chương mới ${i + 1}`),
           content: String(normalizedChapter.content || sourceContent || '').replace(/\]\s*\[/g, ']\n\n['), // Tự động xuống dòng đôi giữa các ngoặc vuông để Markdown nhận diện
           order: nextOrder + i,
-          createdAt: Timestamp.now(),
+          createdAt: new Date().toISOString(),
         };
         if (i === 0 && aiInstructions) chapter.aiInstructions = aiInstructions;
         if (i === 0 && chapterScript) chapter.script = chapterScript;
@@ -9022,11 +8934,6 @@ const AppContent = () => {
       });
 
       const updatedChapters = [...currentChapters, ...newChapters];
-      
-      await updateDoc(doc(db, 'stories', selectedStory.id), {
-        chapters: updatedChapters,
-        updatedAt: Timestamp.now(),
-      });
 
       // Save to local storage
       const stories = storage.getStories();
@@ -9257,27 +9164,7 @@ const AppContent = () => {
       if (!resolvedTitle) resolvedTitle = 'Truyện mới';
 
       if (resolvedTitle && resolvedContent) {
-        let storyId = `local-${Date.now()}`;
-        try {
-          const storyRef = await addDoc(collection(db, 'stories'), {
-            authorId: user.uid,
-            title: resolvedTitle.substring(0, 480),
-            content: resolvedContent.replace(/\]\s*\[/g, ']\n\n[').substring(0, 1999900), // Tự động xuống dòng đôi giữa các ngoặc vuông để Markdown nhận diện
-            genre: String(genre || 'Tự do').substring(0, 190),
-            isAdult: Boolean(isAdult),
-            isPublic: false,
-            isAI: true,
-            createdAt: Timestamp.now(),
-            updatedAt: Timestamp.now(),
-          });
-          storyId = storyRef.id;
-        } catch (err) {
-          if (isFirestorePermissionError(err)) {
-            console.warn("Không có quyền Firestore, sẽ lưu cục bộ.", err);
-          } else {
-            throw err;
-          }
-        }
+        const storyId = createClientId('story');
 
         // Save to local storage
         const newStory = {

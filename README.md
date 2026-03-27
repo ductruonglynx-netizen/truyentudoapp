@@ -30,6 +30,16 @@ npm run dev
 # mở http://localhost:3000
 ```
 
+## Cấu hình Supabase
+- App hiện dùng Supabase cho đăng nhập và lưu trữ workspace tài khoản thay cho Firestore/Google.
+- Khai báo biến môi trường trong `.env`:
+  - `VITE_SUPABASE_URL`
+  - `VITE_SUPABASE_ANON_KEY`
+  - `VITE_SUPABASE_WORKSPACES_TABLE` mặc định `user_workspaces`
+  - `VITE_SUPABASE_QA_REPORTS_TABLE` mặc định `qa_reports`
+- Chạy SQL khởi tạo ở [supabase/schema.sql](/Users/phand/Downloads/ai/truyentudoapp/supabase/schema.sql) trong Supabase SQL Editor trước khi test autosync.
+- Workspace tài khoản sẽ lưu chung các mục: truyện, nhân vật, AI Rules, từ điển dịch, văn mẫu, prompt library, hồ sơ giao diện và cấu hình budget AI.
+
 ## Chế độ demo theo phase (route query)
 - Phase 0 demo: `/?phase0=1`
 - Phase 1 Translator MVP: `/?phase1=1`
@@ -71,6 +81,8 @@ npm run build
 
 ## Lịch sử cập nhật
 ### v0.1a
+- Chuyển hệ lưu trữ tài khoản từ Firestore/Google sang Supabase để truyện, nhân vật, AI Rules, từ điển dịch và cấu hình làm việc được đồng bộ về một backend thống nhất hơn.
+- Thêm file khởi tạo [supabase/schema.sql](/Users/phand/Downloads/ai/truyentudoapp/supabase/schema.sql) cho `user_workspaces` và `qa_reports`, giúp dựng server lưu trữ mới nhanh hơn.
 - Nâng khả năng quan sát khi AI chạy: overlay giờ hiển thị rõ giai đoạn, phần việc hiện tại và tiến độ thực thay vì chỉ có spinner + số giây.
 - Làm thông báo trong app bớt ồn hơn bằng cách gom nhóm các toast trùng lặp, giới hạn số lượng hiển thị và cho phép đóng tay khi cần.
 - Cải thiện `Kho Prompt`: có trạng thái `Chưa lưu` / `Đã đồng bộ`, tự động lưu khi đổi mục hoặc đóng, và nút `Lưu thay đổi` chỉ bật khi thật sự có chỉnh sửa.

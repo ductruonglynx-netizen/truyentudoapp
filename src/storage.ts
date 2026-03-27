@@ -76,14 +76,17 @@ export const storage = {
   },
   saveStories: (stories: any[]) => {
     localStorage.setItem('stories', JSON.stringify(stories));
+    emitLocalWorkspaceChanged('stories');
   },
   getCharacters: () => safeParseArray(localStorage.getItem('characters')),
   saveCharacters: (characters: any[]) => {
     localStorage.setItem('characters', JSON.stringify(characters));
+    emitLocalWorkspaceChanged('characters');
   },
   getAIRules: () => safeParseArray(localStorage.getItem('ai_rules')),
   saveAIRules: (rules: any[]) => {
     localStorage.setItem('ai_rules', JSON.stringify(rules));
+    emitLocalWorkspaceChanged('ai_rules');
   },
   getStyleReferences: () => safeParseArray(localStorage.getItem('style_references')),
   saveStyleReferences: (refs: any[]) => {
