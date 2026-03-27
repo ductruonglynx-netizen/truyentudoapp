@@ -16,6 +16,19 @@ export interface PromptLibraryState {
 
 const PROMPT_LIBRARY_STORAGE_KEY = 'prompt_library_v1';
 
+const DEFAULT_ADULT_PROMPTS: PromptLibraryItem[] = [
+  {
+    id: 'adult-ancient',
+    title: '18+ · Cổ đại / Tiên hiệp',
+    content: '- Giọng văn: cổ phong, quyến rũ, giàu sức gợi nhưng vẫn mềm và sang.\n- Xưng hô: giữ tôn ti, thân phận và chất cổ đại; tránh từ hiện đại hoặc quá thô.\n- Nội tâm: đào sâu cảm giác kìm nén, cấm dục, rung động, chiếm hữu, day dứt, cảm giác phạm giới hoặc vượt lễ pháp.\n- Miêu tả: tập trung ánh mắt, tay áo, đầu ngón tay, hơi thở, vạt áo, tóc, nhiệt độ da, khí tức, linh lực dao động.\n- Nhịp cảnh: chậm ở mở đầu, căng dần ở phần tiếp xúc, cao trào phải có cảm giác mất kiểm soát nhưng vẫn liền mạch.\n- Dư âm: sau cảnh thân mật cần có xấu hổ, chấp niệm, ràng buộc, tâm ma hoặc thay đổi quan hệ.\n- Cấm: dùng tiếng lóng hiện đại, câu chữ chợ búa, mô tả cơ học như liệt kê động tác.',
+  },
+  {
+    id: 'adult-modern',
+    title: '18+ · Đô thị / Hiện đại',
+    content: '- Giọng văn: trực diện hơn cổ đại nhưng vẫn mượt, gợi cảm, có nhịp và có tiết chế.\n- Xưng hô: tự nhiên theo bối cảnh hiện đại; phải đúng tuổi, vai vế, quan hệ và mức độ thân mật.\n- Nội tâm: nhấn mạnh ham muốn, giằng co, ghen tuông, chiếm hữu, nghiện cảm giác, ngại ngùng hoặc tự dằn vặt sau gần gũi.\n- Miêu tả: chú ý ánh mắt, nhịp thở, tiếng nói, khoảng cách cơ thể, ngón tay, phản ứng da thịt, run nhẹ, né tránh rồi lại bị hút về.\n- Nhịp cảnh: mở nhanh hơn, nhiều kéo đẩy cảm xúc, phản ứng phải nối tiếp hành động chứ không rời rạc.\n- Dư âm: sau cảnh 18+ phải còn hậu quả tâm lý hoặc bước ngoặt quan hệ, không kết thúc cụt.\n- Cấm: viết như checklist động tác, lặp từ thô, biến nhân vật thành vô hồn hoặc mất tự nhiên.',
+  },
+];
+
 const DEFAULT_PROMPT_LIBRARY: PromptLibraryState = {
   core: [
     {
@@ -51,24 +64,14 @@ const DEFAULT_PROMPT_LIBRARY: PromptLibraryState = {
       content: '- Giọng văn: Lý tính, mô tả hệ thống rõ.\n- Xưng hô: linh hoạt theo thế giới thật/ảo.\n- Từ vựng: game chuẩn (level, cooldown, buff/debuff, PK), sci-fi (cơ giáp, gene, warp).\n- Cấu trúc: log/bảng trạng thái ngắn; ví dụ sau mô tả.\n- Cấm: bùa tiên hiệp mơ hồ; số liệu không khớp.',
     },
   ],
-  adult: [
-    {
-      id: 'adult-emotion',
-      title: '18+ · Cảm xúc rất chi tiết',
-      content: '- Giọng văn: trưởng thành, gợi cảm, mượt; tránh thô và tránh liệt kê cơ học.\n- Trọng tâm: lớp cảm xúc nối tiếp nhau như chờ đợi, giằng co, mất kiểm soát, xấu hổ, lệ thuộc, day dứt.\n- Miêu tả: ánh mắt, hơi thở, khoảng cách cơ thể, nhịp tim, cử chỉ ngập ngừng, thay đổi trong giọng nói.\n- Cấu trúc cảnh: mở nhịp -> leo thang -> cao trào -> dư âm sau cảnh.\n- Cấm: nhảy cảnh quá gấp, lặp từ thô, làm nhân vật phản ứng vô hồn.',
-    },
-    {
-      id: 'adult-consent',
-      title: '18+ · Consent & phản ứng',
-      content: '- Luôn làm rõ tín hiệu đồng thuận, ngập ngừng, chủ động/bị động và điểm chuyển cảm xúc.\n- Hành động phải kéo theo phản ứng nội tâm hoặc phản ứng thân thể rõ ràng.\n- Hội thoại cần giữ sắc thái quyến rũ, căng thẳng hoặc chiếm hữu đúng bối cảnh.\n- Sau cảnh thân mật phải có dư âm: bối rối, nghiện cảm giác, hối hận, ám ảnh hoặc muốn tiến thêm.\n- Cấm: biến cảnh nóng thành mô tả khô, rỗng hoặc không có hậu quả tâm lý.',
-    },
-    {
-      id: 'adult-tone',
-      title: '18+ · Câu chữ sang, nhịp nóng',
-      content: '- Ưu tiên câu văn có nhịp, có khoảng lặng và có sức gợi.\n- Dùng từ chọn lọc để giữ sự cuốn hút và cảm giác gần gũi, không rơi vào giọng máy hoặc giọng chợ.\n- Khi viết/dịch cảnh nóng, giữ mạch cảm xúc liền nhau và liên kết với quan hệ giữa hai nhân vật.\n- Mỗi cảnh 18+ phải phục vụ phát triển quan hệ, mâu thuẫn hoặc bước ngoặt cảm xúc.\n- Cấm: cắt rời cảnh thân mật khỏi cốt truyện, hoặc chỉ mô tả động tác mà thiếu nội tâm.',
-    },
-  ],
+  adult: DEFAULT_ADULT_PROMPTS,
 };
+
+function shouldUpgradeAdultPrompts(items: PromptLibraryItem[]): boolean {
+  if (!items.length) return true;
+  const legacyIds = new Set(['adult-emotion', 'adult-consent', 'adult-tone']);
+  return items.every((item) => legacyIds.has(String(item.id || '').trim()));
+}
 
 function sanitizePromptItems(items: unknown, fallback: PromptLibraryItem[]): PromptLibraryItem[] {
   if (!Array.isArray(items)) return fallback;
@@ -95,10 +98,11 @@ export function loadPromptLibraryState(): PromptLibraryState {
     const raw = localStorage.getItem(PROMPT_LIBRARY_STORAGE_KEY);
     if (!raw) return DEFAULT_PROMPT_LIBRARY;
     const parsed = JSON.parse(raw) as Partial<PromptLibraryState>;
+    const adultItems = sanitizePromptItems(parsed.adult, DEFAULT_PROMPT_LIBRARY.adult);
     return {
       core: sanitizePromptItems(parsed.core, DEFAULT_PROMPT_LIBRARY.core),
       genre: sanitizePromptItems(parsed.genre, DEFAULT_PROMPT_LIBRARY.genre),
-      adult: sanitizePromptItems(parsed.adult, DEFAULT_PROMPT_LIBRARY.adult),
+      adult: shouldUpgradeAdultPrompts(adultItems) ? DEFAULT_ADULT_PROMPTS : adultItems,
     };
   } catch {
     return DEFAULT_PROMPT_LIBRARY;

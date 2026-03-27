@@ -6492,11 +6492,11 @@ const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts:
   },
   {
     group: 'adult',
-    category: 'Dịch · Truyện sắc 18+ / Ngôn tình trưởng thành',
+    category: 'Prompt 18+ · Cổ đại / Tiên hiệp',
     prompts: [
-      { title: 'Căng thẳng cảm xúc rất chi tiết', content: 'Dịch theo giọng trưởng thành 18+, ưu tiên câu chữ giàu cảm giác nhưng vẫn mượt và có kiểm soát. Làm rõ từng lớp tâm lý: chờ đợi, giằng co, khao khát, ngập ngừng, mất bình tĩnh. Khi vào cảnh nóng, giữ nhịp tăng dần, không tóm tắt, không lướt nhanh; chú ý ánh mắt, hơi thở, khoảng cách cơ thể, phản ứng ngắt quãng và sự thay đổi trong giọng nói.' },
-      { title: 'Consent, phản ứng và nội tâm', content: 'Giữ rõ tín hiệu đồng thuận, thế chủ động/bị động và các phản ứng qua đối thoại, cử chỉ, ánh mắt, ngập ngừng, run tay, đổi nhịp thở. Ưu tiên diễn tả nội tâm thật chi tiết để người đọc cảm được sức nặng của từng tiếp xúc, thay vì chỉ kể hành động khô. Văn phong phải trưởng thành, gợi cảm, không đột ngột chuyển sang giọng thô hoặc máy móc.' },
-      { title: 'Nhịp nóng nhưng câu chữ sang', content: 'Khi gặp đoạn 18+, giữ nhịp dồn dập vừa đủ, câu văn có độ lướt, tránh lặp từ và tránh làm cảnh thân mật thành bản tường thuật khô. Dịch kỹ cách dùng từ, sắc thái xưng hô, phản ứng thân thể, xấu hổ, chiếm hữu, day dứt hoặc lệ thuộc cảm xúc. Mỗi đoạn thân mật cần có mở nhịp, cao trào và dư âm sau cảnh.' },
+      { title: 'Cổ phong cấm dục', content: 'Giữ giọng cổ phong, quyến rũ và nhiều sức gợi. Đào sâu cảm giác cấm dục, lễ pháp, thân phận và sự giằng co giữa lý trí với ham muốn. Khi vào cảnh thân mật, nhấn mạnh ánh mắt, tay áo, tóc, hơi thở, khí tức và sự mất kiểm soát dần của nội tâm.' },
+      { title: 'Tiên hiệp song tu / linh lực', content: 'Nếu bối cảnh có tu luyện, hãy gắn cảm giác thân mật với khí tức, linh lực, tâm ma, song tu hoặc phản phệ. Miêu tả phản ứng cơ thể và tinh thần thật liền mạch, để cảnh 18+ vừa nóng vừa đúng chất tiên hiệp.' },
+      { title: 'Dư âm sau cảnh', content: 'Sau cảnh thân mật, luôn để lại dư vị như xấu hổ, chấp niệm, lệ thuộc, ràng buộc đạo lữ hoặc tâm ma bùng lên. Không kết thúc cụt ở hành động; phải có hậu quả cảm xúc và quan hệ.' },
     ],
   },
   {
@@ -6556,11 +6556,11 @@ const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts:
   },
   {
     group: 'adult',
-    category: 'Viết · Truyện sắc 18+ / Tình cảm trưởng thành',
+    category: 'Prompt 18+ · Đô thị / Hiện đại',
     prompts: [
-      { title: 'Cảnh 18+ nhiều lớp cảm xúc', content: 'Viết theo nhịp chạm nhẹ -> thử giới hạn -> căng thẳng dồn lên -> bùng nổ -> dư âm sau cảnh. Tập trung mạnh vào nội tâm, cách nhân vật tự kiềm chế rồi đánh mất kiểm soát, phản ứng với từng đụng chạm, thay đổi trong nhịp thở, ánh mắt, âm lượng giọng nói và cử chỉ. Mỗi hành động phải kéo theo một phản ứng cảm xúc rõ ràng.' },
-      { title: 'Câu chữ gợi cảm nhưng không thô', content: 'Dùng từ chọn lọc, giàu sức gợi, nhấn vào không khí nóng, sự thân mật, chiếm hữu, ngại ngùng, nghiện cảm giác hoặc day dứt sau gần gũi. Tránh viết như liệt kê động tác. Ưu tiên câu văn có nhịp, có điểm dừng, có khoảng lặng, để người đọc cảm thấy cảnh đang diễn ra thật sống chứ không bị máy móc.' },
-      { title: 'Phản ứng cơ thể và dư âm tâm lý', content: 'Ở cảnh trưởng thành, luôn mô tả rõ phản ứng nối tiếp: run nhẹ, chững lại, nuốt khan, né tránh rồi lại bị hút về, mất kiểm soát, bối rối sau gần gũi. Sau cảnh thân mật phải có hậu quả cảm xúc như xấu hổ, say đắm, lo sợ, dằn vặt hoặc muốn chiếm hữu hơn. Để cảnh 18+ phục vụ tiến triển quan hệ và mâu thuẫn nhân vật.' },
+      { title: 'Đô thị nóng và trực diện', content: 'Giữ giọng hiện đại, trực diện hơn nhưng vẫn mượt và có nhịp. Nhấn vào khoảng cách cơ thể, giọng nói, bàn tay, nhịp thở, phản ứng da thịt, sự ngập ngừng rồi bị hút về. Hành động nào cũng phải kéo theo phản ứng nội tâm hoặc phản ứng thân thể rõ ràng.' },
+      { title: 'Chiếm hữu, ghen và nghiện cảm giác', content: 'Nếu đúng cốt truyện, làm rõ lớp cảm xúc như ghen, chiếm hữu, nghiện cảm giác, tự dằn vặt, bối rối sau gần gũi. Giữ câu chữ quyến rũ, có khoảng lặng, không được biến cảnh 18+ thành một đoạn kể khô hay quá thô.' },
+      { title: 'Hậu quả cảm xúc sau gần gũi', content: 'Sau cảnh thân mật phải có dư âm như ngại ngùng, lệ thuộc, né tránh, ám ảnh, muốn tiến thêm hoặc sợ mất đối phương. Để cảnh 18+ đẩy quan hệ đi tiếp, không chỉ đứng riêng như fanservice.' },
     ],
   },
   {
@@ -6631,13 +6631,12 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
     { id: 'khoa-hoc', title: 'Võng du / Khoa học', content: '- Giọng văn: Lý tính, hệ thống rõ.\n- Xưng hô: linh hoạt theo thế giới thật/ảo.\n- Từ vựng: game chuẩn (level, cooldown, buff/debuff, PK), sci-fi (cơ giáp, gene, warp).\n- Cấu trúc: log/bảng trạng thái ngắn; ví dụ sau mô tả.\n- Cấm: bùa/thuật tiên hiệp mơ hồ; số liệu không khớp.' },
   ]);
   const [adultRules, setAdultRules] = useState<MasterItem[]>([
-    { id: 'adult-emotion', title: '18+ · Cảm xúc rất chi tiết', content: '- Giọng văn: trưởng thành, gợi cảm, mượt; tránh thô và tránh liệt kê cơ học.\n- Trọng tâm: lớp cảm xúc nối tiếp nhau như chờ đợi, giằng co, mất kiểm soát, xấu hổ, lệ thuộc, day dứt.\n- Miêu tả: ánh mắt, hơi thở, khoảng cách cơ thể, nhịp tim, cử chỉ ngập ngừng, thay đổi trong giọng nói.\n- Cấu trúc cảnh: mở nhịp → leo thang → cao trào → dư âm sau cảnh.\n- Cấm: nhảy cảnh quá gấp, lặp từ thô, làm nhân vật phản ứng vô hồn.' },
-    { id: 'adult-consent', title: '18+ · Consent & phản ứng', content: '- Luôn làm rõ tín hiệu đồng thuận, ngập ngừng, chủ động/bị động và điểm chuyển cảm xúc.\n- Hành động phải kéo theo phản ứng nội tâm hoặc phản ứng thân thể rõ ràng.\n- Hội thoại cần giữ sắc thái quyến rũ, căng thẳng hoặc chiếm hữu đúng bối cảnh.\n- Sau cảnh thân mật phải có dư âm: bối rối, nghiện cảm giác, hối hận, ám ảnh hoặc muốn tiến thêm.\n- Cấm: biến cảnh nóng thành mô tả khô, rỗng hoặc không có hậu quả tâm lý.' },
-    { id: 'adult-tone', title: '18+ · Câu chữ sang, nhịp nóng', content: '- Ưu tiên câu văn có nhịp, có khoảng lặng và có sức gợi.\n- Dùng từ chọn lọc để giữ sự cuốn hút và cảm giác gần gũi, không rơi vào giọng máy hoặc giọng chợ.\n- Khi viết/dịch cảnh nóng, giữ mạch cảm xúc liền nhau và liên kết với quan hệ giữa hai nhân vật.\n- Mỗi cảnh 18+ phải phục vụ phát triển quan hệ, mâu thuẫn hoặc bước ngoặt cảm xúc.\n- Cấm: cắt rời cảnh thân mật khỏi cốt truyện, hoặc chỉ mô tả động tác mà thiếu nội tâm.' },
+    { id: 'adult-ancient', title: '18+ · Cổ đại / Tiên hiệp', content: '- Giọng văn: cổ phong, quyến rũ, giàu sức gợi nhưng vẫn mềm và sang.\n- Xưng hô: giữ tôn ti, thân phận và chất cổ đại; tránh từ hiện đại hoặc quá thô.\n- Nội tâm: đào sâu cảm giác kìm nén, cấm dục, rung động, chiếm hữu, day dứt, cảm giác phạm giới hoặc vượt lễ pháp.\n- Miêu tả: tập trung ánh mắt, tay áo, đầu ngón tay, hơi thở, vạt áo, tóc, nhiệt độ da, khí tức, linh lực dao động.\n- Nhịp cảnh: chậm ở mở đầu, căng dần ở phần tiếp xúc, cao trào phải có cảm giác mất kiểm soát nhưng vẫn liền mạch.\n- Dư âm: sau cảnh thân mật cần có xấu hổ, chấp niệm, ràng buộc, tâm ma hoặc thay đổi quan hệ.\n- Cấm: dùng tiếng lóng hiện đại, câu chữ chợ búa, mô tả cơ học như liệt kê động tác.' },
+    { id: 'adult-modern', title: '18+ · Đô thị / Hiện đại', content: '- Giọng văn: trực diện hơn cổ đại nhưng vẫn mượt, gợi cảm, có nhịp và có tiết chế.\n- Xưng hô: tự nhiên theo bối cảnh hiện đại; phải đúng tuổi, vai vế, quan hệ và mức độ thân mật.\n- Nội tâm: nhấn mạnh ham muốn, giằng co, ghen tuông, chiếm hữu, nghiện cảm giác, ngại ngùng hoặc tự dằn vặt sau gần gũi.\n- Miêu tả: chú ý ánh mắt, nhịp thở, tiếng nói, khoảng cách cơ thể, ngón tay, phản ứng da thịt, run nhẹ, né tránh rồi lại bị hút về.\n- Nhịp cảnh: mở nhanh hơn, nhiều kéo đẩy cảm xúc, phản ứng phải nối tiếp hành động chứ không rời rạc.\n- Dư âm: sau cảnh 18+ phải còn hậu quả tâm lý hoặc bước ngoặt quan hệ, không kết thúc cụt.\n- Cấm: viết như checklist động tác, lặp từ thô, biến nhân vật thành vô hồn hoặc mất tự nhiên.' },
   ]);
   const [selectedCoreId, setSelectedCoreId] = useState('terms');
   const [selectedGenreId, setSelectedGenreId] = useState('co-dai');
-  const [selectedAdultId, setSelectedAdultId] = useState('adult-emotion');
+  const [selectedAdultId, setSelectedAdultId] = useState('adult-ancient');
   const [draftContent, setDraftContent] = useState<string>('');
 
   const getGroupList = (group: PromptGroup) => {
