@@ -56,7 +56,7 @@ import { PromptLibraryModal as PromptLibraryModalNew } from './features/prompt/P
 import { CURRENT_WRITER_VERSION, WRITER_RELEASE_NOTES } from './phase3/releaseHistory';
 import { APP_NOTICE_EVENT, notifyApp, type AppNoticePayload, type AppNoticeTone } from './notifications';
 import { loadPromptLibraryState, savePromptLibraryState, type PromptLibraryState } from './promptLibraryStore';
-import { LOCAL_WORKSPACE_CHANGED_EVENT, emitLocalWorkspaceChanged, loadLocalWorkspaceMeta, markLocalWorkspaceHydrated } from './localWorkspaceSync';
+import { LOCAL_WORKSPACE_CHANGED_EVENT, emitLocalWorkspaceChanged, loadLocalWorkspaceMeta, markLocalWorkspaceHydrated, type LocalWorkspaceSection } from './localWorkspaceSync';
 import { loadServerWorkspace, saveQaReport, saveServerWorkspace, SUPABASE_STORAGE_TABLES } from './supabaseWorkspace';
 import { IMAGE_AI_PROVIDER_META, getDefaultImageAiModel, type ImageAiProvider } from './imageAiProviders';
 
@@ -294,6 +294,7 @@ const UI_PROFILE_KEY = 'ui_profile_v1';
 const UI_THEME_KEY = 'ui_theme_v1';
 const UI_VIEWPORT_MODE_KEY = 'ui_viewport_mode_v1';
 const STORIES_UPDATED_EVENT = 'stories:updated';
+const WORKSPACE_RECOVERY_KEY = 'truyenforge:workspace-recovery-v1';
 
 type ThemeMode = 'light' | 'dark';
 type ViewportMode = 'desktop' | 'mobile';
@@ -390,6 +391,7 @@ function saveViewportMode(mode: ViewportMode): void {
 interface AccountWorkspaceSnapshot {
   schemaVersion: number;
   updatedAt: string;
+  sectionUpdatedAt: Partial<Record<LocalWorkspaceSection, string>>;
   uiProfile: UiProfile;
   uiTheme: ThemeMode;
   uiViewportMode: ViewportMode;
@@ -402,11 +404,202 @@ interface AccountWorkspaceSnapshot {
   finopsBudget: ReturnType<typeof loadBudgetState>;
 }
 
+const ACCOUNT_WORKSPACE_BINDINGS = [
+  { section: 'ui_profile', key: 'uiProfile' },
+  { section: 'ui_theme', key: 'uiTheme' },
+  { section: 'ui_viewport_mode', key: 'uiViewportMode' },
+  { section: 'stories', key: 'stories' },
+  { section: 'characters', key: 'characters' },
+  { section: 'ai_rules', key: 'aiRules' },
+  { section: 'style_references', key: 'styleReferences' },
+  { section: 'translation_names', key: 'translationNames' },
+  { section: 'prompt_library', key: 'promptLibrary' },
+  { section: 'finops_budget', key: 'finopsBudget' },
+] as const satisfies ReadonlyArray<{ section: LocalWorkspaceSection; key: keyof AccountWorkspaceSnapshot }>;
+
+function toTimestampMs(value: unknown): number {
+  if (typeof value !== 'string' || !value.trim()) return 0;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+}
+
+function getSectionTimestampFromMeta(meta: ReturnType<typeof loadLocalWorkspaceMeta>, section: LocalWorkspaceSection): string {
+  const sectionTimestamp = meta.sections?.[section];
+  if (typeof sectionTimestamp === 'string' && toTimestampMs(sectionTimestamp) > 0) {
+    return sectionTimestamp;
+  }
+  if (typeof meta.updatedAt === 'string' && toTimestampMs(meta.updatedAt) > 0) {
+    return meta.updatedAt;
+  }
+  return new Date(0).toISOString();
+}
+
+function buildSectionUpdatedAt(meta: ReturnType<typeof loadLocalWorkspaceMeta>): Partial<Record<LocalWorkspaceSection, string>> {
+  const next: Partial<Record<LocalWorkspaceSection, string>> = {};
+  ACCOUNT_WORKSPACE_BINDINGS.forEach(({ section }) => {
+    next[section] = getSectionTimestampFromMeta(meta, section);
+  });
+  return next;
+}
+
+function getSnapshotSectionTimestamp(snapshot: Partial<AccountWorkspaceSnapshot>, section: LocalWorkspaceSection): string {
+  const sectionTimestamp = snapshot.sectionUpdatedAt?.[section];
+  if (typeof sectionTimestamp === 'string' && toTimestampMs(sectionTimestamp) > 0) {
+    return sectionTimestamp;
+  }
+  if (typeof snapshot.updatedAt === 'string' && toTimestampMs(snapshot.updatedAt) > 0) {
+    return snapshot.updatedAt;
+  }
+  return new Date(0).toISOString();
+}
+
+function hasPromptLibraryEntries(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const state = value as Partial<PromptLibraryState>;
+  return ['core', 'genre', 'adult'].some((key) => Array.isArray(state[key as keyof PromptLibraryState]) && (state[key as keyof PromptLibraryState] as unknown[]).length > 0);
+}
+
+function isSectionPopulated(section: LocalWorkspaceSection, value: unknown): boolean {
+  switch (section) {
+    case 'stories':
+    case 'characters':
+    case 'ai_rules':
+    case 'style_references':
+    case 'translation_names':
+      return Array.isArray(value) && value.length > 0;
+    case 'prompt_library':
+      return hasPromptLibraryEntries(value);
+    case 'ui_profile':
+      return Boolean(value && typeof value === 'object' && (
+        String((value as Partial<UiProfile>).displayName || '').trim() ||
+        String((value as Partial<UiProfile>).avatarUrl || '').trim()
+      ));
+    case 'finops_budget':
+      return Boolean(value && typeof value === 'object');
+    case 'ui_theme':
+    case 'ui_viewport_mode':
+      return typeof value === 'string' && value.trim().length > 0;
+    default:
+      return value !== undefined && value !== null;
+  }
+}
+
+function chooseWorkspaceSectionValue<T>(
+  section: LocalWorkspaceSection,
+  localValue: T,
+  remoteValue: T | undefined,
+  localTimestamp: string,
+  remoteTimestamp: string,
+): { value: T; updatedAt: string } {
+  if (typeof remoteValue === 'undefined') {
+    return { value: localValue, updatedAt: localTimestamp };
+  }
+
+  const localMs = toTimestampMs(localTimestamp);
+  const remoteMs = toTimestampMs(remoteTimestamp);
+
+  if (remoteMs > localMs) {
+    return { value: remoteValue, updatedAt: remoteTimestamp };
+  }
+  if (localMs > remoteMs) {
+    return { value: localValue, updatedAt: localTimestamp };
+  }
+
+  const localPopulated = isSectionPopulated(section, localValue);
+  const remotePopulated = isSectionPopulated(section, remoteValue);
+  if (remotePopulated && !localPopulated) {
+    return { value: remoteValue, updatedAt: remoteTimestamp || localTimestamp };
+  }
+  return { value: localValue, updatedAt: localTimestamp || remoteTimestamp };
+}
+
+function mergeAccountWorkspaceSnapshots(
+  localSnapshot: AccountWorkspaceSnapshot,
+  remoteSnapshot: Partial<AccountWorkspaceSnapshot>,
+): AccountWorkspaceSnapshot {
+  const merged: AccountWorkspaceSnapshot = {
+    ...localSnapshot,
+    schemaVersion: Math.max(localSnapshot.schemaVersion || 1, Number(remoteSnapshot.schemaVersion) || 1),
+    updatedAt: localSnapshot.updatedAt,
+    sectionUpdatedAt: {
+      ...buildSectionUpdatedAt(loadLocalWorkspaceMeta()),
+      ...localSnapshot.sectionUpdatedAt,
+    },
+  };
+
+  ACCOUNT_WORKSPACE_BINDINGS.forEach(({ section, key }) => {
+    const picked = chooseWorkspaceSectionValue(
+      section,
+      localSnapshot[key],
+      remoteSnapshot[key],
+      getSnapshotSectionTimestamp(localSnapshot, section),
+      getSnapshotSectionTimestamp(remoteSnapshot, section),
+    );
+    switch (key) {
+      case 'uiProfile':
+        merged.uiProfile = picked.value as UiProfile;
+        break;
+      case 'uiTheme':
+        merged.uiTheme = picked.value as ThemeMode;
+        break;
+      case 'uiViewportMode':
+        merged.uiViewportMode = picked.value as ViewportMode;
+        break;
+      case 'stories':
+        merged.stories = picked.value as Story[];
+        break;
+      case 'characters':
+        merged.characters = picked.value as Character[];
+        break;
+      case 'aiRules':
+        merged.aiRules = picked.value as AIRule[];
+        break;
+      case 'styleReferences':
+        merged.styleReferences = picked.value as any[];
+        break;
+      case 'translationNames':
+        merged.translationNames = picked.value as any[];
+        break;
+      case 'promptLibrary':
+        merged.promptLibrary = picked.value as PromptLibraryState;
+        break;
+      case 'finopsBudget':
+        merged.finopsBudget = picked.value as ReturnType<typeof loadBudgetState>;
+        break;
+      default:
+        break;
+    }
+    merged.sectionUpdatedAt[section] = picked.updatedAt;
+  });
+
+  const mergedUpdatedAt = ACCOUNT_WORKSPACE_BINDINGS.reduce((latest, { section }) => {
+    const timestamp = merged.sectionUpdatedAt[section];
+    return toTimestampMs(timestamp) > toTimestampMs(latest) ? String(timestamp) : latest;
+  }, localSnapshot.updatedAt || remoteSnapshot.updatedAt || new Date().toISOString());
+
+  merged.updatedAt = mergedUpdatedAt;
+  return merged;
+}
+
+function storeWorkspaceRecoverySnapshot(snapshot: AccountWorkspaceSnapshot, source: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(WORKSPACE_RECOVERY_KEY, JSON.stringify({
+      source,
+      savedAt: new Date().toISOString(),
+      payload: snapshot,
+    }));
+  } catch {
+    // Skip recovery cache if storage is unavailable.
+  }
+}
+
 function buildAccountWorkspaceSnapshot(defaultName?: string, defaultAvatar?: string): AccountWorkspaceSnapshot {
   const meta = loadLocalWorkspaceMeta();
   return {
     schemaVersion: 1,
     updatedAt: meta.updatedAt || new Date().toISOString(),
+    sectionUpdatedAt: buildSectionUpdatedAt(meta),
     uiProfile: loadUiProfile(defaultName, defaultAvatar),
     uiTheme: loadThemeMode(),
     uiViewportMode: loadViewportMode(),
@@ -455,7 +648,7 @@ function applyAccountWorkspaceSnapshot(snapshot: Partial<AccountWorkspaceSnapsho
   if (snapshot.finopsBudget && typeof snapshot.finopsBudget === 'object') {
     saveBudgetState(snapshot.finopsBudget);
   }
-  markLocalWorkspaceHydrated(snapshot.updatedAt || new Date().toISOString());
+  markLocalWorkspaceHydrated(snapshot.updatedAt || new Date().toISOString(), 'cloud-hydrate', snapshot.sectionUpdatedAt);
 }
 
 function parseLongIdFromText(input: string): string {
@@ -8784,10 +8977,43 @@ const AppContent = () => {
 
   const syncWorkspaceToAccount = useCallback(async () => {
     if (!user || !hasSupabase || workspaceSyncRef.current.isHydrating) return;
-    const payload = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined);
-    const serialized = JSON.stringify(payload);
+    const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined);
+    const remoteSnapshot = await loadServerWorkspace<AccountWorkspaceSnapshot>(user.uid);
+    const remotePayload = remoteSnapshot.payload
+      ? {
+          ...(remoteSnapshot.payload as Partial<AccountWorkspaceSnapshot>),
+          updatedAt: typeof (remoteSnapshot.payload as Partial<AccountWorkspaceSnapshot>).updatedAt === 'string'
+            ? (remoteSnapshot.payload as Partial<AccountWorkspaceSnapshot>).updatedAt
+            : (remoteSnapshot.updatedAt || new Date(0).toISOString()),
+        }
+      : null;
+    const mergedSnapshot = remotePayload
+      ? mergeAccountWorkspaceSnapshots(localSnapshot, remotePayload)
+      : localSnapshot;
+
+    const serialized = JSON.stringify(mergedSnapshot);
     if (serialized === workspaceSyncRef.current.lastSerialized) return;
-    await saveServerWorkspace(user.uid, payload);
+
+    const localSerialized = JSON.stringify(localSnapshot);
+    if (serialized !== localSerialized) {
+      workspaceSyncRef.current.isHydrating = true;
+      try {
+        applyAccountWorkspaceSnapshot(mergedSnapshot, user.displayName || undefined, user.photoURL || undefined);
+        setProfile(loadUiProfile(user.displayName || undefined, user.photoURL || undefined));
+        setThemeMode(loadThemeMode());
+        setViewportMode(loadViewportMode());
+        notifyApp({
+          tone: 'info',
+          message: 'Đã khôi phục phần dữ liệu còn thiếu từ tài khoản đăng nhập.',
+          groupKey: 'account-sync-restore',
+        });
+      } finally {
+        workspaceSyncRef.current.isHydrating = false;
+      }
+    }
+
+    await saveServerWorkspace(user.uid, mergedSnapshot);
+    storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-save');
     workspaceSyncRef.current.lastSerialized = serialized;
   }, [user, hasSupabase]);
 
@@ -8804,12 +9030,12 @@ const AppContent = () => {
       try {
         const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined);
         const localSerialized = JSON.stringify(localSnapshot);
-        const localUpdatedAt = new Date(localSnapshot.updatedAt || new Date(0).toISOString()).getTime();
         const remoteSnapshot = await loadServerWorkspace<AccountWorkspaceSnapshot>(user.uid);
         if (cancelled) return;
 
         if (!remoteSnapshot.payload) {
           await saveServerWorkspace(user.uid, localSnapshot);
+          storeWorkspaceRecoverySnapshot(localSnapshot, 'account-sync-bootstrap');
           workspaceSyncRef.current.lastSerialized = localSerialized;
           return;
         }
@@ -8818,24 +9044,26 @@ const AppContent = () => {
         const remoteUpdatedAt = typeof remoteData.updatedAt === 'string'
           ? remoteData.updatedAt
           : (remoteSnapshot.updatedAt || new Date(0).toISOString());
-        const remoteUpdatedMs = new Date(remoteUpdatedAt).getTime();
+        const mergedSnapshot = mergeAccountWorkspaceSnapshots(localSnapshot, { ...remoteData, updatedAt: remoteUpdatedAt });
+        const mergedSerialized = JSON.stringify(mergedSnapshot);
 
-        if (remoteUpdatedMs > localUpdatedAt) {
-          applyAccountWorkspaceSnapshot({ ...remoteData, updatedAt: remoteUpdatedAt }, user.displayName || undefined, user.photoURL || undefined);
+        if (mergedSerialized !== localSerialized) {
+          applyAccountWorkspaceSnapshot(mergedSnapshot, user.displayName || undefined, user.photoURL || undefined);
           setProfile(loadUiProfile(user.displayName || undefined, user.photoURL || undefined));
           setThemeMode(loadThemeMode());
           setViewportMode(loadViewportMode());
+          storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-hydrate');
           workspaceSyncRef.current.lastSerialized = JSON.stringify(buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined));
           notifyApp({
             tone: 'info',
-            message: 'Đã nạp dữ liệu cục bộ từ tài khoản đăng nhập.',
+            message: 'Đã nạp và hợp nhất dữ liệu từ tài khoản đăng nhập.',
             groupKey: 'account-sync-loaded',
           });
-          return;
         }
 
-        await saveServerWorkspace(user.uid, localSnapshot);
-        workspaceSyncRef.current.lastSerialized = localSerialized;
+        await saveServerWorkspace(user.uid, mergedSnapshot);
+        storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-save-after-hydrate');
+        workspaceSyncRef.current.lastSerialized = mergedSerialized;
       } catch (error) {
         console.warn('Không thể đồng bộ workspace theo tài khoản.', error);
         notifyApp({
@@ -8865,6 +9093,13 @@ const AppContent = () => {
       syncTimer = window.setTimeout(() => {
         void syncWorkspaceToAccount().catch((error) => {
           console.warn('Tự động lưu workspace lên tài khoản thất bại.', error);
+          notifyApp({
+            tone: 'warn',
+            message: 'Tự động đồng bộ lên tài khoản bị lỗi, dữ liệu vẫn đang ở máy này.',
+            detail: error instanceof Error ? error.message : undefined,
+            groupKey: 'account-sync-autosave-failed',
+            timeoutMs: 5200,
+          });
         });
       }, 700);
     };
