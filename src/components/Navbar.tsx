@@ -140,6 +140,7 @@ export function Navbar({
   const indicatorStyle = {
     width: `${100 / navItems.length}%`,
   };
+  const isCompact = navDensity !== 'normal';
 
   useEffect(() => {
     if (!navRef.current) return;
@@ -367,7 +368,7 @@ export function Navbar({
               alt="TruyenForge"
               className="w-11 h-11 rounded-2xl shadow-lg shadow-indigo-900/40 group-hover:scale-105 transition-transform duration-300 object-cover"
             />
-            <div className="hidden sm:flex sm:flex-col sm:gap-1">
+            <div className={cn('hidden sm:flex sm:flex-col sm:gap-1', isCompact && 'hidden')}>
               <span className={cn('text-xl font-serif font-bold tracking-tight', titleClass)}>TruyenForge</span>
               {versionLabel ? (
                 <span className={cn('inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]', isDark ? 'bg-cyan-500/12 text-cyan-200' : 'bg-indigo-100 text-indigo-700')}>
@@ -377,7 +378,7 @@ export function Navbar({
             </div>
           </div>
 
-          <div ref={segmentsRef} className={cn('app-navbar__segments relative grid grid-cols-4 gap-1 p-1 rounded-2xl overflow-hidden', segmentedClass)}>
+          <div ref={segmentsRef} className={cn('app-navbar__segments relative grid grid-cols-4 gap-1 p-1 rounded-2xl overflow-hidden flex-shrink-0', segmentedClass)}>
             <motion.div
               layout
               layoutId="navbar-indicator"
@@ -408,32 +409,36 @@ export function Navbar({
           </div>
         </div>
 
-        <div ref={rightRef} className="app-navbar__right flex items-center gap-3">
+        <div ref={rightRef} className="app-navbar__right flex items-center gap-3 flex-shrink-0">
           {finopsWarning ? (
             <span className="hidden lg:inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">
               {finopsWarning}
             </span>
           ) : null}
-          <button
-            onClick={onOpenPromptManager}
-            className={cn(
-              'hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300',
-              isDark ? 'text-cyan-200 border border-cyan-400/25 hover:bg-cyan-500/10' : 'text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100',
-            )}
-            title="Kho prompt"
-          >
-            <Library className="w-4 h-4" /> Prompt
-          </button>
-          <button
-            onClick={onOpenReleaseHistory}
-            className={cn(
-              'hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300',
-              isDark ? 'text-cyan-200 border border-cyan-400/25 hover:bg-cyan-500/10' : 'text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100',
-            )}
-            title="Lịch sử cập nhật"
-          >
-            <History className="w-4 h-4" /> Cập nhật
-          </button>
+          {!isCompact && (
+            <>
+              <button
+                onClick={onOpenPromptManager}
+                className={cn(
+                  'hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300',
+                  isDark ? 'text-cyan-200 border border-cyan-400/25 hover:bg-cyan-500/10' : 'text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100',
+                )}
+                title="Kho prompt"
+              >
+                <Library className="w-4 h-4" /> Prompt
+              </button>
+              <button
+                onClick={onOpenReleaseHistory}
+                className={cn(
+                  'hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300',
+                  isDark ? 'text-cyan-200 border border-cyan-400/25 hover:bg-cyan-500/10' : 'text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100',
+                )}
+                title="Lịch sử cập nhật"
+              >
+                <History className="w-4 h-4" /> Cập nhật
+              </button>
+            </>
+          )}
           <div className={cn('app-navbar-divider h-8 w-[1px] mx-1 md:mx-2', dividerClass)} />
           <button
             onClick={onToggleTheme}
@@ -444,14 +449,14 @@ export function Navbar({
           </button>
           <div className={cn('app-navbar-divider h-8 w-[1px] mx-1 md:mx-2', dividerClass)} />
           <div className="flex items-center gap-3">
-            <div className="text-right hidden sm:block">
+            <div className={cn('text-right hidden sm:block whitespace-nowrap', isCompact && 'hidden')}>
               <p className={cn('text-sm font-bold leading-none', titleClass)}>{profile.displayName}</p>
               <p className={cn('text-[10px] uppercase tracking-widest mt-1', subTextClass)}>{authEmail || 'Chưa đăng nhập'}</p>
             </div>
             <div className="relative">
               <button
                 onClick={() => setShowProfileMenu((v) => !v)}
-                className={cn('w-10 h-10 rounded-full flex items-center justify-center overflow-hidden border shadow-sm transition-all duration-300 hover:scale-105', isDark ? 'bg-white/8 border-white/10' : 'bg-slate-100 border-indigo-100')}
+                className={cn('w-10 h-10 rounded-full flex items-center justify-center overflow-hidden border shadow-sm transition-all duration-300 hover:scale-105 flex-shrink-0', isDark ? 'bg-white/8 border-white/10' : 'bg-slate-100 border-indigo-100')}
                 title="Tài khoản"
               >
                 <img src={profile.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
