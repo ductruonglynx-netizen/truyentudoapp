@@ -1152,10 +1152,21 @@ function normalizeAiJsonContent(raw: string, fallbackTitle: string): { title: st
     .replace(/\\n/g, '\n')
     .replace(/\\r/g, '\r')
     .replace(/\\t/g, '\t');
+  content = improveDialogueSpacing(content);
   return {
     title: String(extracted?.title || fallbackTitle).trim() || fallbackTitle,
     content,
   };
+}
+
+function improveDialogueSpacing(text: string): string {
+  if (!text) return text;
+  let next = text;
+  // Thêm ngắt dòng rõ giữa các câu thoại khi có dấu câu + dấu ngoặc kép tiếp theo.
+  next = next.replace(/([.!?…。！？])\s+(["“”『「])/g, '$1\n\n$2');
+  // Nếu vẫn còn nhiều hơn 2 dòng trống, co lại.
+  next = next.replace(/\n{3,}/g, '\n\n');
+  return next;
 }
 
 interface DetectedChapterSection {
