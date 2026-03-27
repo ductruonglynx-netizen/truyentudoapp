@@ -3555,6 +3555,13 @@ const ToolsManager = ({
 
   useEffect(() => {
     const runtime = getApiRuntimeConfig();
+    if (runtime.mode === 'relay') {
+      saveApiRuntimeConfig({
+        ...runtime,
+        mode: 'manual',
+      });
+      runtime.mode = 'manual';
+    }
     try {
       const rawRuntime = localStorage.getItem(API_RUNTIME_CONFIG_KEY);
       const parsedRuntime = rawRuntime ? (JSON.parse(rawRuntime) as Partial<ApiRuntimeConfig>) : {};

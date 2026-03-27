@@ -21,6 +21,7 @@ const AIS_AUTH_BASE = 'https://ais-dev-qbnyavxszwzdl6ugpdjaxp-279055114293.asia-
 const EVOLINK_HOME_URL = 'https://evolink.ai';
 const EVOLINK_SIGNUP_URL = 'https://evolink.ai/signup';
 const EVOLINK_IMAGE_DOCS_URL = 'https://docs.evolink.ai/en/api-manual/image-series/z-image-turbo/z-image-turbo-image-generate';
+const AI_STUDIO_URL = 'https://aistudio.google.com/app/apikey';
 const CODE_REGEX = /\b(\d{4,8})\b/;
 
 function toWsUrl(url: string): string {
@@ -285,26 +286,30 @@ export function ApiSectionPanel({
             </div>
             <div className="min-w-0">
               <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold">Phương thức</p>
-              <h3 className="text-lg font-semibold text-white">Trực tiếp / Relay</h3>
+              <h3 className="text-lg font-semibold text-white">Kết nối trực tiếp</h3>
+              <p className="text-xs text-slate-400">Phần Relay đang được ẩn tạm thời vì chưa đủ rõ ràng cho người dùng phổ thông.</p>
             </div>
           </div>
-          <div className="tf-pill-tabs tf-scroll-tabs">
-            <button
-              onClick={onSwitchToDirect}
-              className={cn("tf-pill-btn px-3 py-1.5", apiMode === 'manual' ? "bg-indigo-600 text-white shadow" : "text-slate-200 hover:bg-slate-800")}
-            >
-              Trực tiếp
-            </button>
-            <button
-              onClick={onSwitchToRelay}
-              className={cn("tf-pill-btn px-3 py-1.5", apiMode === 'relay' ? "bg-indigo-600 text-white shadow" : "text-slate-200 hover:bg-slate-800")}
-            >
-              Relay
-            </button>
-          </div>
+          <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-200">
+            Trực tiếp
+          </span>
         </div>
 
-        {apiMode === 'manual' ? (
+        <div className="space-y-3">
+          <div className="rounded-2xl border border-indigo-400/20 bg-indigo-500/5 p-4 space-y-2">
+            <p className="text-sm font-semibold text-white">Lấy Gemini API key trực tiếp từ Google AI Studio</p>
+            <p className="text-sm text-slate-300">
+              Cách dùng ổn định nhất hiện tại là để người dùng tự tạo Gemini API key trong Google AI Studio rồi dán vào đây.
+              TruyenForge chưa nên cố “rút key” tự động từ phiên đăng nhập AI Studio vì cách đó không rõ ràng, khó bền và dễ lỗi theo thay đổi của Google.
+            </p>
+            <ol className="list-decimal pl-5 space-y-1 text-sm text-slate-300">
+              <li>Mở <a href={AI_STUDIO_URL} target="_blank" rel="noreferrer" className="text-sky-300 underline underline-offset-2">Google AI Studio API Keys</a>.</li>
+              <li>Đăng nhập, tạo hoặc chọn project nếu cần.</li>
+              <li>Tạo key Gemini rồi copy chuỗi khóa.</li>
+              <li>Dán key vào ô API bên dưới và bấm <span className="font-semibold text-white">Lưu</span>.</li>
+            </ol>
+          </div>
+
           <div className="space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <input
@@ -438,62 +443,7 @@ export function ApiSectionPanel({
               </div>
             </div>
           </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="tf-card p-4 space-y-4 border border-emerald-400/30">
-              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                <div className="space-y-1">
-                  <p className="text-sm font-semibold text-white">Kết nối qua Cloudflare Worker</p>
-                  <p className="text-xs text-slate-300">TruyenForge sẽ nghe WebSocket trước, sau đó mở AI Studio để worker `proxymid` đẩy gói `type: "token"` về đúng mã phòng.</p>
-                </div>
-                {relayCode ? (
-                  <span className="rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-200">
-                    Code {relayCode}
-                  </span>
-                ) : null}
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-3">
-                <input
-                  value={relayCode}
-                  onChange={(e) => setRelayCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
-                  className="tf-input"
-                  placeholder="Code 4-8 số"
-                />
-                <select
-                  value={relayModel}
-                  onChange={(e) => onRelayModelChange(e.target.value)}
-                  className="tf-input"
-                >
-                  {relayModelOptions.map((m) => (
-                    <option key={m.value} value={m.value}>{m.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex flex-col sm:flex-row flex-wrap gap-3 tf-actions-mobile">
-                <button
-                  onClick={handleOpenBridge}
-                  disabled={!authLink}
-                  className="tf-btn tf-btn-primary disabled:opacity-50"
-                >
-                  Kết nối AI Studio
-                </button>
-                <button onClick={onDisconnectRelay} className="tf-btn tf-btn-ghost">
-                  Ngắt
-                </button>
-              </div>
-            </div>
-
-            <div className="tf-card p-4 text-sm space-y-2">
-              <p className="tf-break-long">WS Worker: <span className="text-slate-300">{relayConnectUrl || relaySocketBase}</span></p>
-              <p className="tf-break-long">Publish URL: <span className="text-slate-300">{relayPublishUrl || `${String(relayWebBase || '').trim().replace(/\/+$/, '')}/publish-token/1234`}</span></p>
-              <p className="tf-break-long">Trạng thái: <span className="font-semibold text-white">{relayStatusText}</span></p>
-              <p className="tf-break-all">Token: <span className="text-slate-300">{relayMaskedToken}</span></p>
-              <p className="tf-break-long">Phiên: <span className="text-slate-300">{relayMatchedLong || relayCode || '—'}</span></p>
-            </div>
-          </div>
-        )}
+        </div>
       </div>
 
       <div className="tf-card p-6 space-y-4 border border-sky-400/20">
