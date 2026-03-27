@@ -9038,6 +9038,11 @@ const AppContent = () => {
     }
   }, []);
 
+  const closeBackupCenter = useCallback(() => {
+    setShowBackupCenterModal(false);
+    void refreshBackupHistory();
+  }, [refreshBackupHistory]);
+
   const refreshWorkspaceUiFromStorage = useCallback(() => {
     setProfile(loadUiProfile(user?.displayName || undefined, user?.photoURL || undefined));
     setThemeMode(loadThemeMode());
@@ -10059,8 +10064,8 @@ const AppContent = () => {
     syncDisabledNoticeShownRef.current = true;
     notifyApp({
       tone: 'warn',
-      message: 'Đồng bộ tài khoản đang được tắt tạm thời để tránh mất dữ liệu. Hiện tại app chỉ lưu cục bộ trên máy này.',
-      detail: 'Mình ưu tiên an toàn dữ liệu trước, sẽ bật lại khi luồng sync được làm lại chắc chắn hơn.',
+      message: 'Đồng bộ tài khoản đang được tắt tạm thời để tránh mất dữ liệu.',
+      detail: 'App vẫn giữ mốc sao lưu trên thiết bị, và nếu bạn đã liên kết Google Drive thì các bản sao vẫn có thể được cập nhật lên đó bình thường.',
       groupKey: 'account-sync-disabled',
       timeoutMs: 6200,
     });
@@ -11404,6 +11409,7 @@ const AppContent = () => {
   const backupWarningMessage = buildBackupWarningMessage(latestBackupAt, backupSettings.staleAfterHours);
   const driveConfigured = hasGoogleDriveBackupConfig();
   const driveConnected = hasUsableDriveToken(driveAuth);
+  const latestBackupStoredOnDrive = latestBackup?.drive?.status === 'uploaded';
 
   if (loading) return <div className="min-h-screen flex items-center justify-center font-serif">Đang khởi động...</div>;
 
@@ -11575,10 +11581,25 @@ const AppContent = () => {
         </div>
       )}
       {showBackupCenterModal && (
-        <div className="fixed inset-0 z-[266] tf-modal-overlay bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="tf-modal-panel w-full max-w-6xl tf-card p-6 space-y-5">
+        <div
+          className="fixed inset-0 z-[266] tf-modal-overlay bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeBackupCenter();
+            }
+          }}
+        >
+          <div className="tf-modal-panel relative w-full max-w-6xl tf-card p-6 space-y-5">
+            <button
+              type="button"
+              aria-label="Đóng bảng sao lưu"
+              className="absolute right-4 top-4 inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/12 bg-slate-950/85 text-slate-200 shadow-lg transition hover:border-indigo-400/60 hover:bg-slate-900 hover:text-white"
+              onClick={closeBackupCenter}
+            >
+              <X className="h-5 w-5" />
+            </button>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div className="space-y-2">
+              <div className="space-y-2 pr-14">
                 <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Sao lưu & khôi phục</p>
                 <h3 className="text-2xl font-bold">Sao lưu và khôi phục dữ liệu</h3>
                 <p className="text-sm text-slate-400 max-w-3xl">
@@ -11587,10 +11608,7 @@ const AppContent = () => {
               </div>
               <button
                 className="tf-btn tf-btn-ghost px-3 py-1 self-start"
-                onClick={() => {
-                  setShowBackupCenterModal(false);
-                  void refreshBackupHistory();
-                }}
+                onClick={closeBackupCenter}
               >
                 Đóng
               </button>
@@ -11613,7 +11631,9 @@ const AppContent = () => {
                 <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Lần sao lưu gần nhất</p>
                 <p className="text-lg font-bold text-white">{latestBackupAt ? formatBackupTimestamp(latestBackupAt) : 'Chưa có'}</p>
                 <p className="text-sm text-slate-400">
-                  {latestBackup ? `${(latestBackup.payload.stories || []).length} truyện · ${(latestBackup.payload.characters || []).length} nhân vật` : 'Chưa có bản sao lưu nào trên thiết bị này.'}
+                  {latestBackup
+                    ? `${(latestBackup.payload.stories || []).length} truyện · ${(latestBackup.payload.characters || []).length} nhân vật · ${latestBackupStoredOnDrive ? 'đã có trên máy và trên Drive' : 'đang có trên máy'}`
+                    : 'Chưa có bản sao lưu nào trên thiết bị này.'}
                 </p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2">
@@ -11748,7 +11768,7 @@ const AppContent = () => {
                       <p className="mt-1">
                         {driveBinding
                           ? driveConnected
-                            ? `Bạn đang dùng đúng Gmail ${driveAuth?.account.email || driveBinding.email}. Từ giờ app sẽ luôn cập nhật lại cùng một tệp sao lưu trên Drive này.`
+                            ? `Bạn đang dùng đúng Gmail ${driveAuth?.account.email || driveBinding.email}. Từ giờ app sẽ giữ bản trên máy và đồng thời cập nhật lại cùng một tệp sao lưu trên Drive này.`
                             : `Phiên Drive hiện đã ngắt. Khi kết nối lại, bạn cần chọn đúng ${driveBinding.email}.`
                           : 'Chỉ cần liên kết một lần, sau đó app sẽ luôn biết chính xác nên lưu dữ liệu vào Gmail nào.'}
                       </p>
@@ -11827,6 +11847,9 @@ const AppContent = () => {
                               <p className="text-sm text-slate-400">
                                 {(snapshot.payload.stories || []).length} truyện · {(snapshot.payload.characters || []).length} nhân vật · {(snapshot.payload.translation_names || []).length} tên dịch
                               </p>
+                              {snapshot.drive?.status === 'uploaded' ? (
+                                <p className="text-xs text-emerald-300">Mốc này hiện đã có cả trên máy và trên Google Drive.</p>
+                              ) : null}
                               {snapshot.drive?.error ? (
                                 <p className="text-xs text-amber-300">
                                   {driveConfigured && (
