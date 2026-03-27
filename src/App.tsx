@@ -336,6 +336,7 @@ interface GoogleDriveBinding {
 const DEFAULT_PROFILE_AVATAR = 'https://api.dicebear.com/9.x/initials/svg?seed=User';
 const BACKUP_SETTINGS_KEY = 'truyenforge:backup-settings-v1';
 const DRIVE_BINDING_MAP_KEY = 'truyenforge:drive-binding-map-v1';
+const ACCOUNT_SYNC_DISABLED_NOTICE_KEY = 'truyenforge:account-sync-disabled-notice-v1';
 const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
   autoSnapshotEnabled: true,
   autoUploadToDrive: true,
@@ -8933,7 +8934,6 @@ const AppContent = () => {
     isHydrating: false,
     lastSerialized: '',
   });
-  const syncDisabledNoticeShownRef = useRef(false);
   const localBackupRestoreAttemptedRef = useRef(false);
   const backupAutomationRef = useRef({
     isRestoring: false,
@@ -9449,6 +9449,7 @@ const AppContent = () => {
         detail: 'Từ giờ app sẽ chỉ dùng đúng Gmail này để sao lưu dữ liệu của tài khoản hiện tại.',
         groupKey: 'backup-drive-connect-success',
       });
+      dismissToast('account-sync-disabled');
       const latest = backupSnapshots[0];
       if (latest && latest.drive?.status !== 'uploaded' && backupSettings.autoUploadToDrive) {
         await uploadSnapshotToDrive(latest, { quiet: true });
@@ -9463,7 +9464,7 @@ const AppContent = () => {
     } finally {
       setBackupBusyAction('');
     }
-  }, [backupSettings.autoUploadToDrive, backupSnapshots, driveBinding, loadBoundDriveBinding, persistDriveBinding, uploadSnapshotToDrive, user?.uid]);
+  }, [backupSettings.autoUploadToDrive, backupSnapshots, dismissToast, driveBinding, loadBoundDriveBinding, persistDriveBinding, uploadSnapshotToDrive, user?.uid]);
 
   const handleDisconnectDrive = useCallback(async () => {
     setBackupBusyAction('disconnect-drive');
@@ -10060,16 +10061,34 @@ const AppContent = () => {
   }, [syncWorkspaceToAccount, user, hasSupabase]);
 
   useEffect(() => {
-    if (!user || !hasSupabase || ACCOUNT_CLOUD_AUTOSYNC_ENABLED || syncDisabledNoticeShownRef.current) return;
-    syncDisabledNoticeShownRef.current = true;
-    notifyApp({
-      tone: 'warn',
-      message: 'Đồng bộ tài khoản đang được tắt tạm thời để tránh mất dữ liệu.',
-      detail: 'App vẫn giữ mốc sao lưu trên thiết bị, và nếu bạn đã liên kết Google Drive thì các bản sao vẫn có thể được cập nhật lên đó bình thường.',
-      groupKey: 'account-sync-disabled',
-      timeoutMs: 6200,
-    });
-  }, [user, hasSupabase]);
+    if (!user || !hasSupabase || ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
+    let cancelled = false;
+    const maybeWarnAboutManualSync = async () => {
+      const currentBinding = driveBinding || await loadBoundDriveBinding();
+      if (cancelled) return;
+      if (currentBinding) {
+        dismissToast('account-sync-disabled');
+        return;
+      }
+      if (typeof window === 'undefined') return;
+      const noticeKey = `${ACCOUNT_SYNC_DISABLED_NOTICE_KEY}:${user.uid}`;
+      const lastShownAt = Number(localStorage.getItem(noticeKey) || 0);
+      const hasShownRecently = Number.isFinite(lastShownAt) && lastShownAt > 0 && (Date.now() - lastShownAt) < 24 * 60 * 60 * 1000;
+      if (hasShownRecently) return;
+      localStorage.setItem(noticeKey, String(Date.now()));
+      notifyApp({
+        tone: 'warn',
+        message: 'Đồng bộ tài khoản đang được tắt tạm thời để tránh mất dữ liệu.',
+        detail: 'Hiện app vẫn giữ mốc sao lưu trên thiết bị. Nếu muốn có thêm một lớp an toàn, hãy liên kết Google Drive để các bản sao mới cũng được cập nhật lên đó.',
+        groupKey: 'account-sync-disabled',
+        timeoutMs: 6200,
+      });
+    };
+    void maybeWarnAboutManualSync();
+    return () => {
+      cancelled = true;
+    };
+  }, [dismissToast, driveBinding, hasSupabase, loadBoundDriveBinding, user]);
 
   const readImportedStoryFile = async (file: File): Promise<string> => {
     if (file.name.endsWith('.pdf')) return parsePDF(file);
