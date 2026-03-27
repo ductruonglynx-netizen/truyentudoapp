@@ -2051,9 +2051,16 @@ function isTransientAiServiceError(err: unknown): boolean {
 }
 
 function getGeminiFallbackModels(baseModel: string, kind: 'fast' | 'quality'): string[] {
-  const preferred = kind === 'fast'
-    ? ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-3.1-pro-preview']
-    : ['gemini-2.5-flash', 'gemini-3.1-pro-preview', 'gemini-2.0-flash'];
+  const normalizedBase = String(baseModel || '').trim().toLowerCase();
+  const isFlashFamily = normalizedBase.includes('flash');
+  const isProFamily = normalizedBase.includes('pro');
+  const preferred = isFlashFamily
+    ? ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash']
+    : isProFamily
+      ? ['gemini-3.1-pro-preview', 'gemini-1.5-pro']
+      : kind === 'fast'
+        ? ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash']
+        : ['gemini-3.1-pro-preview', 'gemini-1.5-pro', 'gemini-2.5-flash'];
   const merged = [baseModel, ...preferred].map((item) => String(item || '').trim()).filter(Boolean);
   return Array.from(new Set(merged));
 }
