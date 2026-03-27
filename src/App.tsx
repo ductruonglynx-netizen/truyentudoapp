@@ -5420,22 +5420,25 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
         Thể loại: ${genre}
         Giới thiệu: ${introduction}
         
-        Hãy gợi ý chi tiết để xây dựng bộ truyện này, bao gồm:
-        1. Cốt truyện chính (Plot): Các giai đoạn quan trọng, nút thắt.
-        2. Tuyến nhân vật: Nhân vật chính, phụ, phản diện (tên, vai trò, tính cách).
-        3. Thế giới & Bối cảnh: Quy tắc thế giới, địa danh quan trọng.
-        4. Thế lực & Tổ chức: Các phe phái đối lập hoặc đồng minh.
-        5. Phong cách hành văn gợi ý: Giọng văn, cách dùng từ.
-        6. Các yếu tố đặc sắc khác.
+        Hãy gợi ý chi tiết để xây dựng bộ truyện này, bắt buộc gồm tối thiểu 8 mục, mỗi mục tối thiểu 50 từ, rõ ràng, không lời dẫn kiểu “Tuyệt vời, tôi sẽ...”:
+        1. Cốt truyện chính (Plot): các giai đoạn quan trọng, nút thắt, cao trào.
+        2. Tuyến nhân vật: chính/phụ/phản diện (tên, vai trò, tính cách, động cơ).
+        3. Quan hệ và xung đột: cách các nhân vật va chạm, phát sinh mâu thuẫn, hòa giải hay leo thang.
+        4. Thế giới & Bối cảnh: quy tắc thế giới, địa danh, công nghệ/pháp thuật (nếu có).
+        5. Thế lực & Tổ chức/Phe phái: đồng minh, phản diện, mục tiêu và thủ đoạn.
+        6. Chủ đề & sắc thái cảm xúc: thông điệp, tông màu cảm xúc chính (u ám/lạc quan/vừa).
+        7. Phong cách hành văn gợi ý: giọng văn, nhịp, cách dùng từ, mức độ miêu tả, thoại.
+        8. Điểm đặc sắc/độc đáo để câu kéo người đọc ngay từ đầu.
+        9. (Nếu phù hợp) Lộ trình phát triển dài hạn: hướng mở cho phần tiếp theo hoặc spin-off.
 
         Yêu cầu bắt buộc:
-        - Viết đủ 6 mục trên, mỗi mục tối thiểu 2-3 gạch đầu dòng rõ ràng.
-        - Không cắt ngắn giữa chừng, không bỏ mục.
+        - Viết đủ ít nhất 8 mục; mỗi mục >= 50 từ.
+        - Không cắt ngắn giữa chừng, không bỏ mục, không viết kiểu đối thoại với người dùng.
         
         Trả về kết quả dưới dạng Markdown chuyên nghiệp, rõ ràng.`,
         {
-          maxOutputTokens: 6400,
-          minOutputChars: 900,
+          maxOutputTokens: 7600,
+          minOutputChars: 1600,
           maxRetries: 3,
         },
       );
