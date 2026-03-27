@@ -992,7 +992,7 @@ interface TranslationSegmentBatch {
 }
 
 const CHAPTER_HEADING_PATTERNS: RegExp[] = [
-  /^(?:#{1,6}\s*)?第\s*[0-9０-９一二三四五六七八九十百千万兩两零〇IVXLCDMivxlcdm]+\s*[章节回卷部集篇](?:\s*[:：\-—.．、]\s*.*)?$/,
+  /^(?:#{1,6}\s*)?第\s*[0-9０-９一二三四五六七八九十百千万兩两零〇IVXLCDMivxlcdm]+\s*[章节回卷部集篇](?:\s*(?:[:：\-—.．、]\s*|\s+).*)?$/,
   /^(?:#{1,6}\s*)?(?:chương|chuong)\s*[0-9ivxlcdm]+(?:\s*[:：\-—.．、]\s*.*)?$/i,
   /^(?:#{1,6}\s*)?chapter\s*[0-9ivxlcdm]+(?:\s*[:：\-—.．、]\s*.*)?$/i,
   /^(?:#{1,6}\s*)?(?:quyển|quyen|volume|vol\.)\s*[0-9ivxlcdm]+(?:\s*[:：\-—.．、]\s*.*)?$/i,
@@ -1013,6 +1013,25 @@ function isChapterHeadingLine(line: string): boolean {
   return CHAPTER_HEADING_PATTERNS.some((pattern) => pattern.test(cleaned));
 }
 
+function splitTextIntoNaturalSentences(text: string): string[] {
+  const normalized = String(text || '').replace(/\r\n/g, '\n').trim();
+  if (!normalized) return [];
+
+  const byLatinSpacing = normalized
+    .split(/(?<=[.!?。！？；;])(?:\s+|(?=["'“”‘’「」『』（）()]))/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (byLatinSpacing.length >= 2) return byLatinSpacing;
+
+  const byPunctuation = normalized
+    .match(/[^。！？!?；;\n]+[。！？!?；;”"’'）)]*/g)
+    ?.map((item) => item.trim())
+    .filter(Boolean);
+  if (byPunctuation?.length) return byPunctuation;
+
+  return [normalized];
+}
+
 function splitLargeTextByParagraphs(text: string, maxChars: number): string[] {
   const normalized = String(text || '').replace(/\r\n/g, '\n').trim();
   if (!normalized) return [];
@@ -1028,10 +1047,7 @@ function splitLargeTextByParagraphs(text: string, maxChars: number): string[] {
       return;
     }
 
-    const sentences = trimmed
-      .split(/(?<=[.!?。！？])\s+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const sentences = splitTextIntoNaturalSentences(trimmed);
 
     if (!sentences.length) {
       for (let i = 0; i < trimmed.length; i += maxChars) {
@@ -2052,14 +2068,17 @@ function isTransientAiServiceError(err: unknown): boolean {
 
 function getGeminiFallbackModels(baseModel: string, kind: 'fast' | 'quality'): string[] {
   const normalizedBase = String(baseModel || '').trim().toLowerCase();
+  const isFlashLiteFamily = normalizedBase.includes('flash-lite');
   const isFlashFamily = normalizedBase.includes('flash');
   const isProFamily = normalizedBase.includes('pro');
-  const preferred = isFlashFamily
+  const preferred = isFlashLiteFamily
+    ? ['gemini-2.5-flash-lite', 'gemini-2.0-flash-lite']
+    : isFlashFamily
     ? ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash']
     : isProFamily
       ? ['gemini-3.1-pro-preview', 'gemini-1.5-pro']
       : kind === 'fast'
-        ? ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash']
+        ? ['gemini-2.5-flash-lite', 'gemini-2.0-flash-lite', 'gemini-2.0-flash', 'gemini-2.5-flash']
         : ['gemini-3.1-pro-preview', 'gemini-1.5-pro', 'gemini-2.5-flash'];
   const merged = [baseModel, ...preferred].map((item) => String(item || '').trim()).filter(Boolean);
   return Array.from(new Set(merged));
