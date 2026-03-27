@@ -25,6 +25,7 @@ export const WRITER_RELEASE_NOTES: ReleaseNote[] = [
       'Đổi Lịch sử cập nhật sang kiểu bấm theo từng phiên bản: mặc định chỉ hiện tên version, khi bấm mới mở nội dung và chỉ mở một phiên bản tại một thời điểm.',
       'Bổ sung tự động lưu workspace cục bộ vào tài khoản đã đăng nhập, bao gồm hồ sơ giao diện, từ điển dịch, văn mẫu, kho prompt và cấu hình ngân sách AI.',
       'Thêm translation memory theo từng bộ truyện dịch để tên riêng/thuật ngữ đã khóa ở truyện A tiếp tục được giữ nhất quán trong các chương sau mà không làm ảnh hưởng truyện B.',
+      'Tích hợp luồng tạo ảnh bìa qua Raphael/Evolink API theo kiểu chạy nền trong app: bấm tạo bìa là gửi task trực tiếp, chờ kết quả trả về ngay trong giao diện, không bật popup hay tab ngoài.',
       'Đồng bộ phiên bản sản phẩm lên 0.1a và cập nhật Lịch sử cập nhật để người dùng theo dõi những thay đổi vừa triển khai.',
     ],
   },

@@ -254,6 +254,9 @@ const DEFAULT_RELAY_WEB_BASE = 'https://proxymid.ductruong-lynx.workers.dev/';
 const LEGACY_RELAY_HOST_RE = /(relay2026\.up\.railway\.app|relay2026\.vercel\.app|proxymid\.your-subdomain\.workers\.dev)/i;
 const RELAY_SOCKET_BASE = normalizeRelaySocketBase(import.meta.env.VITE_RELAY_WS_BASE || DEFAULT_RELAY_WS_BASE);
 const RELAY_WEB_BASE = ((import.meta.env.VITE_RELAY_WEB_BASE || DEFAULT_RELAY_WEB_BASE).trim().replace(/\/+$/, '') + '/');
+const RAPHAEL_API_BASE = 'https://api.evolink.ai/v1';
+const DEFAULT_RAPHAEL_MODEL = 'z-image-turbo';
+const DEFAULT_RAPHAEL_SIZE = '2:3';
 
 type ExportFormat = 'txt' | 'epub';
 
@@ -1467,6 +1470,147 @@ async function pickFirstReachableImageUrl(
     if (winner) return winner.candidate;
   }
   return '';
+}
+
+type RaphaelTaskStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+interface RaphaelTaskResponse {
+  id?: string;
+  status?: RaphaelTaskStatus | string;
+  progress?: number;
+  results?: string[];
+  error?: {
+    code?: string;
+    message?: string;
+    type?: string;
+  };
+  task_info?: {
+    estimated_time?: number;
+    can_cancel?: boolean;
+  };
+}
+
+function readRaphaelEnv(key: 'VITE_RAPHAEL_API_KEY' | 'VITE_RAPHAEL_MODEL' | 'VITE_RAPHAEL_SIZE'): string {
+  return ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.[key] || '').trim();
+}
+
+function getRaphaelApiKey(): string {
+  return readRaphaelEnv('VITE_RAPHAEL_API_KEY');
+}
+
+function getRaphaelModel(): string {
+  return readRaphaelEnv('VITE_RAPHAEL_MODEL') || DEFAULT_RAPHAEL_MODEL;
+}
+
+function getRaphaelSize(): string {
+  return readRaphaelEnv('VITE_RAPHAEL_SIZE') || DEFAULT_RAPHAEL_SIZE;
+}
+
+function extractRaphaelResultUrls(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const record = payload as Record<string, unknown>;
+  const results = [
+    record.results,
+    record.images,
+    record.output,
+    (record.data && typeof record.data === 'object') ? (record.data as Record<string, unknown>).results : null,
+  ].find((value) => Array.isArray(value));
+  if (!Array.isArray(results)) return [];
+  return results.map((item) => String(item || '').trim()).filter(Boolean);
+}
+
+async function readApiErrorMessage(resp: Response): Promise<string> {
+  try {
+    const text = (await resp.text()).trim();
+    if (!text) return '';
+    const parsed = tryParseJson<Record<string, unknown>>(text, 'object');
+    const errorRecord = (parsed?.error && typeof parsed.error === 'object')
+      ? parsed.error as Record<string, unknown>
+      : null;
+    const rawMessage =
+      String(errorRecord?.message || parsed?.message || parsed?.error_description || text).trim();
+    return rawMessage.slice(0, 260);
+  } catch {
+    return '';
+  }
+}
+
+async function generateRaphaelCoverImage(prompt: string): Promise<string> {
+  const apiKey = getRaphaelApiKey();
+  if (!apiKey) return '';
+
+  const createResponse = await fetchWithTimeout(`${RAPHAEL_API_BASE}/images/generations`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: getRaphaelModel(),
+      prompt,
+      size: getRaphaelSize(),
+      seed: Math.floor(Math.random() * 2147483646) + 1,
+      nsfw_check: false,
+      request_uuid: createClientId('raphael-cover'),
+    }),
+  }, 20000);
+
+  if (!createResponse.ok) {
+    const detail = await readApiErrorMessage(createResponse);
+    throw new Error(detail || `Raphael trả về HTTP ${createResponse.status}.`);
+  }
+
+  const createdTask = await createResponse.json() as RaphaelTaskResponse;
+  const immediateUrl = await pickFirstReachableImageUrl(extractRaphaelResultUrls(createdTask), 7000, 2);
+  if (immediateUrl) return immediateUrl;
+
+  const taskId = String(createdTask?.id || '').trim();
+  if (!taskId) {
+    throw new Error('Raphael không trả về task ID để theo dõi kết quả.');
+  }
+
+  const deadline = Date.now() + 65000;
+  let waitMs = Math.min(
+    3000,
+    Math.max(1200, Math.round(Number(createdTask?.task_info?.estimated_time || 0) * 120)),
+  );
+
+  while (Date.now() < deadline) {
+    await sleepMs(waitMs);
+    const statusResponse = await fetchWithTimeout(`${RAPHAEL_API_BASE}/tasks/${encodeURIComponent(taskId)}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+    }, 16000);
+
+    if (!statusResponse.ok) {
+      const detail = await readApiErrorMessage(statusResponse);
+      if (statusResponse.status >= 500 || statusResponse.status === 429) {
+        waitMs = Math.min(3200, waitMs + 400);
+        continue;
+      }
+      throw new Error(detail || `Không đọc được trạng thái tác vụ Raphael (${statusResponse.status}).`);
+    }
+
+    const task = await statusResponse.json() as RaphaelTaskResponse;
+    const urls = extractRaphaelResultUrls(task);
+    if (task.status === 'completed') {
+      if (!urls.length) {
+        throw new Error('Raphael báo hoàn tất nhưng chưa trả về URL ảnh.');
+      }
+      const reachable = await pickFirstReachableImageUrl(urls, 8000, 2);
+      return reachable || urls[0] || '';
+    }
+    if (task.status === 'failed') {
+      const detail = String(task.error?.message || task.error?.code || '').trim();
+      throw new Error(detail || 'Raphael từ chối hoặc không thể tạo ảnh với prompt hiện tại.');
+    }
+
+    waitMs = task.status === 'processing' ? 1400 : 1100;
+  }
+
+  throw new Error('Raphael xử lý quá lâu, hệ thống đã chuyển sang đường tạo bìa dự phòng.');
 }
 
 function escapeSvgText(input: string): string {
@@ -4730,9 +4874,15 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
       }
       let imageUrl = '';
 
-      // Try OpenAI image API first when user is configured with OpenAI/custom endpoint.
       try {
-        if (ai && (ai.provider === 'openai' || ai.provider === 'custom') && ai.apiKey.trim()) {
+        imageUrl = await generateRaphaelCoverImage(prompt);
+      } catch (error) {
+        console.warn('Raphael image generation not available, fallback to existing cover services.', error);
+      }
+
+      // Try OpenAI image API next when user is configured with OpenAI/custom endpoint.
+      try {
+        if (!imageUrl && ai && (ai.provider === 'openai' || ai.provider === 'custom') && ai.apiKey.trim()) {
           const openAiBase = ai.baseUrl || getProviderBaseUrl(ai.provider === 'custom' ? 'custom' : 'openai');
           const imageEndpoint = /\/images\/generations$/i.test(openAiBase)
             ? openAiBase

@@ -37,6 +37,9 @@ npm run dev
   - `VITE_SUPABASE_ANON_KEY`
   - `VITE_SUPABASE_WORKSPACES_TABLE` mặc định `user_workspaces`
   - `VITE_SUPABASE_QA_REPORTS_TABLE` mặc định `qa_reports`
+  - `VITE_RAPHAEL_API_KEY` để bật tạo ảnh bìa Raphael/Evolink ngay trong app
+  - `VITE_RAPHAEL_MODEL` mặc định `z-image-turbo`
+  - `VITE_RAPHAEL_SIZE` mặc định `2:3`
 - Chạy SQL khởi tạo ở [supabase/schema.sql](/Users/phand/Downloads/ai/truyentudoapp/supabase/schema.sql) trong Supabase SQL Editor trước khi test autosync.
 - Workspace tài khoản sẽ lưu chung các mục: truyện, nhân vật, AI Rules, từ điển dịch, văn mẫu, prompt library, hồ sơ giao diện và cấu hình budget AI.
 
@@ -91,6 +94,7 @@ npm run build
 - Đổi `Lịch sử cập nhật` sang kiểu accordion theo phiên bản: mặc định chỉ hiện tên version, bấm vào mới mở nội dung và chỉ mở một phiên bản tại một thời điểm.
 - Tự động lưu các cấu hình cục bộ quan trọng vào tài khoản đã đăng nhập, gồm hồ sơ giao diện, từ điển dịch, văn mẫu, kho prompt và budget AI.
 - Thêm translation memory theo từng bộ truyện để tên riêng/thuật ngữ đã khóa ở truyện này không làm ảnh hưởng truyện khác nhưng vẫn giữ consistency cho các chương sau của chính truyện đó.
+- Tích hợp tạo ảnh bìa qua Raphael/Evolink API để app gửi task tạo ảnh trong nền và nhận kết quả ngay tại giao diện hiện tại, không mở popup hoặc tab ngoài.
 
 ### v0.0a
 - Nâng prompt và context pack của Writer Pro để AI bám objective, timeline, glossary và Universe Wiki chắc hơn.
