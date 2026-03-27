@@ -11647,7 +11647,7 @@ const AppContent = () => {
                 <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-4">
                   <div className="flex items-center gap-2">
                     <Shield className="h-5 w-5 text-cyan-300" />
-                    <h4 className="text-lg font-semibold">Sao lưu ngay</h4>
+                    <h4 className="text-lg font-semibold">Sao lưu</h4>
                   </div>
                   <div className="flex flex-wrap gap-3">
                     <button
@@ -11655,7 +11655,7 @@ const AppContent = () => {
                       onClick={handleBackupNow}
                       disabled={backupBusyAction === 'backup-now'}
                     >
-                      {backupBusyAction === 'backup-now' ? 'Đang sao lưu...' : 'Nút Sao lưu ngay'}
+                      {backupBusyAction === 'backup-now' ? 'Đang sao lưu...' : 'Sao lưu ngay'}
                     </button>
                     <button
                       className="tf-btn tf-btn-ghost"
