@@ -293,6 +293,7 @@ const MAIN_AI_USAGE_KEY = 'main_ai_usage_v1';
 const UI_PROFILE_KEY = 'ui_profile_v1';
 const UI_THEME_KEY = 'ui_theme_v1';
 const UI_VIEWPORT_MODE_KEY = 'ui_viewport_mode_v1';
+const READER_PREFS_KEY = 'reader_prefs_v1';
 const STORIES_UPDATED_EVENT = 'stories:updated';
 const WORKSPACE_RECOVERY_KEY = 'truyenforge:workspace-recovery-v1';
 
@@ -302,6 +303,14 @@ type ViewportMode = 'desktop' | 'mobile';
 interface UiProfile {
   displayName: string;
   avatarUrl: string;
+}
+
+interface ReaderPrefs {
+  fontSize: number;
+  lineHeight: number;
+  fontFamily: 'serif' | 'sans' | 'mono';
+  background: string;
+  textColor: string;
 }
 
 const DEFAULT_PROFILE_AVATAR = 'https://api.dicebear.com/9.x/initials/svg?seed=User';
@@ -325,6 +334,36 @@ function loadUiProfile(defaultName?: string, defaultAvatar?: string): UiProfile 
 function saveUiProfile(profile: UiProfile): void {
   localStorage.setItem(UI_PROFILE_KEY, JSON.stringify(profile));
   emitLocalWorkspaceChanged('ui_profile');
+}
+
+function loadReaderPrefs(): ReaderPrefs {
+  try {
+    const raw = localStorage.getItem(READER_PREFS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<ReaderPrefs>;
+      return {
+        fontSize: Number(parsed.fontSize) || 17,
+        lineHeight: Number(parsed.lineHeight) || 1.7,
+        fontFamily: (parsed.fontFamily as ReaderPrefs['fontFamily']) || 'serif',
+        background: String(parsed.background || '#f6f9ff'),
+        textColor: String(parsed.textColor || '#0f172a'),
+      };
+    }
+  } catch {
+    // fallback below
+  }
+  return {
+    fontSize: 17,
+    lineHeight: 1.7,
+    fontFamily: 'serif',
+    background: '#f6f9ff',
+    textColor: '#0f172a',
+  };
+}
+
+function saveReaderPrefs(prefs: ReaderPrefs): void {
+  localStorage.setItem(READER_PREFS_KEY, JSON.stringify(prefs));
+  emitLocalWorkspaceChanged('ui_theme'); // reuse event for autosync
 }
 
 async function resizeAvatarFile(file: File): Promise<string> {
@@ -8663,6 +8702,8 @@ const AppContent = () => {
   const [profileNameDraft, setProfileNameDraft] = useState(profile.displayName);
   const [profileAvatarDraft, setProfileAvatarDraft] = useState(profile.avatarUrl);
   const [profileAvatarError, setProfileAvatarError] = useState('');
+  const [readerPrefs, setReaderPrefs] = useState<ReaderPrefs>(() => loadReaderPrefs());
+  const [showReaderPrefsModal, setShowReaderPrefsModal] = useState(false);
   const [isUploadingProfileAvatar, setIsUploadingProfileAvatar] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
@@ -9251,6 +9292,11 @@ const AppContent = () => {
     setProfileAvatarError('');
   };
 
+  const resetReaderPrefs = () => {
+    const defaults = loadReaderPrefs();
+    setReaderPrefs(defaults);
+  };
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', themeMode);
     saveThemeMode(themeMode);
@@ -9267,6 +9313,26 @@ const AppContent = () => {
   const handleToggleViewportMode = () => {
     setViewportMode((prev) => (prev === 'desktop' ? 'mobile' : 'desktop'));
   };
+
+  const applyReaderPrefsToDom = useCallback((prefs: ReaderPrefs) => {
+    const root = document.documentElement;
+    root.style.setProperty('--tf-reader-font-size', `${prefs.fontSize}px`);
+    root.style.setProperty('--tf-reader-line-height', `${prefs.lineHeight}`);
+    root.style.setProperty('--tf-reader-bg', prefs.background);
+    root.style.setProperty('--tf-reader-text', prefs.textColor);
+    const fontStack =
+      prefs.fontFamily === 'mono'
+        ? `"Fira Code", "JetBrains Mono", Consolas, "SFMono-Regular", Menlo, monospace`
+        : prefs.fontFamily === 'serif'
+          ? `"Merriweather", "Times New Roman", Georgia, serif`
+          : `"Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    root.style.setProperty('--tf-reader-font-family', fontStack);
+  }, []);
+
+  useEffect(() => {
+    applyReaderPrefsToDom(readerPrefs);
+    saveReaderPrefs(readerPrefs);
+  }, [applyReaderPrefsToDom, readerPrefs]);
 
   const handleTranslateStory = async (options: {
     isAdult: boolean,
@@ -10645,6 +10711,7 @@ const AppContent = () => {
           setEditingStory(null);
           setIsCreating(true);
         }}
+        onOpenReaderPrefs={() => setShowReaderPrefsModal(true)}
         themeMode={themeMode}
         onToggleTheme={handleToggleTheme}
         viewportMode={viewportMode}
@@ -10792,6 +10859,91 @@ const AppContent = () => {
       />
 
       <AppToastStack toasts={appToasts} onDismiss={dismissToast} />
+
+      {showReaderPrefsModal ? (
+        <div className="fixed inset-0 z-[240] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-indigo-100 bg-white shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-lg font-bold text-slate-900">Cài đặt đọc</p>
+                <p className="text-sm text-slate-500">Tùy chỉnh font, màu và kích thước chữ cho trải nghiệm đọc.</p>
+              </div>
+              <button
+                onClick={() => setShowReaderPrefsModal(false)}
+                className="rounded-full border border-slate-200 px-3 py-1 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Đóng
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                Kích thước chữ ({readerPrefs.fontSize}px)
+                <input
+                  type="range"
+                  min={14}
+                  max={24}
+                  step={1}
+                  value={readerPrefs.fontSize}
+                  onChange={(e) => setReaderPrefs((prev) => ({ ...prev, fontSize: Number(e.target.value) }))}
+                />
+              </label>
+              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                Dãn dòng ({readerPrefs.lineHeight.toFixed(2)})
+                <input
+                  type="range"
+                  min={1.4}
+                  max={2.2}
+                  step={0.05}
+                  value={readerPrefs.lineHeight}
+                  onChange={(e) => setReaderPrefs((prev) => ({ ...prev, lineHeight: Number(e.target.value) }))}
+                />
+              </label>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700 col-span-3">
+                Font chữ
+                <select
+                  value={readerPrefs.fontFamily}
+                  onChange={(e) => setReaderPrefs((prev) => ({ ...prev, fontFamily: e.target.value as ReaderPrefs['fontFamily'] }))}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                >
+                  <option value="serif">Serif (đọc truyện mềm mại)</option>
+                  <option value="sans">Sans (gọn gàng, hiện đại)</option>
+                  <option value="mono">Mono (dễ so sánh nội dung)</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                Màu nền
+                <input
+                  type="color"
+                  value={readerPrefs.background}
+                  onChange={(e) => setReaderPrefs((prev) => ({ ...prev, background: e.target.value }))}
+                  className="h-10 w-full rounded-xl border border-slate-200"
+                />
+              </label>
+              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                Màu chữ
+                <input
+                  type="color"
+                  value={readerPrefs.textColor}
+                  onChange={(e) => setReaderPrefs((prev) => ({ ...prev, textColor: e.target.value }))}
+                  className="h-10 w-full rounded-xl border border-slate-200"
+                />
+              </label>
+              <div className="flex items-end">
+                <button
+                  onClick={resetReaderPrefs}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Khôi phục mặc định
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <AILoadingOverlay 
         isVisible={isProcessingAI}

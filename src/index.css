@@ -19,6 +19,11 @@
   --warn: #b45309;
   --danger: #b91c1c;
   --border: #d9e2ec;
+  --tf-reader-font-size: 17px;
+  --tf-reader-line-height: 1.7;
+  --tf-reader-font-family: "Merriweather", "Times New Roman", Georgia, serif;
+  --tf-reader-bg: #f6f9ff;
+  --tf-reader-text: #0f172a;
 }
 
 :root[data-theme="light"] {
@@ -27,6 +32,8 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
+  --tf-reader-bg: #0b1220;
+  --tf-reader-text: #e5edff;
 }
 
 :root[data-theme="dark"] body {
@@ -1406,11 +1413,21 @@ body {
     min-height: clamp(180px, 32dvh, 420px);
     max-height: none;
     flex: 1 1 auto;
+    font-size: var(--tf-reader-font-size);
+    line-height: var(--tf-reader-line-height);
+    font-family: var(--tf-reader-font-family);
+    color: var(--tf-reader-text);
+    background-color: var(--tf-reader-bg);
   }
 
   .tf-editor-textarea {
     height: auto !important;
     min-height: clamp(240px, 38dvh, 560px) !important;
+    font-size: var(--tf-reader-font-size) !important;
+    line-height: var(--tf-reader-line-height) !important;
+    font-family: var(--tf-reader-font-family) !important;
+    color: var(--tf-reader-text);
+    background-color: var(--tf-reader-bg);
   }
 
   .tf-modal-overlay {
