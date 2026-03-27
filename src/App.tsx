@@ -6091,7 +6091,7 @@ const StoryDetail = ({
         exit={{ opacity: 0, y: -20 }}
         className="max-w-4xl mx-auto pt-24 pb-12 px-6"
       >
-        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center justify-between mb-8">
           <button 
             onClick={() => setSelectedChapter(null)}
             className="flex items-center gap-2 text-slate-500 hover:text-slate-900 transition-colors font-bold"
@@ -6123,7 +6123,15 @@ const StoryDetail = ({
             
               <h1 className="chapter-title text-4xl font-serif font-bold text-slate-900 mb-10">{getDisplayChapterTitle(selectedChapter)}</h1>
             
-            <div className="markdown-body text-lg leading-relaxed text-slate-700">
+            <div
+              className="markdown-body text-lg leading-relaxed text-slate-700"
+              style={{
+                fontSize: 'var(--tf-reader-font-size)',
+                lineHeight: 'var(--tf-reader-line-height)',
+                fontFamily: 'var(--tf-reader-font-family)',
+                color: 'var(--tf-reader-text)',
+              }}
+            >
               <ReactMarkdown>{formatContent(selectedChapter.content)}</ReactMarkdown>
             </div>
           </div>
@@ -10859,6 +10867,14 @@ const AppContent = () => {
       />
 
       <AppToastStack toasts={appToasts} onDismiss={dismissToast} />
+
+      <button
+        onClick={() => setShowReaderPrefsModal(true)}
+        className="fixed right-4 top-24 z-[230] inline-flex items-center gap-2 rounded-2xl border border-indigo-100 bg-white/90 px-4 py-2 text-sm font-bold text-slate-700 shadow-lg hover:-translate-y-0.5 hover:shadow-xl transition-all"
+        title="Cài đặt giao diện đọc"
+      >
+        <Settings className="w-4 h-4" /> Cài đặt đọc
+      </button>
 
       {showReaderPrefsModal ? (
         <div className="fixed inset-0 z-[240] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
