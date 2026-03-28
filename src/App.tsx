@@ -317,6 +317,7 @@ interface ReaderPrefs {
   fontFamily: 'serif' | 'sans' | 'mono';
   background: string;
   textColor: string;
+  colorMode: 'auto' | 'custom';
 }
 
 interface BackupSettings {
@@ -518,31 +519,53 @@ function saveUiProfile(profile: UiProfile): void {
   emitLocalWorkspaceChanged('ui_profile');
 }
 
-function loadReaderPrefs(): ReaderPrefs {
+function getReaderDefaultColors(themeMode: ThemeMode): Pick<ReaderPrefs, 'background' | 'textColor'> {
+  if (themeMode === 'dark') {
+    return {
+      background: '#0b1220',
+      textColor: '#e2e8f0',
+    };
+  }
+  return {
+    background: '#f6f9ff',
+    textColor: '#0f172a',
+  };
+}
+
+function createDefaultReaderPrefs(themeMode: ThemeMode): ReaderPrefs {
+  const colors = getReaderDefaultColors(themeMode);
+  return {
+    fontSize: 17,
+    lineHeight: 1.7,
+    fontFamily: 'serif',
+    background: colors.background,
+    textColor: colors.textColor,
+    colorMode: 'auto',
+  };
+}
+
+function loadReaderPrefs(themeMode: ThemeMode = loadThemeMode()): ReaderPrefs {
+  const defaults = createDefaultReaderPrefs(themeMode);
   try {
     const raw = getScopedStorageItem(READER_PREFS_KEY, {
       allowLegacyFallback: shouldAllowLegacyScopeFallback(),
     });
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<ReaderPrefs>;
+      const colorMode = parsed.colorMode === 'custom' ? 'custom' : 'auto';
       return {
         fontSize: Number(parsed.fontSize) || 17,
         lineHeight: Number(parsed.lineHeight) || 1.7,
         fontFamily: (parsed.fontFamily as ReaderPrefs['fontFamily']) || 'serif',
-        background: String(parsed.background || '#f6f9ff'),
-        textColor: String(parsed.textColor || '#0f172a'),
+        background: colorMode === 'custom' ? String(parsed.background || defaults.background) : defaults.background,
+        textColor: colorMode === 'custom' ? String(parsed.textColor || defaults.textColor) : defaults.textColor,
+        colorMode,
       };
     }
   } catch {
     // fallback below
   }
-  return {
-    fontSize: 17,
-    lineHeight: 1.7,
-    fontFamily: 'serif',
-    background: '#f6f9ff',
-    textColor: '#0f172a',
-  };
+  return defaults;
 }
 
 function saveReaderPrefs(prefs: ReaderPrefs): void {
@@ -9314,7 +9337,7 @@ const AppContent = () => {
   const [profileNameDraft, setProfileNameDraft] = useState(profile.displayName);
   const [profileAvatarDraft, setProfileAvatarDraft] = useState(profile.avatarUrl);
   const [profileAvatarError, setProfileAvatarError] = useState('');
-  const [readerPrefs, setReaderPrefs] = useState<ReaderPrefs>(() => loadReaderPrefs());
+  const [readerPrefs, setReaderPrefs] = useState<ReaderPrefs>(() => loadReaderPrefs(themeMode));
   const [showReaderPrefsModal, setShowReaderPrefsModal] = useState(false);
   const [backupSettings, setBackupSettings] = useState<BackupSettings>(() => loadBackupSettings());
   const [backupSnapshots, setBackupSnapshots] = useState<BackupSnapshot[]>([]);
@@ -9510,10 +9533,11 @@ const AppContent = () => {
   }, [refreshBackupHistory]);
 
   const refreshWorkspaceUiFromStorage = useCallback(() => {
+    const nextThemeMode = loadThemeMode();
     setProfile(loadUiProfile(user?.displayName || undefined, user?.photoURL || undefined));
-    setThemeMode(loadThemeMode());
+    setThemeMode(nextThemeMode);
     setViewportMode(loadViewportMode());
-    setReaderPrefs(loadReaderPrefs());
+    setReaderPrefs(loadReaderPrefs(nextThemeMode));
     setSelectedStory(null);
     setEditingStory(null);
     setIsCreating(false);
@@ -10764,13 +10788,26 @@ const AppContent = () => {
   };
 
   const resetReaderPrefs = () => {
-    const defaults = loadReaderPrefs();
+    const defaults = createDefaultReaderPrefs(themeMode);
     setReaderPrefs(defaults);
   };
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', themeMode);
     saveThemeMode(themeMode);
+  }, [themeMode]);
+
+  useEffect(() => {
+    setReaderPrefs((prev) => {
+      if (prev.colorMode !== 'auto') return prev;
+      const defaults = getReaderDefaultColors(themeMode);
+      if (prev.background === defaults.background && prev.textColor === defaults.textColor) return prev;
+      return {
+        ...prev,
+        background: defaults.background,
+        textColor: defaults.textColor,
+      };
+    });
   }, [themeMode]);
 
   useEffect(() => {
@@ -12969,7 +13006,7 @@ CHỈ trả JSON thuần, không bọc markdown.
                 <input
                   type="color"
                   value={readerPrefs.background}
-                  onChange={(e) => setReaderPrefs((prev) => ({ ...prev, background: e.target.value }))}
+                  onChange={(e) => setReaderPrefs((prev) => ({ ...prev, background: e.target.value, colorMode: 'custom' }))}
                   className="h-10 w-full rounded-xl border border-slate-200"
                 />
               </label>
@@ -12978,7 +13015,7 @@ CHỈ trả JSON thuần, không bọc markdown.
                 <input
                   type="color"
                   value={readerPrefs.textColor}
-                  onChange={(e) => setReaderPrefs((prev) => ({ ...prev, textColor: e.target.value }))}
+                  onChange={(e) => setReaderPrefs((prev) => ({ ...prev, textColor: e.target.value, colorMode: 'custom' }))}
                   className="h-10 w-full rounded-xl border border-slate-200"
                 />
               </label>
