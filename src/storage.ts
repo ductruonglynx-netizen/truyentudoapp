@@ -1,7 +1,7 @@
 import { loadBudgetState, saveBudgetState, type BudgetState } from './finops';
 import { loadPromptLibraryState, savePromptLibraryState } from './promptLibraryStore';
 import { emitLocalWorkspaceChanged } from './localWorkspaceSync';
-import { getScopedStorageItem, setScopedStorageItem, shouldAllowLegacyScopeFallback } from './workspaceScope';
+import { getScopedStorageItem, setScopedStorageItem, shouldAllowLegacyScopeFallback, removeScopedStorageItem } from './workspaceScope';
 import { compressToUTF16, decompressFromUTF16 } from 'lz-string';
 
 const SAFE_IMPORT_BACKUP_KEY = 'safe_import_backup_v1';
@@ -10,6 +10,8 @@ const STORIES_BACKUP_LIMIT = 12;
 const STORIES_STORAGE_CODEC_PREFIX = 'lzutf16:';
 const STORIES_STORAGE_COMPRESSION_THRESHOLD = 260_000;
 const STORIES_KEY = 'stories';
+const STORIES_INDEX_KEY = 'stories_index_v2';
+const STORIES_ITEM_KEY_PREFIX = 'stories_item_v2:';
 const CHARACTERS_KEY = 'characters';
 const AI_RULES_KEY = 'ai_rules';
 const STYLE_REFERENCES_KEY = 'style_references';
@@ -192,6 +194,63 @@ function setScopedRaw(baseKey: string, value: string): void {
   setScopedStorageItem(baseKey, value);
 }
 
+function removeScopedRaw(baseKey: string): void {
+  removeScopedStorageItem(baseKey);
+}
+
+function getStoryItemKey(storyId: string): string {
+  return `${STORIES_ITEM_KEY_PREFIX}${storyId}`;
+}
+
+function readStoryIndex(): string[] {
+  try {
+    const raw = getScopedRaw(STORIES_INDEX_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed.map((item) => String(item || '').trim()).filter(Boolean)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function readStoriesFromSegmentedStorage(): any[] {
+  const index = readStoryIndex();
+  if (!index.length) return [];
+  const stories: any[] = [];
+  index.forEach((storyId) => {
+    const raw = getScopedRaw(getStoryItemKey(storyId));
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        stories.push(normalizeStory(parsed));
+      }
+    } catch {
+      // Skip corrupted item.
+    }
+  });
+  return stories;
+}
+
+function writeStoriesToSegmentedStorage(stories: any[]): void {
+  const normalized = Array.isArray(stories) ? stories.map(normalizeStory) : [];
+  const previousIndex = readStoryIndex();
+  const nextIndex = normalized.map((story) => String(story.id || '').trim()).filter(Boolean);
+  const nextIndexSet = new Set(nextIndex);
+  normalized.forEach((story) => {
+    setScopedRaw(getStoryItemKey(story.id), JSON.stringify(story));
+  });
+  previousIndex.forEach((storyId) => {
+    if (!nextIndexSet.has(storyId)) {
+      removeScopedRaw(getStoryItemKey(storyId));
+    }
+  });
+  setScopedRaw(STORIES_INDEX_KEY, JSON.stringify(nextIndex));
+  // Dọn bản lưu legacy cũ để tránh mỗi lần ghi lại phải stringify cả mảng lớn.
+  removeScopedRaw(STORIES_KEY);
+}
+
 function decodeStoriesPayload(raw: string | null): any[] {
   if (!raw) return [];
   try {
@@ -343,9 +402,20 @@ function downloadBackupPayload(payload: StorageBackupPayload, filename?: string)
 
 export const storage = {
   getStories: () => {
-    const data = getScopedRaw(STORIES_KEY);
-    const parsed = decodeStoriesPayload(data);
-    return Array.isArray(parsed) ? parsed.map(normalizeStory) : [];
+    const segmentedStories = readStoriesFromSegmentedStorage();
+    if (segmentedStories.length > 0) return segmentedStories;
+
+    const legacyData = getScopedRaw(STORIES_KEY);
+    const legacyParsed = decodeStoriesPayload(legacyData);
+    const legacyStories = Array.isArray(legacyParsed) ? legacyParsed.map(normalizeStory) : [];
+    if (legacyStories.length > 0) {
+      try {
+        writeStoriesToSegmentedStorage(legacyStories);
+      } catch {
+        // If migration fails, continue using legacy in this session.
+      }
+    }
+    return legacyStories;
   },
   getLatestStoriesBackup: () => {
     try {
@@ -364,16 +434,15 @@ export const storage = {
       Array.isArray(stories) ? stories.map(normalizeStory) : [],
       previousStories,
     );
-    const encodedStories = encodeStoriesPayload(normalizedStories);
     try {
-      setScopedRaw(STORIES_KEY, encodedStories);
+      writeStoriesToSegmentedStorage(normalizedStories);
     } catch {
       try {
         setScopedRaw(STORIES_BACKUP_HISTORY_KEY, JSON.stringify({
           schemaVersion: 2,
           entries: [],
         }));
-        setScopedRaw(STORIES_KEY, encodedStories);
+        writeStoriesToSegmentedStorage(normalizedStories);
       } catch {
         throw new Error('Không thể lưu vì dung lượng trình duyệt đã đầy. Hãy mở Sao lưu để tải JSON ra máy hoặc xóa bớt dữ liệu cũ.');
       }

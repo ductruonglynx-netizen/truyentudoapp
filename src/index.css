@@ -1027,28 +1027,29 @@ body {
 /* Override common button colors with gradients */
 .bg-indigo-600 {
   background-image: linear-gradient(135deg, #0bb8b3 0%, #12d1c8 45%, #0f7fce 100%) !important;
-  box-shadow: 0 18px 34px rgba(0, 129, 201, 0.3), 0 0 20px rgba(0, 201, 183, 0.24);
+  box-shadow: 0 8px 16px rgba(0, 129, 201, 0.24);
   color: #06263a !important;
 }
 .bg-emerald-600 {
   background-image: linear-gradient(135deg, #0dcab7 0%, #3ce8d8 100%) !important;
-  box-shadow: 0 18px 34px rgba(93, 228, 199, 0.34), 0 0 20px rgba(12, 202, 183, 0.24);
+  box-shadow: 0 8px 16px rgba(93, 228, 199, 0.24);
   color: #06263a !important;
 }
 .bg-amber-600 {
   background-image: linear-gradient(135deg, #b76413 0%, #df7d1e 50%, #f0a141 100%) !important;
-  box-shadow: 0 18px 34px rgba(176, 100, 20, 0.3), 0 0 20px rgba(240, 161, 65, 0.24);
+  box-shadow: 0 8px 16px rgba(176, 100, 20, 0.24);
   color: #fff7ed !important;
 }
 .bg-slate-900 {
   background-image: linear-gradient(135deg, #0f172a 0%, #1e293b 100%) !important;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.4);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.24);
 }
 .bg-white {
-  background: rgba(255, 255, 255, 0.82) !important;
+  background: #ffffff !important;
   color: #2f2f2f !important;
-  box-shadow: 0 12px 30px rgba(0,0,0,0.14);
-  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 .border-slate-200 {
   border-color: rgba(0, 0, 0, 0.06) !important;

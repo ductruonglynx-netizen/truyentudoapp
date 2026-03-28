@@ -296,6 +296,7 @@ const IMAGE_API_CONFIG_KEY = 'image_api_config_v1';
 const RELAY_TOKEN_CACHE_KEY = 'relay_token_cache_v1';
 const GEMINI_RESPONSE_CACHE_KEY = 'gemini_response_cache_v1';
 const MAIN_AI_USAGE_KEY = 'main_ai_usage_v1';
+const MAIN_AI_USAGE_UPDATED_EVENT = 'main_ai_usage_updated';
 const UI_PROFILE_KEY = 'ui_profile_v1';
 const UI_THEME_KEY = 'ui_theme_v1';
 const UI_VIEWPORT_MODE_KEY = 'ui_viewport_mode_v1';
@@ -2692,6 +2693,9 @@ function readMainAiUsage(): { requests: number; estTokens: number } {
 
 function writeMainAiUsage(next: { requests: number; estTokens: number }): void {
   localStorage.setItem(MAIN_AI_USAGE_KEY, JSON.stringify(next));
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(MAIN_AI_USAGE_UPDATED_EVENT));
+  }
 }
 
 function estimateTextTokens(text: string): number {
@@ -4567,6 +4571,12 @@ const ToolsManager = ({
   const relayReconnectRef = useRef<number | null>(null);
   const relayShouldReconnectRef = useRef(false);
   const relayRequestReadyRef = useRef(false);
+  const refreshAiUsageStats = useCallback(() => {
+    const next = readMainAiUsage();
+    setAiUsageStats((prev) => (
+      prev.requests === next.requests && prev.estTokens === next.estTokens ? prev : next
+    ));
+  }, []);
 
   useEffect(() => {
     const runtime = getApiRuntimeConfig();
@@ -4617,14 +4627,25 @@ const ToolsManager = ({
     setImageAiApiKey(imageApi.providers[imageApi.provider]?.apiKey || '');
     const token = (localStorage.getItem(RELAY_TOKEN_CACHE_KEY) || runtime.relayToken || '').trim();
     setRelayMaskedToken(token ? maskSensitive(token) : 'Chưa nhận token');
-    setAiUsageStats(readMainAiUsage());
+    refreshAiUsageStats();
   }, []);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      setAiUsageStats(readMainAiUsage());
-    }, 1500);
-    return () => window.clearInterval(timer);
+    if (typeof window === 'undefined') return;
+    const handleUsageEvent = () => refreshAiUsageStats();
+    const handleStorage = (event: StorageEvent) => {
+      if (!event.key || event.key === MAIN_AI_USAGE_KEY) {
+        refreshAiUsageStats();
+      }
+    };
+    window.addEventListener(MAIN_AI_USAGE_UPDATED_EVENT, handleUsageEvent as EventListener);
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('focus', handleUsageEvent);
+    return () => {
+      window.removeEventListener(MAIN_AI_USAGE_UPDATED_EVENT, handleUsageEvent as EventListener);
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('focus', handleUsageEvent);
+    };
   }, []);
 
   const detectedDraftProvider = detectApiProviderFromValue(apiEntryText.trim());
@@ -5262,7 +5283,7 @@ const ToolsManager = ({
       }
 
       const passed = results.filter(r => r.ok);
-      setAiUsageStats(readMainAiUsage());
+      refreshAiUsageStats();
       if (failedAt) {
         const reasonText = failedReason ? ` (${failedReason})` : '';
         setAiCheckStatus(`Dừng ở bước ${failedAt}${reasonText} · ${providerLabel} / ${ai.model}`);
@@ -5344,7 +5365,7 @@ const ToolsManager = ({
 
   const handleResetAiUsage = () => {
     writeMainAiUsage({ requests: 0, estTokens: 0 });
-    setAiUsageStats({ requests: 0, estTokens: 0 });
+    refreshAiUsageStats();
     setAiCheckStatus('Thống kê phiên đã được đặt lại.');
   };
 
@@ -9706,6 +9727,7 @@ const AppContent = () => {
   const workspaceDeviceIdRef = useRef<string>(getWorkspaceDeviceId());
   const activeStoryLockRef = useRef<WorkspaceEditLock | null>(null);
   const syncQueuePumpRef = useRef<{ timer: number | null; running: boolean }>({ timer: null, running: false });
+  const queueStatsRefreshTimerRef = useRef<number | null>(null);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -9720,24 +9742,53 @@ const AppContent = () => {
     setAccountLastSyncedAt(syncedAt);
   }, [showBackupCenterModal]);
 
+  const applyAccountSyncQueueStats = useCallback((next: WorkspaceSyncQueueStats, force = false) => {
+    setAccountSyncQueueStats((prev) => {
+      const unchanged = prev.pending === next.pending
+        && prev.failed === next.failed
+        && prev.running === next.running
+        && prev.nextRetryAt === next.nextRetryAt
+        && prev.lastSuccessAt === next.lastSuccessAt
+        && prev.lastError === next.lastError;
+      if (unchanged) return prev;
+
+      const hasQueueIssue = next.failed > 0 || next.pending > 0 || next.running > 0;
+      if (!force && !showBackupCenterModal && !hasQueueIssue) {
+        return prev;
+      }
+      return next;
+    });
+  }, [showBackupCenterModal]);
+
   const refreshAccountSyncQueueStats = useCallback(async () => {
     if (!user?.uid) {
-      setAccountSyncQueueStats({
+      applyAccountSyncQueueStats({
         pending: 0,
         failed: 0,
         running: 0,
         nextRetryAt: null,
         lastSuccessAt: null,
-      });
+      }, true);
       return;
     }
     try {
       const stats = await getWorkspaceSyncQueueStats(user.uid);
-      setAccountSyncQueueStats(stats);
+      applyAccountSyncQueueStats(stats);
     } catch (error) {
       console.warn('Không đọc được trạng thái queue autosync.', error);
     }
-  }, [user?.uid]);
+  }, [applyAccountSyncQueueStats, user?.uid]);
+
+  const scheduleRefreshAccountSyncQueueStats = useCallback((delayMs = 220) => {
+    if (typeof window === 'undefined') return;
+    if (queueStatsRefreshTimerRef.current) {
+      window.clearTimeout(queueStatsRefreshTimerRef.current);
+    }
+    queueStatsRefreshTimerRef.current = window.setTimeout(() => {
+      queueStatsRefreshTimerRef.current = null;
+      void refreshAccountSyncQueueStats();
+    }, Math.max(0, delayMs));
+  }, [refreshAccountSyncQueueStats]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -11188,7 +11239,7 @@ const AppContent = () => {
       const stats = await processWorkspaceSyncQueue(user.uid, async () => {
         await syncWorkspaceToAccount();
       });
-      setAccountSyncQueueStats(stats);
+      applyAccountSyncQueueStats(stats);
       if (stats.failed > 0 && shouldNotifyAccountSyncError(workspaceSyncRef.current.lastErrorNotifiedAt)) {
         workspaceSyncRef.current.lastErrorNotifiedAt = Date.now();
         notifyApp({
@@ -11202,7 +11253,7 @@ const AppContent = () => {
     } finally {
       syncQueuePumpRef.current.running = false;
     }
-  }, [hasSupabase, syncWorkspaceToAccount, user?.uid]);
+  }, [applyAccountSyncQueueStats, hasSupabase, syncWorkspaceToAccount, user?.uid]);
 
   const scheduleAccountSyncQueue = useCallback((delayMs = ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS) => {
     if (typeof window === 'undefined') return;
@@ -11219,12 +11270,16 @@ const AppContent = () => {
     if (!user?.uid) return;
     void refreshAccountSyncQueueStats();
     const unsubscribe = subscribeWorkspaceSyncQueue(() => {
-      void refreshAccountSyncQueueStats();
+      scheduleRefreshAccountSyncQueueStats();
     });
     return () => {
       unsubscribe();
+      if (queueStatsRefreshTimerRef.current) {
+        window.clearTimeout(queueStatsRefreshTimerRef.current);
+        queueStatsRefreshTimerRef.current = null;
+      }
     };
-  }, [refreshAccountSyncQueueStats, user?.uid]);
+  }, [refreshAccountSyncQueueStats, scheduleRefreshAccountSyncQueueStats, user?.uid]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !user || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
