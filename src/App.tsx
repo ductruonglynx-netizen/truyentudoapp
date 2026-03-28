@@ -658,6 +658,22 @@ function sanitizeAccountWorkspaceForUser(snapshot: AccountWorkspaceSnapshot, use
   };
 }
 
+function buildWorkspacePayloadHash(snapshot: Partial<AccountWorkspaceSnapshot>): string {
+  return JSON.stringify({
+    uiProfile: snapshot.uiProfile || null,
+    uiTheme: snapshot.uiTheme || null,
+    uiViewportMode: snapshot.uiViewportMode || null,
+    stories: Array.isArray(snapshot.stories) ? snapshot.stories : [],
+    characters: Array.isArray(snapshot.characters) ? snapshot.characters : [],
+    aiRules: Array.isArray(snapshot.aiRules) ? snapshot.aiRules : [],
+    styleReferences: Array.isArray(snapshot.styleReferences) ? snapshot.styleReferences : [],
+    translationNames: Array.isArray(snapshot.translationNames) ? snapshot.translationNames : [],
+    promptLibrary: snapshot.promptLibrary || null,
+    finopsBudget: snapshot.finopsBudget || null,
+    driveBinding: normalizeDriveBinding(snapshot.driveBinding) || null,
+  });
+}
+
 const ACCOUNT_WORKSPACE_BINDINGS = [
   { section: 'ui_profile', key: 'uiProfile' },
   { section: 'ui_theme', key: 'uiTheme' },
@@ -6375,7 +6391,6 @@ const StoryDetail = ({
   onReaderBack,
   onReaderNavigateChapter,
   breadcrumbs,
-  buildChapterHref,
 }: { 
   story: Story, 
   onBack: () => void, 
@@ -6389,7 +6404,6 @@ const StoryDetail = ({
   onReaderBack?: () => void,
   onReaderNavigateChapter?: (chapterId: string, mode?: 'push' | 'replace') => void,
   breadcrumbs?: BreadcrumbItem[],
-  buildChapterHref?: (chapter: Chapter) => string,
 }) => {
   const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null);
   const [isEditingChapter, setIsEditingChapter] = useState(false);
@@ -6511,6 +6525,14 @@ const StoryDetail = ({
     setShowDictionaryPopup(false);
   };
 
+  const persistUpdatedStory = (updatedStory: Story): void => {
+    const stories = storage.getStories();
+    const newList = stories.map((s: Story) => (s.id === story.id ? updatedStory : s));
+    storage.saveStories(newList);
+    bumpStoriesVersion();
+    onUpdateStory(updatedStory);
+  };
+
   const handleSaveChapterEdit = async () => {
     if (!selectedChapter || !story.chapters) return;
     
@@ -6523,17 +6545,59 @@ const StoryDetail = ({
     const updatedStory = { ...story, chapters: updatedChapters, updatedAt: new Date().toISOString() };
     
     try {
-      const stories = storage.getStories();
-      const newList = stories.map((s: Story) => s.id === story.id ? updatedStory : s);
-      storage.saveStories(newList);
-      bumpStoriesVersion();
-      
-      onUpdateStory(updatedStory);
+      persistUpdatedStory(updatedStory);
       setSelectedChapter({ ...selectedChapter, title: editTitle, content: editContent });
       setIsEditingChapter(false);
     } catch (error) {
       console.error("Lỗi khi cập nhật chương:", error);
       notifyApp({ tone: 'error', message: "Không thể lưu thay đổi chương." });
+    }
+  };
+
+  const handleDeleteChapter = async (chapterId: string) => {
+    if (!story.chapters || !story.chapters.length) return;
+    const target = story.chapters.find((item) => item.id === chapterId);
+    if (!target) return;
+    if (!window.confirm(`Xóa chương "${target.title || `Chương ${target.order}`}"?`)) return;
+
+    try {
+      const remaining = story.chapters
+        .filter((item) => item.id !== chapterId)
+        .sort((a, b) => a.order - b.order)
+        .map((chapter, index) => ({
+          ...chapter,
+          order: index + 1,
+        }));
+
+      const updatedStory: Story = {
+        ...story,
+        chapters: normalizeChaptersForLocal(remaining),
+        updatedAt: new Date().toISOString(),
+      };
+      persistUpdatedStory(updatedStory);
+
+      const wasReadingDeletedChapter = selectedChapter?.id === chapterId;
+      if (wasReadingDeletedChapter) {
+        setSelectedChapter(null);
+        onReaderBack?.();
+      } else if (selectedChapter) {
+        const refreshed = updatedStory.chapters?.find((item) => item.id === selectedChapter.id) || null;
+        setSelectedChapter(refreshed);
+      }
+
+      notifyApp({
+        tone: 'success',
+        message: 'Đã xóa chương.',
+        groupKey: 'chapter-delete-success',
+      });
+    } catch (error) {
+      console.error('Lỗi khi xóa chương:', error);
+      notifyApp({
+        tone: 'error',
+        message: 'Không thể xóa chương.',
+        detail: error instanceof Error ? error.message : undefined,
+        groupKey: 'chapter-delete-failed',
+      });
     }
   };
 
@@ -6593,6 +6657,12 @@ const StoryDetail = ({
               className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-bold"
             >
               <Edit3 className="w-4 h-4" /> Chỉnh sửa chương
+            </button>
+            <button
+              onClick={() => void handleDeleteChapter(selectedChapter.id)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 transition-colors text-sm font-bold"
+            >
+              <Trash2 className="w-4 h-4" /> Xóa chương
             </button>
           </div>
         </div>
@@ -6828,7 +6898,7 @@ const StoryDetail = ({
             </div>
             <div className="space-y-2">
               {story.chapters && story.chapters.length > 0 ? (
-                story.chapters.sort((a, b) => a.order - b.order).map((chapter) => {
+                [...story.chapters].sort((a, b) => a.order - b.order).map((chapter) => {
                   const chapterRowContent = (
                     <>
                       <div className="flex items-center gap-4">
@@ -6844,32 +6914,40 @@ const StoryDetail = ({
                           </span>
                         </div>
                       </div>
-                      <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-indigo-400 transition-colors" />
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            void handleDeleteChapter(chapter.id);
+                          }}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-200 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600"
+                          title="Xóa chương"
+                          aria-label={`Xóa ${chapter.title || `chương ${chapter.order}`}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                        <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-indigo-400 transition-colors" />
+                      </div>
                     </>
                   );
 
-                  const chapterHref = buildChapterHref?.(chapter);
-                  if (chapterHref) {
-                    return (
-                      <Link
-                        key={chapter.id}
-                        to={chapterHref}
-                        state={{ storyId: story.id }}
-                        className="chapter-row w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 transition-all text-left group"
-                      >
-                        {chapterRowContent}
-                      </Link>
-                    );
-                  }
-
                   return (
-                    <button
+                    <div
                       key={chapter.id}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => handleOpenChapter(chapter)}
-                      className="chapter-row w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 transition-all text-left group"
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          handleOpenChapter(chapter);
+                        }
+                      }}
+                      className="chapter-row w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 transition-all text-left group cursor-pointer"
                     >
                       {chapterRowContent}
-                    </button>
+                    </div>
                   );
                 })
               ) : (
@@ -9268,10 +9346,20 @@ const AppContent = () => {
   const prevLocationKeyRef = useRef<string>('');
   const lastHomeBackAttemptRef = useRef(0);
   const workspaceScopeRef = useRef<string>(getWorkspaceScopeUser());
+  const syncUiTickRef = useRef(0);
 
   const navigate = useNavigate();
   const location = useLocation();
   const navigationType = useNavigationType();
+
+  const commitAccountSyncedAt = useCallback((syncedAt: string, force = false) => {
+    workspaceSyncRef.current.lastSyncedAt = syncedAt;
+    if (!force && !showBackupCenterModal) return;
+    const now = Date.now();
+    if (!force && now - syncUiTickRef.current < 5000) return;
+    syncUiTickRef.current = now;
+    setAccountLastSyncedAt(syncedAt);
+  }, [showBackupCenterModal]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -9923,8 +10011,7 @@ const AppContent = () => {
       storeWorkspaceRecoverySnapshot(mergedSnapshot, 'manual-sync', user.uid);
       workspaceSyncRef.current.lastSerialized = JSON.stringify(mergedSnapshot);
       const syncedAt = new Date().toISOString();
-      workspaceSyncRef.current.lastSyncedAt = syncedAt;
-      setAccountLastSyncedAt(syncedAt);
+      commitAccountSyncedAt(syncedAt, true);
       setBackupSettings((prev) => ({ ...prev, lastManualSyncAt: syncedAt }));
       await createWorkspaceBackup('manual', { force: true, quiet: true });
       notifyApp({
@@ -9944,7 +10031,7 @@ const AppContent = () => {
       workspaceSyncRef.current.isHydrating = false;
       setBackupBusyAction('');
     }
-  }, [createWorkspaceBackup, hasSupabase, refreshWorkspaceUiFromStorage, user]);
+  }, [commitAccountSyncedAt, createWorkspaceBackup, hasSupabase, refreshWorkspaceUiFromStorage, user]);
 
   useEffect(() => {
     saveBackupSettings(backupSettings);
@@ -10353,22 +10440,18 @@ const AppContent = () => {
       }
     }
 
-  const serialized = JSON.stringify(mergedSnapshot);
+    const serialized = JSON.stringify(mergedSnapshot);
     if (serialized === workspaceSyncRef.current.lastSerialized) return;
 
-    const localSerialized = JSON.stringify(localSnapshot);
-    if (serialized !== localSerialized) {
+    const localPayloadHash = buildWorkspacePayloadHash(localSnapshot);
+    const mergedPayloadHash = buildWorkspacePayloadHash(mergedSnapshot);
+    if (mergedPayloadHash !== localPayloadHash) {
       workspaceSyncRef.current.isHydrating = true;
       try {
         applyAccountWorkspaceSnapshot(mergedSnapshot, user.displayName || undefined, user.photoURL || undefined, user.uid);
         setProfile(loadUiProfile(user.displayName || undefined, user.photoURL || undefined));
         setThemeMode(loadThemeMode());
         setViewportMode(loadViewportMode());
-        notifyApp({
-          tone: 'info',
-          message: 'Đã khôi phục phần dữ liệu còn thiếu từ tài khoản đăng nhập.',
-          groupKey: 'account-sync-restore',
-        });
       } finally {
         workspaceSyncRef.current.isHydrating = false;
       }
@@ -10377,9 +10460,8 @@ const AppContent = () => {
     await saveServerWorkspace(user.uid, mergedSnapshot);
     storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-save', user.uid);
     workspaceSyncRef.current.lastSerialized = serialized;
-    workspaceSyncRef.current.lastSyncedAt = new Date().toISOString();
-    setAccountLastSyncedAt(workspaceSyncRef.current.lastSyncedAt);
-  }, [user, hasSupabase]);
+    commitAccountSyncedAt(new Date().toISOString());
+  }, [commitAccountSyncedAt, user, hasSupabase]);
 
   useEffect(() => {
     if (!user || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) {
@@ -10393,7 +10475,7 @@ const AppContent = () => {
       workspaceSyncRef.current.isHydrating = true;
       try {
         const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined, user.uid);
-        const localSerialized = JSON.stringify(localSnapshot);
+        const localPayloadHash = buildWorkspacePayloadHash(localSnapshot);
         const remoteSnapshot = await loadServerWorkspace<AccountWorkspaceSnapshot>(user.uid);
         if (cancelled) return;
 
@@ -10443,26 +10525,21 @@ const AppContent = () => {
           }
         }
         const mergedSerialized = JSON.stringify(mergedSnapshot);
+        const mergedPayloadHash = buildWorkspacePayloadHash(mergedSnapshot);
 
-        if (mergedSerialized !== localSerialized) {
+        if (mergedPayloadHash !== localPayloadHash) {
           applyAccountWorkspaceSnapshot(mergedSnapshot, user.displayName || undefined, user.photoURL || undefined, user.uid);
           setProfile(loadUiProfile(user.displayName || undefined, user.photoURL || undefined));
           setThemeMode(loadThemeMode());
           setViewportMode(loadViewportMode());
           storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-hydrate', user.uid);
           workspaceSyncRef.current.lastSerialized = JSON.stringify(buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined, user.uid));
-          notifyApp({
-            tone: 'info',
-            message: 'Đã nạp và hợp nhất dữ liệu từ tài khoản đăng nhập.',
-            groupKey: 'account-sync-loaded',
-          });
         }
 
         await saveServerWorkspace(user.uid, mergedSnapshot);
         storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-save-after-hydrate', user.uid);
         workspaceSyncRef.current.lastSerialized = mergedSerialized;
-        workspaceSyncRef.current.lastSyncedAt = new Date().toISOString();
-        setAccountLastSyncedAt(workspaceSyncRef.current.lastSyncedAt);
+        commitAccountSyncedAt(new Date().toISOString());
       } catch (error) {
         console.warn('Không thể đồng bộ workspace theo tài khoản.', error);
         notifyApp({
@@ -10481,7 +10558,7 @@ const AppContent = () => {
     return () => {
       cancelled = true;
     };
-  }, [user, hasSupabase]);
+  }, [commitAccountSyncedAt, user, hasSupabase]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !user || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
@@ -12209,7 +12286,6 @@ CHỈ trả JSON thuần, không bọc markdown.
         onUpdateStory={(updated) => setSelectedStory(updated)}
         onExportStory={handleOpenExportStory}
         onOpenReaderPrefs={() => setShowReaderPrefsModal(true)}
-        buildChapterHref={(chapter) => `${storyPath}/${getChapterRouteSlug(chapter)}`}
         onOpenChapter={(chapter) => navigate(`${storyPath}/${getChapterRouteSlug(chapter)}`, { state: { storyId: routeStory.id } })}
       />
     );
@@ -12261,7 +12337,6 @@ CHỈ trả JSON thuần, không bọc markdown.
         onUpdateStory={(updated) => setSelectedStory(updated)}
         onExportStory={handleOpenExportStory}
         onOpenReaderPrefs={() => setShowReaderPrefsModal(true)}
-        buildChapterHref={(chapter) => `${storyPath}/${getChapterRouteSlug(chapter)}`}
         onReaderBack={() => navigate(storyPath)}
         onReaderNavigateChapter={(nextChapterId, mode) => {
           const nextChapter = (routeStory.chapters || []).find((chapter) => chapter.id === nextChapterId);
