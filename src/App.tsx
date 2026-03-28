@@ -9260,14 +9260,6 @@ const AppContent = () => {
     return () => window.removeEventListener('popstate', handlePopOnHome);
   }, [location.pathname]);
 
-  useEffect(() => {
-    const stories = storage.getStories();
-    const normalized = normalizeStoriesWithSlug(stories);
-    if (!normalized.changed) return;
-    storage.saveStories(normalized.stories);
-    bumpStoriesVersion();
-  }, [storiesVersion]);
-
   const dismissToast = useCallback((groupKey: string) => {
     const existingTimer = toastTimeoutsRef.current.get(groupKey);
     if (typeof existingTimer === 'number') {
@@ -10028,6 +10020,15 @@ const AppContent = () => {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState('');
+
+  useEffect(() => {
+    const stories = storage.getStories();
+    const normalized = normalizeStoriesWithSlug(stories);
+    if (!normalized.changed) return;
+    storage.saveStories(normalized.stories);
+    bumpStoriesVersion();
+  }, [storiesVersion]);
+
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const footerSections: { id: string; title: string; content: React.ReactNode }[] = [
     {
