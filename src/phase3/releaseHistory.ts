@@ -13,10 +13,22 @@ export const WRITER_RELEASE_NOTES: ReleaseNote[] = [
   {
     version: APP_VERSION_LABEL,
     dateLabel: '2026-03-28',
-    title: 'Sửa một vài lỗi nhỏ và bổ sung hệ thống sao lưu an toàn hơn',
+    title: 'Đi lại luồng điều hướng cho mượt và dễ dùng hơn',
     items: [
-      'Sửa một vài lỗi nhỏ trong giao diện và cách hiển thị trạng thái để trải nghiệm sử dụng ổn định, dễ hiểu và gọn gàng hơn.',
-      'Bổ sung hệ thống sao lưu lên Google Drive để dữ liệu quan trọng luôn có thêm một lớp bảo vệ, giúp yên tâm hơn khi viết, chỉnh sửa và lưu trữ truyện.',
+      'Đổi URL sang dạng gọn hơn: Trang chủ là `/`, trang truyện là `/:storySlug`, và trang đọc chương là `/:storySlug/:chapterSlug` để nhìn vào link là hiểu ngay đang ở đâu.',
+      'Mỗi truyện giờ có một slug ID chữ và số riêng, nên link ổn định hơn, ít đụng nhau hơn và không phụ thuộc vào tên truyện có dấu hay ký tự đặc biệt.',
+      'Sửa lại hành vi Back theo đúng thói quen đọc: từ trang chương Back sẽ về trang truyện, Back thêm lần nữa mới về trang chủ, không bị nhảy lung tung.',
+      'Thêm breadcrumb kiểu Home > Truyện > Chương để quay lại từng tầng nhanh hơn, nhất là khi đọc trên điện thoại.',
+      'Bổ sung trang 404 rõ ràng khi nhập sai link, đồng thời vẫn giữ redirect cho link cũ để ai đã lưu bookmark trước đây không bị gãy.',
+    ],
+  },
+  {
+    version: '0.1b',
+    dateLabel: '2026-03-28',
+    title: 'Sửa vài lỗi nhỏ và thêm lớp bảo vệ dữ liệu',
+    items: [
+      'Tinh chỉnh lại một số lỗi giao diện nhỏ để app nhìn gọn, dễ đọc và bấm đỡ rối hơn.',
+      'Thêm luồng sao lưu Google Drive để dữ liệu truyện có thêm một lớp an toàn khi dùng lâu dài.',
     ],
   },
   {
