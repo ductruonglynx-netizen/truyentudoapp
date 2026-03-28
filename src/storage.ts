@@ -21,6 +21,22 @@ const UI_THEME_KEY = 'ui_theme_v1';
 const UI_VIEWPORT_MODE_KEY = 'ui_viewport_mode_v1';
 const READER_PREFS_KEY = 'reader_prefs_v1';
 
+export interface StoryListItem {
+  id: string;
+  authorId: string;
+  title: string;
+  introduction: string;
+  genre: string;
+  type: string;
+  isPublic: boolean;
+  isAdult: boolean;
+  isAI: boolean;
+  coverImageUrl: string;
+  createdAt: string;
+  updatedAt: string;
+  chapterCount: number;
+}
+
 const normalizeDate = (value: any) => {
   if (!value) return new Date().toISOString();
   if (typeof value === 'string') {
@@ -200,6 +216,39 @@ function removeScopedRaw(baseKey: string): void {
 
 function getStoryItemKey(storyId: string): string {
   return `${STORIES_ITEM_KEY_PREFIX}${storyId}`;
+}
+
+function toStoryListItem(story: any): StoryListItem {
+  const normalized = normalizeStory(story);
+  return {
+    id: String(normalized.id || ''),
+    authorId: String(normalized.authorId || ''),
+    title: String(normalized.title || ''),
+    introduction: String(normalized.introduction || ''),
+    genre: String(normalized.genre || ''),
+    type: String(normalized.type || 'original'),
+    isPublic: Boolean(normalized.isPublic),
+    isAdult: Boolean(normalized.isAdult),
+    isAI: Boolean(normalized.isAI),
+    coverImageUrl: normalizeCoverImageUrl(normalized.coverImageUrl),
+    createdAt: normalizeDate(normalized.createdAt),
+    updatedAt: normalizeDate(normalized.updatedAt),
+    chapterCount: Array.isArray(normalized.chapters) ? normalized.chapters.length : 0,
+  };
+}
+
+function readStoryByIdFromSegmentedStorage(storyId: string): any | null {
+  const targetId = String(storyId || '').trim();
+  if (!targetId) return null;
+  const raw = getScopedRaw(getStoryItemKey(targetId));
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return normalizeStory(parsed);
+  } catch {
+    return null;
+  }
 }
 
 function readStoryIndex(): string[] {
@@ -401,6 +450,30 @@ function downloadBackupPayload(payload: StorageBackupPayload, filename?: string)
 }
 
 export const storage = {
+  getStoryIds: () => {
+    const segmented = readStoryIndex();
+    if (segmented.length > 0) return segmented;
+    return storage.getStories().map((story) => String(story?.id || '')).filter(Boolean);
+  },
+  getStoryById: (storyId: string) => {
+    const segmented = readStoryByIdFromSegmentedStorage(storyId);
+    if (segmented) return segmented;
+    const all = storage.getStories();
+    return all.find((story) => String(story?.id || '') === String(storyId || '').trim()) || null;
+  },
+  getStoryListItems: (): StoryListItem[] => {
+    const ids = readStoryIndex();
+    if (ids.length > 0) {
+      const list: StoryListItem[] = [];
+      ids.forEach((storyId) => {
+        const story = readStoryByIdFromSegmentedStorage(storyId);
+        if (!story) return;
+        list.push(toStoryListItem(story));
+      });
+      if (list.length > 0) return list;
+    }
+    return storage.getStories().map(toStoryListItem);
+  },
   getStories: () => {
     const segmentedStories = readStoriesFromSegmentedStorage();
     if (segmentedStories.length > 0) return segmentedStories;

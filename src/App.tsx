@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import { useAuth, AuthProvider } from './AuthContext';
 import { supabase, hasSupabase } from './supabaseClient';
-import { storage, type StorageBackupPayload, type StorageImportReport } from './storage';
+import { storage, type StorageBackupPayload, type StorageImportReport, type StoryListItem } from './storage';
 import { 
   Plus, 
   LogOut, 
@@ -131,10 +131,46 @@ async function loadMammothModule(): Promise<any> {
   return mammothModulePromise;
 }
 
+async function yieldToMainThread(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+}
+
+async function extractDocxTextViaWorker(arrayBuffer: ArrayBuffer): Promise<string> {
+  if (typeof window === 'undefined' || typeof Worker === 'undefined') {
+    throw new Error('Web Worker không khả dụng.');
+  }
+  return await new Promise<string>((resolve, reject) => {
+    const worker = new Worker(new URL('./workers/docxParser.worker.ts', import.meta.url), { type: 'module' });
+    const requestId = `docx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const cleanup = () => worker.terminate();
+    worker.onmessage = (event: MessageEvent<{ requestId?: string; ok?: boolean; text?: string; error?: string }>) => {
+      const payload = event.data || {};
+      if (payload.requestId !== requestId) return;
+      cleanup();
+      if (payload.ok) {
+        resolve(String(payload.text || ''));
+      } else {
+        reject(new Error(String(payload.error || 'Worker parse DOCX thất bại.')));
+      }
+    };
+    worker.onerror = (event) => {
+      cleanup();
+      reject(new Error(event.message || 'Worker parse DOCX gặp lỗi.'));
+    };
+    const transferable = arrayBuffer.slice(0);
+    worker.postMessage({ requestId, buffer: transferable }, [transferable]);
+  });
+}
+
 async function extractDocxText(arrayBuffer: ArrayBuffer): Promise<string> {
-  const mammoth = await loadMammothModule();
-  const result = await mammoth.extractRawText({ arrayBuffer });
-  return String(result?.value || '');
+  try {
+    return await extractDocxTextViaWorker(arrayBuffer);
+  } catch {
+    const mammoth = await loadMammothModule();
+    const result = await mammoth.extractRawText({ arrayBuffer });
+    return String(result?.value || '');
+  }
 }
 
 async function loadPdfJsModule(): Promise<any> {
@@ -304,7 +340,7 @@ const READER_PREFS_KEY = 'reader_prefs_v1';
 const STORIES_UPDATED_EVENT = 'stories:updated';
 const WORKSPACE_RECOVERY_KEY = 'truyenforge:workspace-recovery-v1';
 const ACCOUNT_CLOUD_AUTOSYNC_ENABLED = String(import.meta.env.VITE_ACCOUNT_AUTOSYNC ?? '1').trim() !== '0';
-const ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS = 1200;
+const ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS = 5 * 60 * 1000;
 const ACCOUNT_AUTOSYNC_TRIGGER_SECTIONS: ReadonlySet<LocalWorkspaceSection> = new Set([
   'stories',
   'characters',
@@ -759,6 +795,15 @@ function buildWorkspacePayloadHash(snapshot: Partial<AccountWorkspaceSnapshot>):
     finopsBudget: snapshot.finopsBudget || null,
     driveBinding: normalizeDriveBinding(snapshot.driveBinding) || null,
   });
+}
+
+function buildWorkspaceSectionPayloadHash(
+  snapshot: Partial<AccountWorkspaceSnapshot>,
+  section: LocalWorkspaceSection,
+): string {
+  const binding = ACCOUNT_WORKSPACE_BINDINGS.find((item) => item.section === section);
+  if (!binding) return 'null';
+  return JSON.stringify(snapshot[binding.key] ?? null);
 }
 
 const ACCOUNT_WORKSPACE_BINDINGS = [
@@ -3926,6 +3971,9 @@ const parsePDF = async (file: File): Promise<string> => {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
     text += content.items.map((item: any) => item.str).join(' ') + '\n';
+    if (i % 3 === 0) {
+      await yieldToMainThread();
+    }
   }
   return text;
 };
@@ -3947,6 +3995,7 @@ const parseEPUB = async (file: File): Promise<string> => {
       const htmlDoc = parser.parseFromString(doc, 'text/html');
       text += htmlDoc.body.innerText + '\n';
     }
+    await yieldToMainThread();
   }
   return text;
 };
@@ -6743,6 +6792,7 @@ const StoryDetail = ({
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
   const [showDictionaryPopup, setShowDictionaryPopup] = useState(false);
+  const [chapterRenderLimit, setChapterRenderLimit] = useState(CHAPTER_RENDER_BATCH_SIZE);
   const displayGenre = parseStoryGenreAndPrompt(story.genre || '', story.storyPromptNotes || '').genreLabel || 'Chưa phân loại';
 
   const getRenderableChapterContent = (content: string) => {
@@ -6834,6 +6884,10 @@ const StoryDetail = ({
     const nextChapter = (story.chapters || []).find((chapter) => chapter.id === forcedChapterId) || null;
     setSelectedChapter(nextChapter);
   }, [forcedChapterId, story.chapters]);
+
+  useEffect(() => {
+    setChapterRenderLimit(CHAPTER_RENDER_BATCH_SIZE);
+  }, [story.id]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -7247,58 +7301,69 @@ const StoryDetail = ({
             </div>
             <div className="space-y-2">
               {story.chapters && story.chapters.length > 0 ? (
-                [...story.chapters].sort((a, b) => a.order - b.order).map((chapter) => {
-                  const chapterRowContent = (
-                    <>
-                      <div className="flex items-center gap-4">
-                        <span className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 text-slate-500 text-xs font-bold group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
-                          {chapter.order}
-                        </span>
-                        <div className="flex flex-col">
-                          <span className="font-bold text-slate-700 group-hover:text-slate-900 transition-colors">
-                            {chapter.title}
+                <>
+                  {[...story.chapters].sort((a, b) => a.order - b.order).slice(0, chapterRenderLimit).map((chapter) => {
+                    const chapterRowContent = (
+                      <>
+                        <div className="flex items-center gap-4">
+                          <span className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 text-slate-500 text-xs font-bold group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
+                            {chapter.order}
                           </span>
-                          <span className="text-[11px] text-slate-400 font-mono">
-                            {getWordCount(formatContent(chapter.content || ''))} chữ
-                          </span>
+                          <div className="flex flex-col">
+                            <span className="font-bold text-slate-700 group-hover:text-slate-900 transition-colors">
+                              {chapter.title}
+                            </span>
+                            <span className="text-[11px] text-slate-400 font-mono">
+                              {getWordCount(formatContent(chapter.content || ''))} chữ
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            void handleDeleteChapter(chapter.id);
-                          }}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-200 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600"
-                          title="Xóa chương"
-                          aria-label={`Xóa ${chapter.title || `chương ${chapter.order}`}`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                        <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-indigo-400 transition-colors" />
-                      </div>
-                    </>
-                  );
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              void handleDeleteChapter(chapter.id);
+                            }}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-200 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600"
+                            title="Xóa chương"
+                            aria-label={`Xóa ${chapter.title || `chương ${chapter.order}`}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                          <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-indigo-400 transition-colors" />
+                        </div>
+                      </>
+                    );
 
-                  return (
-                    <div
-                      key={chapter.id}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleOpenChapter(chapter)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          handleOpenChapter(chapter);
-                        }
-                      }}
-                      className="chapter-row w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 transition-all text-left group cursor-pointer"
+                    return (
+                      <div
+                        key={chapter.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => handleOpenChapter(chapter)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            handleOpenChapter(chapter);
+                          }
+                        }}
+                        className="chapter-row w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 transition-all text-left group cursor-pointer"
+                      >
+                        {chapterRowContent}
+                      </div>
+                    );
+                  })}
+                  {story.chapters.length > chapterRenderLimit ? (
+                    <button
+                      type="button"
+                      onClick={() => setChapterRenderLimit((prev) => prev + CHAPTER_RENDER_BATCH_SIZE)}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50"
                     >
-                      {chapterRowContent}
-                    </div>
-                  );
-                })
+                      Tải thêm chương ({story.chapters.length - chapterRenderLimit} còn lại)
+                    </button>
+                  ) : null}
+                </>
               ) : (
                 <div className="text-center py-12">
                   <p className="text-slate-400 italic">Chưa có chương nào được viết.</p>
@@ -7345,10 +7410,11 @@ const StoryDetail = ({
 };
 
 const PAGE_SIZE = 6;
+const CHAPTER_RENDER_BATCH_SIZE = 80;
 
 const StoryList = ({ onView, refreshKey }: { onView: (story: Story) => void; refreshKey: number }) => {
   const { user } = useAuth();
-  const [stories, setStories] = useState<Story[]>([]);
+  const [stories, setStories] = useState<StoryListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
@@ -7358,16 +7424,17 @@ const StoryList = ({ onView, refreshKey }: { onView: (story: Story) => void; ref
   const [continuedLimit, setContinuedLimit] = useState(PAGE_SIZE);
 
   useEffect(() => {
-    const list = storage.getStories();
+    const list = storage.getStoryListItems();
     setStories(list);
     setLoading(false);
   }, [refreshKey]);
 
   const handleDelete = async () => {
     if (!deleteId) return;
-    const newList = stories.filter(s => s.id !== deleteId);
-    setStories(newList);
+    const allStories = storage.getStories();
+    const newList = allStories.filter((s) => String(s.id) !== deleteId);
     storage.saveStories(newList);
+    setStories((prev) => prev.filter((s) => s.id !== deleteId));
     setDeleteId(null);
   };
 
@@ -7403,14 +7470,14 @@ const StoryList = ({ onView, refreshKey }: { onView: (story: Story) => void; ref
 
   const Column = ({ 
     title, 
-    stories, 
+    stories,
     icon: Icon, 
     color, 
     limit, 
     onLoadMore 
   }: { 
     title: string, 
-    stories: Story[], 
+    stories: StoryListItem[],
     icon: any, 
     color: string, 
     limit: number, 
@@ -7444,7 +7511,17 @@ const StoryList = ({ onView, refreshKey }: { onView: (story: Story) => void; ref
                   layout
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  onClick={() => onView(story)}
+                  onClick={() => {
+                    const fullStory = storage.getStoryById(story.id);
+                    if (!fullStory) {
+                      notifyApp({
+                        tone: 'warn',
+                        message: 'Không thể mở truyện này, dữ liệu có thể đã bị thay đổi.',
+                      });
+                      return;
+                    }
+                    onView(fullStory);
+                  }}
                   className="group relative bg-white p-6 rounded-2xl border border-slate-200 hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-900/5 transition-all cursor-pointer flex flex-col min-h-[20rem]"
                 >
                   <div className="flex justify-between items-start mb-4">
@@ -7498,10 +7575,10 @@ const StoryList = ({ onView, refreshKey }: { onView: (story: Story) => void; ref
                     </div>
                   </div>
                   <div className="mt-4 pt-4 border-t border-slate-50 flex items-center justify-between text-[10px] text-slate-400 font-mono">
-                    <span>Cập nhật: {story.updatedAt?.toDate ? story.updatedAt.toDate().toLocaleDateString('vi-VN') : new Date(story.updatedAt).toLocaleDateString('vi-VN')}</span>
+                    <span>Cập nhật: {new Date(story.updatedAt).toLocaleDateString('vi-VN')}</span>
                     <span className="flex items-center gap-1">
                       <BookOpen className="w-3 h-3" />
-                      {story.chapters?.length || 0} chương
+                      {story.chapterCount || 0} chương
                     </span>
                   </div>
                 </motion.div>
@@ -9712,6 +9789,8 @@ const AppContent = () => {
     lastSyncedAt: '',
     lastServerUpdatedAt: '',
     lastKnownRevision: 0,
+    lastQueuedSectionHash: {} as Partial<Record<LocalWorkspaceSection, string>>,
+    lastSyncedSectionHash: {} as Partial<Record<LocalWorkspaceSection, string>>,
   });
   const localBackupRestoreAttemptedRef = useRef<Set<string>>(new Set());
   const backupAutomationRef = useRef({
@@ -10926,7 +11005,7 @@ const AppContent = () => {
     };
   }, [user?.uid]);
 
-  const syncWorkspaceToAccount = useCallback(async () => {
+  const syncWorkspaceToAccount = useCallback(async (changedSection?: LocalWorkspaceSection) => {
     if (!ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
     if (!user || !hasSupabase || workspaceSyncRef.current.isHydrating) return;
     if (workspaceSyncRef.current.isSyncing) {
@@ -10951,6 +11030,15 @@ const AppContent = () => {
         editLock: activeStoryLockRef.current,
       },
     );
+    const sectionPayloadHash = changedSection
+      ? buildWorkspaceSectionPayloadHash(localSnapshot, changedSection)
+      : '';
+    if (
+      changedSection
+      && workspaceSyncRef.current.lastSyncedSectionHash[changedSection] === sectionPayloadHash
+    ) {
+      return;
+    }
     const remoteSnapshot = await loadServerWorkspace<AccountWorkspaceSnapshot>(user.uid);
     const remotePayload = remoteSnapshot.payload
       ? {
@@ -11083,6 +11171,10 @@ const AppContent = () => {
     workspaceSyncRef.current.lastSerialized = JSON.stringify(savedSnapshot);
     workspaceSyncRef.current.lastKnownRevision = savedSnapshot.revision || workspaceSyncRef.current.lastKnownRevision;
     workspaceSyncRef.current.lastServerUpdatedAt = savedSnapshot.updatedAt || '';
+    if (changedSection) {
+      workspaceSyncRef.current.lastSyncedSectionHash[changedSection] = sectionPayloadHash;
+      workspaceSyncRef.current.lastQueuedSectionHash[changedSection] = sectionPayloadHash;
+    }
     commitAccountSyncedAt(new Date().toISOString());
     } finally {
       workspaceSyncRef.current.isSyncing = false;
@@ -11105,6 +11197,8 @@ const AppContent = () => {
       workspaceSyncRef.current.hasPendingSync = false;
       workspaceSyncRef.current.lastServerUpdatedAt = '';
       workspaceSyncRef.current.lastKnownRevision = 0;
+      workspaceSyncRef.current.lastQueuedSectionHash = {};
+      workspaceSyncRef.current.lastSyncedSectionHash = {};
       return;
     }
 
@@ -11236,8 +11330,8 @@ const AppContent = () => {
     if (syncQueuePumpRef.current.running) return;
     syncQueuePumpRef.current.running = true;
     try {
-      const stats = await processWorkspaceSyncQueue(user.uid, async () => {
-        await syncWorkspaceToAccount();
+      const stats = await processWorkspaceSyncQueue(user.uid, async (job) => {
+        await syncWorkspaceToAccount(job.section);
       });
       applyAccountSyncQueueStats(stats);
       if (stats.failed > 0 && shouldNotifyAccountSyncError(workspaceSyncRef.current.lastErrorNotifiedAt)) {
@@ -11292,8 +11386,23 @@ const AppContent = () => {
       if (!changedSection || !ACCOUNT_AUTOSYNC_TRIGGER_SECTIONS.has(changedSection)) {
         return;
       }
+      const localSnapshot = buildAccountWorkspaceSnapshot(
+        user.displayName || undefined,
+        user.photoURL || undefined,
+        user.uid,
+        {
+          deviceId: workspaceDeviceIdRef.current,
+          baseRevision: workspaceSyncRef.current.lastKnownRevision,
+          editLock: activeStoryLockRef.current,
+        },
+      );
+      const sectionPayloadHash = buildWorkspaceSectionPayloadHash(localSnapshot, changedSection);
+      if (workspaceSyncRef.current.lastQueuedSectionHash[changedSection] === sectionPayloadHash) {
+        return;
+      }
+      workspaceSyncRef.current.lastQueuedSectionHash[changedSection] = sectionPayloadHash;
       const sectionUpdatedAt = detail?.sections?.[changedSection] || detail?.updatedAt || new Date().toISOString();
-      const idempotencyKey = `${user.uid}:${changedSection}:${sectionUpdatedAt}`;
+      const idempotencyKey = `${user.uid}:${changedSection}:${sectionUpdatedAt}:${sectionPayloadHash}`;
       void enqueueWorkspaceSyncJob({
         userId: user.uid,
         section: changedSection,
@@ -11301,6 +11410,7 @@ const AppContent = () => {
       }).then(() => {
         scheduleAccountSyncQueue();
       }).catch((error) => {
+        delete workspaceSyncRef.current.lastQueuedSectionHash[changedSection];
         console.warn('Không thể enqueue autosync job.', error);
       });
     };
@@ -11316,7 +11426,7 @@ const AppContent = () => {
 
   useEffect(() => {
     if (!user?.uid || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
-    scheduleAccountSyncQueue(450);
+    scheduleAccountSyncQueue(ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS);
   }, [hasSupabase, scheduleAccountSyncQueue, user?.uid]);
 
   useEffect(() => {
@@ -13093,13 +13203,37 @@ ${JSON.stringify(violatingPayload)}
 
   const StoryRouteLayout = () => <Outlet />;
 
+  const findStoryBySlugFromStorage = useCallback((storySlug: string): Story | null => {
+    const normalizedSlug = sanitizeStorySlug(String(storySlug || '').trim());
+    if (!normalizedSlug) return null;
+    const storyIds = storage.getStoryIds();
+    for (const storyId of storyIds) {
+      const story = storage.getStoryById(storyId) as Story | null;
+      if (!story) continue;
+      if (resolveStorySlug(story) === normalizedSlug) return story;
+    }
+    return null;
+  }, []);
+
+  const findStoryByChapterIdFromStorage = useCallback((chapterId: string): { story: Story; chapter: Chapter } | null => {
+    const targetId = String(chapterId || '').trim();
+    if (!targetId) return null;
+    const storyIds = storage.getStoryIds();
+    for (const storyId of storyIds) {
+      const story = storage.getStoryById(storyId) as Story | null;
+      if (!story) continue;
+      const chapter = (story.chapters || []).find((item) => item.id === targetId);
+      if (chapter) return { story, chapter };
+    }
+    return null;
+  }, []);
+
   const StoryRouteView = () => {
     const params = useParams<{ storySlug: string }>();
     const storySlug = sanitizeStorySlug(String(params.storySlug || '').trim());
-    const routeStories = React.useMemo(() => storage.getStories(), [storiesVersion]);
     const routeStory = React.useMemo(
-      () => routeStories.find((item) => resolveStorySlug(item) === storySlug) || null,
-      [routeStories, storySlug],
+      () => findStoryBySlugFromStorage(storySlug),
+      [findStoryBySlugFromStorage, storySlug, storiesVersion],
     );
 
     useEffect(() => {
@@ -13145,9 +13279,14 @@ ${JSON.stringify(violatingPayload)}
     const storySlug = sanitizeStorySlug(String(params.storySlug || '').trim());
     const chapterSlug = String(params.chapterSlug || '').trim().toLowerCase();
     const routeState = (location.state || {}) as { storyId?: string };
-    const stories = React.useMemo(() => storage.getStories(), [storiesVersion]);
-    const storyByState = routeState.storyId ? stories.find((item) => item.id === routeState.storyId) : null;
-    const storyBySlug = stories.find((item) => resolveStorySlug(item) === storySlug) || null;
+    const storyByState = React.useMemo(
+      () => (routeState.storyId ? storage.getStoryById(routeState.storyId) as Story | null : null),
+      [routeState.storyId, storiesVersion],
+    );
+    const storyBySlug = React.useMemo(
+      () => findStoryBySlugFromStorage(storySlug),
+      [findStoryBySlugFromStorage, storySlug, storiesVersion],
+    );
     const routeStory = storyBySlug || storyByState;
     const routeChapter = routeStory ? findChapterByRouteSlug(routeStory.chapters || [], chapterSlug) : null;
 
@@ -13202,8 +13341,10 @@ ${JSON.stringify(violatingPayload)}
   const LegacyStoryRouteRedirect = () => {
     const params = useParams<{ id: string }>();
     const legacyId = String(params.id || '').trim();
-    const stories = React.useMemo(() => storage.getStories(), [storiesVersion]);
-    const legacyStory = stories.find((item) => item.id === legacyId) || null;
+    const legacyStory = React.useMemo(
+      () => storage.getStoryById(legacyId) as Story | null,
+      [legacyId, storiesVersion],
+    );
     if (!legacyStory) return <NotFoundRouteView title="Không tìm thấy truyện" message="ID truyện cũ không còn tồn tại." />;
     return <Navigate to={`/${resolveStorySlug(legacyStory)}`} replace />;
   };
@@ -13211,12 +13352,12 @@ ${JSON.stringify(violatingPayload)}
   const LegacyReaderRouteRedirect = () => {
     const params = useParams<{ chapterId: string }>();
     const chapterId = String(params.chapterId || '').trim();
-    const stories = React.useMemo(() => storage.getStories(), [storiesVersion]);
-    const ownerStory = stories.find((item) => (item.chapters || []).some((chapter) => chapter.id === chapterId)) || null;
-    if (!ownerStory) return <NotFoundRouteView title="Không tìm thấy chương" message="ID chương cũ không còn tồn tại." />;
-    const chapter = (ownerStory.chapters || []).find((item) => item.id === chapterId);
-    if (!chapter) return <NotFoundRouteView title="Không tìm thấy chương" message="ID chương cũ không còn tồn tại." />;
-    return <Navigate to={`/${resolveStorySlug(ownerStory)}/${getChapterRouteSlug(chapter)}`} replace />;
+    const resolved = React.useMemo(
+      () => findStoryByChapterIdFromStorage(chapterId),
+      [chapterId, findStoryByChapterIdFromStorage, storiesVersion],
+    );
+    if (!resolved) return <NotFoundRouteView title="Không tìm thấy chương" message="ID chương cũ không còn tồn tại." />;
+    return <Navigate to={`/${resolveStorySlug(resolved.story)}/${getChapterRouteSlug(resolved.chapter)}`} replace />;
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center font-serif">Đang khởi động...</div>;
@@ -13411,7 +13552,7 @@ ${JSON.stringify(violatingPayload)}
               <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Sao lưu & khôi phục</p>
               <h3 className="text-2xl font-bold">Sao lưu và khôi phục dữ liệu</h3>
               <p className="text-sm text-slate-400 max-w-3xl">
-                Bản tối giản: chỉ giữ thao tác quan trọng để tránh rối. Hệ thống tự đồng bộ khi bạn bấm lưu nội dung, và bạn có thể đẩy thêm một bản lên Drive để an toàn hơn.
+                Bản tối giản: chỉ giữ thao tác quan trọng để tránh rối. Hệ thống tự gom thay đổi và đồng bộ theo nhịp 5 phút/lần, bạn vẫn có thể đẩy thêm một bản lên Drive để an toàn hơn.
               </p>
             </div>
 

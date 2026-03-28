@@ -160,6 +160,22 @@ export async function enqueueWorkspaceSyncJob(input: {
   idempotencyKey: string;
 }): Promise<void> {
   const jobs = await getJobsForUser(input.userId);
+  const sameSectionPending = jobs.find(
+    (job) => job.section === input.section && job.status !== 'running',
+  );
+  if (sameSectionPending) {
+    await putJob({
+      ...sameSectionPending,
+      idempotencyKey: input.idempotencyKey,
+      status: 'pending',
+      attempts: 0,
+      lastError: undefined,
+      nextRunAt: Date.now(),
+      updatedAt: nowIso(),
+    });
+    dispatchQueueUpdate();
+    return;
+  }
   const duplicated = jobs.find((job) => job.idempotencyKey === input.idempotencyKey && job.status !== 'running');
   if (duplicated) {
     await putJob({
@@ -287,4 +303,3 @@ export function subscribeWorkspaceSyncQueue(handler: () => void): () => void {
   window.addEventListener(QUEUE_UPDATED_EVENT, handler as EventListener);
   return () => window.removeEventListener(QUEUE_UPDATED_EVENT, handler as EventListener);
 }
-
