@@ -43,7 +43,7 @@ import {
   Database,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useNavigationType, useParams } from 'react-router-dom';
+import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useNavigationType, useParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -2970,6 +2970,7 @@ interface StoryCharacterProfile {
 
 interface Story {
   id: string;
+  slug?: string;
   authorId: string;
   title: string;
   content: string;
@@ -2988,6 +2989,105 @@ interface Story {
   translationMemory?: TranslationDictionaryEntry[];
   createdAt: any;
   updatedAt: any;
+}
+
+type BreadcrumbItem = {
+  label: string;
+  to?: string;
+};
+
+const STORY_SLUG_ALPHANUM = 'abcdefghijklmnopqrstuvwxyz0123456789';
+
+function sanitizeStorySlug(value: string): string {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+}
+
+function createRandomAlphaNumericId(length = 10): string {
+  const size = Math.max(6, Math.min(24, Math.floor(length)));
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const buffer = new Uint8Array(size);
+    crypto.getRandomValues(buffer);
+    return Array.from(buffer, (item) => STORY_SLUG_ALPHANUM[item % STORY_SLUG_ALPHANUM.length]).join('');
+  }
+  let output = '';
+  for (let i = 0; i < size; i += 1) {
+    const index = Math.floor(Math.random() * STORY_SLUG_ALPHANUM.length);
+    output += STORY_SLUG_ALPHANUM[index];
+  }
+  return output;
+}
+
+function createStoryRouteSlug(existing: Set<string>): string {
+  let attempts = 0;
+  while (attempts < 32) {
+    const candidate = createRandomAlphaNumericId(10);
+    if (!existing.has(candidate)) {
+      existing.add(candidate);
+      return candidate;
+    }
+    attempts += 1;
+  }
+  const fallback = `${createRandomAlphaNumericId(12)}${Date.now().toString(36)}`.slice(0, 18);
+  existing.add(fallback);
+  return fallback;
+}
+
+function resolveStorySlug(story: Pick<Story, 'id' | 'slug'>): string {
+  const fromSaved = sanitizeStorySlug(story.slug || '');
+  if (fromSaved.length >= 6) return fromSaved;
+
+  const fromId = sanitizeStorySlug(String(story.id || '').replace(/^story/i, ''));
+  if (fromId.length >= 6) return fromId.slice(0, 18);
+
+  return createRandomAlphaNumericId(10);
+}
+
+function normalizeStoriesWithSlug(stories: Story[]): { stories: Story[]; changed: boolean } {
+  const used = new Set<string>();
+  let changed = false;
+
+  const normalized = stories.map((story) => {
+    let nextSlug = sanitizeStorySlug(story.slug || '');
+    if (nextSlug.length < 6 || used.has(nextSlug)) {
+      nextSlug = createStoryRouteSlug(used);
+    } else {
+      used.add(nextSlug);
+    }
+    if (nextSlug !== story.slug) {
+      changed = true;
+      return { ...story, slug: nextSlug };
+    }
+    return story;
+  });
+
+  return { stories: normalized, changed };
+}
+
+function slugifySegment(value: string, fallback = 'noi-dung'): string {
+  const cleaned = String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return cleaned || fallback;
+}
+
+function getChapterRouteSlug(chapter: Pick<Chapter, 'id' | 'title' | 'order'>): string {
+  const order = Number.isFinite(Number(chapter.order)) ? Number(chapter.order) : 1;
+  const titleSlug = slugifySegment(chapter.title || `chuong-${order}`, `chuong-${order}`).slice(0, 42);
+  const idTail = sanitizeStorySlug(chapter.id || '').slice(-6) || createRandomAlphaNumericId(6);
+  return `chuong-${order}-${titleSlug}-${idTail}`.replace(/-+/g, '-');
+}
+
+function findChapterByRouteSlug(chapters: Chapter[], chapterSlug: string): Chapter | null {
+  const normalizedSlug = String(chapterSlug || '').trim().toLowerCase();
+  if (!normalizedSlug) return null;
+
+  return chapters.find((chapter) => {
+    const chapterId = String(chapter.id || '').trim().toLowerCase();
+    return chapterId === normalizedSlug || getChapterRouteSlug(chapter).toLowerCase() === normalizedSlug;
+  }) || null;
 }
 
 interface TranslationName {
@@ -4904,12 +5004,15 @@ const ToolsManager = ({
         const text = await file.text();
         const data = JSON.parse(text);
         if (window.confirm(`Bạn có muốn nhập ${data.stories?.length || 0} truyện và ${data.characters?.length || 0} nhân vật?`)) {
+          const existingStories = storage.getStories();
+          const usedSlugs = new Set(existingStories.map((item) => resolveStorySlug(item)));
           const newStories: Story[] = [];
           for (const story of (data.stories || [])) {
             const { id, ...rest } = story;
             newStories.push({
               ...rest,
               id: createClientId('story'),
+              slug: createStoryRouteSlug(usedSlugs),
               authorId: user.uid,
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
@@ -4917,8 +5020,7 @@ const ToolsManager = ({
             } as Story);
           }
           if (newStories.length > 0) {
-            const stories = storage.getStories();
-            storage.saveStories([...newStories, ...stories]);
+            storage.saveStories([...newStories, ...existingStories]);
             bumpStoriesVersion();
           }
 
@@ -4950,8 +5052,10 @@ const ToolsManager = ({
         }
 
         const stories = storage.getStories();
+        const usedSlugs = new Set(stories.map((item) => resolveStorySlug(item)));
         storage.saveStories([{
           id: createClientId('story'),
+          slug: createStoryRouteSlug(usedSlugs),
           authorId: user.uid,
           title: String(file.name).replace(/\.docx$/i, '').substring(0, 480),
           content: String(text).substring(0, 1999900),
@@ -4969,8 +5073,10 @@ const ToolsManager = ({
           throw new Error("File .txt không có nội dung.");
         }
         const stories = storage.getStories();
+        const usedSlugs = new Set(stories.map((item) => resolveStorySlug(item)));
         storage.saveStories([{
           id: createClientId('story'),
+          slug: createStoryRouteSlug(usedSlugs),
           authorId: user.uid,
           title: String(file.name).replace(/\.txt$/i, '').substring(0, 480),
           content: String(text).substring(0, 1999900),
@@ -6167,6 +6273,28 @@ const ConfirmModal = ({
   );
 };
 
+const BreadcrumbTrail = ({ items }: { items: BreadcrumbItem[] }) => {
+  if (!items.length) return null;
+  return (
+    <nav aria-label="Breadcrumb" className="mb-5">
+      <ol className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
+        {items.map((item, index) => (
+          <React.Fragment key={`${item.label}-${index}`}>
+            {index > 0 ? <ChevronRight className="h-4 w-4 text-slate-300" /> : null}
+            {item.to ? (
+              <Link to={item.to} className="font-semibold text-slate-500 transition-colors hover:text-indigo-600">
+                {item.label}
+              </Link>
+            ) : (
+              <span className="font-semibold text-slate-700">{item.label}</span>
+            )}
+          </React.Fragment>
+        ))}
+      </ol>
+    </nav>
+  );
+};
+
 const StoryDetail = ({ 
   story, 
   onBack, 
@@ -6179,6 +6307,8 @@ const StoryDetail = ({
   onOpenChapter,
   onReaderBack,
   onReaderNavigateChapter,
+  breadcrumbs,
+  buildChapterHref,
 }: { 
   story: Story, 
   onBack: () => void, 
@@ -6191,6 +6321,8 @@ const StoryDetail = ({
   onOpenChapter?: (chapter: Chapter) => void,
   onReaderBack?: () => void,
   onReaderNavigateChapter?: (chapterId: string, mode?: 'push' | 'replace') => void,
+  breadcrumbs?: BreadcrumbItem[],
+  buildChapterHref?: (chapter: Chapter) => string,
 }) => {
   const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null);
   const [isEditingChapter, setIsEditingChapter] = useState(false);
@@ -6362,6 +6494,8 @@ const StoryDetail = ({
           <span>Cài đặt đọc</span>
         </button>
 
+        {breadcrumbs?.length ? <BreadcrumbTrail items={breadcrumbs} /> : null}
+
         <div className="flex items-center justify-between mb-8">
           <button 
             onClick={() => {
@@ -6526,6 +6660,8 @@ const StoryDetail = ({
       exit={{ opacity: 0, x: -20 }}
       className="story-detail max-w-5xl mx-auto pt-24 pb-12 px-6"
     >
+      {breadcrumbs?.length ? <BreadcrumbTrail items={breadcrumbs} /> : null}
+
       <div className="story-detail__header flex items-center justify-between mb-8">
         <button 
           onClick={onBack}
@@ -6625,28 +6761,50 @@ const StoryDetail = ({
             </div>
             <div className="space-y-2">
               {story.chapters && story.chapters.length > 0 ? (
-                story.chapters.sort((a, b) => a.order - b.order).map((chapter) => (
-                  <button 
-                    key={chapter.id}
-                    onClick={() => handleOpenChapter(chapter)}
-                    className="chapter-row w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 transition-all text-left group"
-                  >
-                    <div className="flex items-center gap-4">
-                      <span className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 text-slate-500 text-xs font-bold group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
-                        {chapter.order}
-                      </span>
-                      <div className="flex flex-col">
-                        <span className="font-bold text-slate-700 group-hover:text-slate-900 transition-colors">
-                          {chapter.title}
+                story.chapters.sort((a, b) => a.order - b.order).map((chapter) => {
+                  const chapterRowContent = (
+                    <>
+                      <div className="flex items-center gap-4">
+                        <span className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 text-slate-500 text-xs font-bold group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
+                          {chapter.order}
                         </span>
-                        <span className="text-[11px] text-slate-400 font-mono">
-                          {getWordCount(formatContent(chapter.content || ''))} chữ
-                        </span>
+                        <div className="flex flex-col">
+                          <span className="font-bold text-slate-700 group-hover:text-slate-900 transition-colors">
+                            {chapter.title}
+                          </span>
+                          <span className="text-[11px] text-slate-400 font-mono">
+                            {getWordCount(formatContent(chapter.content || ''))} chữ
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                    <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-indigo-400 transition-colors" />
-                  </button>
-                ))
+                      <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-indigo-400 transition-colors" />
+                    </>
+                  );
+
+                  const chapterHref = buildChapterHref?.(chapter);
+                  if (chapterHref) {
+                    return (
+                      <Link
+                        key={chapter.id}
+                        to={chapterHref}
+                        state={{ storyId: story.id }}
+                        className="chapter-row w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 transition-all text-left group"
+                      >
+                        {chapterRowContent}
+                      </Link>
+                    );
+                  }
+
+                  return (
+                    <button
+                      key={chapter.id}
+                      onClick={() => handleOpenChapter(chapter)}
+                      className="chapter-row w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 transition-all text-left group"
+                    >
+                      {chapterRowContent}
+                    </button>
+                  );
+                })
               ) : (
                 <div className="text-center py-12">
                   <p className="text-slate-400 italic">Chưa có chương nào được viết.</p>
@@ -9102,6 +9260,14 @@ const AppContent = () => {
     return () => window.removeEventListener('popstate', handlePopOnHome);
   }, [location.pathname]);
 
+  useEffect(() => {
+    const stories = storage.getStories();
+    const normalized = normalizeStoriesWithSlug(stories);
+    if (!normalized.changed) return;
+    storage.saveStories(normalized.stories);
+    bumpStoriesVersion();
+  }, [storiesVersion]);
+
   const dismissToast = useCallback((groupKey: string) => {
     const existingTimer = toastTimeoutsRef.current.get(groupKey);
     if (typeof existingTimer === 'number') {
@@ -10823,8 +10989,11 @@ const AppContent = () => {
 
       // Save to local storage so it shows up in the UI
       const localChapters = normalizeChaptersForLocal(translatedChapters);
+      const stories = storage.getStories();
+      const usedSlugs = new Set(stories.map((item) => resolveStorySlug(item)));
       const newStory = {
         id: storyId,
+        slug: createStoryRouteSlug(usedSlugs),
         authorId: user.uid,
         title: String(translateFileName || "Truyện dịch").replace(/\.[^/.]+$/, "").substring(0, 480) + " (Bản dịch)",
         content: String(translateFileContent || "").substring(0, 5000) + "...",
@@ -10838,7 +11007,6 @@ const AppContent = () => {
         updatedAt: new Date().toISOString(),
         chapters: localChapters
       };
-      const stories = storage.getStories();
       storage.saveStories([newStory, ...stories]);
       bumpStoriesVersion();
 
@@ -11098,8 +11266,11 @@ const AppContent = () => {
 
       // Save to local storage so it shows up in the UI
       const localChapters = normalizeChaptersForLocal(generatedChapters);
+      const stories = storage.getStories();
+      const usedSlugs = new Set(stories.map((item) => resolveStorySlug(item)));
       const newStory = {
         id: storyId,
+        slug: createStoryRouteSlug(usedSlugs),
         authorId: user.uid,
         title: String(continueFileName || "Truyện viết tiếp").replace(/\.[^/.]+$/, "").substring(0, 480) + " (Viết tiếp)",
         content: String(continueFileContent || "").substring(0, 5000) + "...",
@@ -11112,7 +11283,6 @@ const AppContent = () => {
         updatedAt: new Date().toISOString(),
         chapters: localChapters
       };
-      const stories = storage.getStories();
       storage.saveStories([newStory, ...stories]);
       bumpStoriesVersion();
 
@@ -11462,13 +11632,16 @@ CHỈ trả JSON thuần, không bọc markdown.
       const updatedStory: Story = {
         ...editingStory,
         ...data,
+        slug: data.slug || editingStory.slug || resolveStorySlug(editingStory),
         chapters: normalizeChaptersForLocal((data.chapters || editingStory.chapters || []) as Chapter[]),
         updatedAt: new Date().toISOString(),
       };
       newList = stories.map(s => s.id === editingStory.id ? updatedStory : s);
     } else {
+      const usedSlugs = new Set(stories.map((item) => resolveStorySlug(item)));
+      const newStorySlug = data.slug || createStoryRouteSlug(usedSlugs);
       const newStory: Story = {
-        id: `story-${Date.now()}`,
+        id: createClientId('story'),
         authorId: user.uid,
         title: data.title || 'Không tiêu đề',
         content: data.content || '',
@@ -11479,7 +11652,8 @@ CHỈ trả JSON thuần, không bọc markdown.
         isPublic: data.isPublic || false,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        ...data
+        ...data,
+        slug: newStorySlug,
       };
       newList = [newStory, ...stories];
     }
@@ -11655,10 +11829,13 @@ CHỈ trả JSON thuần, không bọc markdown.
 
       if (resolvedTitle && resolvedContent) {
         const storyId = createClientId('story');
+        const stories = storage.getStories();
+        const usedSlugs = new Set(stories.map((item) => resolveStorySlug(item)));
 
         // Save to local storage
         const newStory = {
           id: storyId,
+          slug: createStoryRouteSlug(usedSlugs),
           authorId: user.uid,
           title: resolvedTitle.substring(0, 480),
           content: resolvedContent.replace(/\]\s*\[/g, ']\n\n[').substring(0, 1999900),
@@ -11670,7 +11847,6 @@ CHỈ trả JSON thuần, không bọc markdown.
           updatedAt: new Date().toISOString(),
           chapters: []
         };
-        const stories = storage.getStories();
         storage.saveStories([newStory, ...stories]);
         bumpStoriesVersion();
 
@@ -11814,20 +11990,38 @@ CHỈ trả JSON thuần, không bọc markdown.
           refreshKey={storiesVersion}
           onView={(story) => {
             setSelectedStory(story);
-            navigate(`/story/${story.id}`);
+            navigate(`/${resolveStorySlug(story)}`);
           }}
         />
       </motion.div>
     );
   };
 
+  const NotFoundRouteView = ({
+    title = '404 - Không tìm thấy',
+    message = 'Đường dẫn không hợp lệ hoặc nội dung đã bị xóa.',
+  }: {
+    title?: string;
+    message?: string;
+  }) => (
+    <div className="mx-auto max-w-3xl pt-32 px-6 text-center">
+      <h2 className="text-3xl font-bold text-slate-900">{title}</h2>
+      <p className="mt-3 text-slate-500">{message}</p>
+      <Link to="/" className="mt-6 inline-flex tf-btn tf-btn-primary">
+        Về trang chủ
+      </Link>
+    </div>
+  );
+
+  const StoryRouteLayout = () => <Outlet />;
+
   const StoryRouteView = () => {
-    const params = useParams<{ id: string }>();
-    const storyId = String(params.id || '').trim();
+    const params = useParams<{ storySlug: string }>();
+    const storySlug = sanitizeStorySlug(String(params.storySlug || '').trim());
     const routeStories = React.useMemo(() => storage.getStories(), [storiesVersion]);
     const routeStory = React.useMemo(
-      () => routeStories.find((item) => item.id === storyId) || null,
-      [routeStories, storyId],
+      () => routeStories.find((item) => resolveStorySlug(item) === storySlug) || null,
+      [routeStories, storySlug],
     );
 
     useEffect(() => {
@@ -11838,17 +12032,18 @@ CHỈ trả JSON thuần, không bọc markdown.
     }, [routeStory]);
 
     if (!routeStory) {
-      return (
-        <div className="mx-auto max-w-3xl pt-32 px-6 text-center">
-          <p className="text-slate-500">Không tìm thấy truyện.</p>
-          <button className="mt-4 tf-btn tf-btn-primary" onClick={() => navigate('/')}>Về trang chủ</button>
-        </div>
-      );
+      return <NotFoundRouteView title="Không tìm thấy truyện" message="Story slug không tồn tại hoặc truyện đã bị xóa." />;
     }
+
+    const storyPath = `/${resolveStorySlug(routeStory)}`;
 
     return (
       <StoryDetail
         story={routeStory}
+        breadcrumbs={[
+          { label: 'Home', to: '/' },
+          { label: routeStory.title || 'Chi tiết truyện' },
+        ]}
         onBack={() => navigate('/')}
         onEdit={() => {
           setEditingStory(routeStory);
@@ -11862,19 +12057,22 @@ CHỈ trả JSON thuần, không bọc markdown.
         onUpdateStory={(updated) => setSelectedStory(updated)}
         onExportStory={handleOpenExportStory}
         onOpenReaderPrefs={() => setShowReaderPrefsModal(true)}
-        onOpenChapter={(chapter) => navigate(`/reader/${chapter.id}`, { state: { storyId: routeStory.id } })}
+        buildChapterHref={(chapter) => `${storyPath}/${getChapterRouteSlug(chapter)}`}
+        onOpenChapter={(chapter) => navigate(`${storyPath}/${getChapterRouteSlug(chapter)}`, { state: { storyId: routeStory.id } })}
       />
     );
   };
 
   const ReaderRouteView = () => {
-    const params = useParams<{ chapterId: string }>();
-    const chapterId = String(params.chapterId || '').trim();
+    const params = useParams<{ storySlug: string; chapterSlug: string }>();
+    const storySlug = sanitizeStorySlug(String(params.storySlug || '').trim());
+    const chapterSlug = String(params.chapterSlug || '').trim().toLowerCase();
     const routeState = (location.state || {}) as { storyId?: string };
     const stories = React.useMemo(() => storage.getStories(), [storiesVersion]);
     const storyByState = routeState.storyId ? stories.find((item) => item.id === routeState.storyId) : null;
-    const routeStory = storyByState || stories.find((item) => (item.chapters || []).some((chapter) => chapter.id === chapterId)) || null;
-    const routeChapter = routeStory ? (routeStory.chapters || []).find((chapter) => chapter.id === chapterId) : null;
+    const storyBySlug = stories.find((item) => resolveStorySlug(item) === storySlug) || null;
+    const routeStory = storyBySlug || storyByState;
+    const routeChapter = routeStory ? findChapterByRouteSlug(routeStory.chapters || [], chapterSlug) : null;
 
     useEffect(() => {
       setSelectedStory((prev) => {
@@ -11884,18 +12082,20 @@ CHỈ trả JSON thuần, không bọc markdown.
     }, [routeStory]);
 
     if (!routeStory || !routeChapter) {
-      return (
-        <div className="mx-auto max-w-3xl pt-32 px-6 text-center">
-          <p className="text-slate-500">Không tìm thấy chương hoặc truyện gốc.</p>
-          <button className="mt-4 tf-btn tf-btn-primary" onClick={() => navigate(routeStory ? `/story/${routeStory.id}` : '/')}>Quay lại</button>
-        </div>
-      );
+      return <NotFoundRouteView title="Không tìm thấy chương" message="Chapter slug không hợp lệ hoặc chương đã bị thay đổi." />;
     }
+
+    const storyPath = `/${resolveStorySlug(routeStory)}`;
 
     return (
       <StoryDetail
         story={routeStory}
-        forcedChapterId={chapterId}
+        forcedChapterId={routeChapter.id}
+        breadcrumbs={[
+          { label: 'Home', to: '/' },
+          { label: routeStory.title || 'Chi tiết truyện', to: storyPath },
+          { label: routeChapter.title || 'Nội dung chương' },
+        ]}
         onBack={() => navigate('/')}
         onEdit={() => {
           setEditingStory(routeStory);
@@ -11909,13 +12109,38 @@ CHỈ trả JSON thuần, không bọc markdown.
         onUpdateStory={(updated) => setSelectedStory(updated)}
         onExportStory={handleOpenExportStory}
         onOpenReaderPrefs={() => setShowReaderPrefsModal(true)}
-        onReaderBack={() => navigate(`/story/${routeStory.id}`)}
-        onReaderNavigateChapter={(nextChapterId, mode) => navigate(`/reader/${nextChapterId}`, {
-          replace: mode === 'replace',
-          state: { storyId: routeStory.id },
-        })}
+        buildChapterHref={(chapter) => `${storyPath}/${getChapterRouteSlug(chapter)}`}
+        onReaderBack={() => navigate(storyPath)}
+        onReaderNavigateChapter={(nextChapterId, mode) => {
+          const nextChapter = (routeStory.chapters || []).find((chapter) => chapter.id === nextChapterId);
+          if (!nextChapter) return;
+          navigate(`${storyPath}/${getChapterRouteSlug(nextChapter)}`, {
+            replace: mode === 'replace',
+            state: { storyId: routeStory.id },
+          });
+        }}
       />
     );
+  };
+
+  const LegacyStoryRouteRedirect = () => {
+    const params = useParams<{ id: string }>();
+    const legacyId = String(params.id || '').trim();
+    const stories = React.useMemo(() => storage.getStories(), [storiesVersion]);
+    const legacyStory = stories.find((item) => item.id === legacyId) || null;
+    if (!legacyStory) return <NotFoundRouteView title="Không tìm thấy truyện" message="ID truyện cũ không còn tồn tại." />;
+    return <Navigate to={`/${resolveStorySlug(legacyStory)}`} replace />;
+  };
+
+  const LegacyReaderRouteRedirect = () => {
+    const params = useParams<{ chapterId: string }>();
+    const chapterId = String(params.chapterId || '').trim();
+    const stories = React.useMemo(() => storage.getStories(), [storiesVersion]);
+    const ownerStory = stories.find((item) => (item.chapters || []).some((chapter) => chapter.id === chapterId)) || null;
+    if (!ownerStory) return <NotFoundRouteView title="Không tìm thấy chương" message="ID chương cũ không còn tồn tại." />;
+    const chapter = (ownerStory.chapters || []).find((item) => item.id === chapterId);
+    if (!chapter) return <NotFoundRouteView title="Không tìm thấy chương" message="ID chương cũ không còn tồn tại." />;
+    return <Navigate to={`/${resolveStorySlug(ownerStory)}/${getChapterRouteSlug(chapter)}`} replace />;
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center font-serif">Đang khởi động...</div>;
@@ -12387,9 +12612,13 @@ CHỈ trả JSON thuần, không bọc markdown.
       <Routes>
         <Route element={<div className={cn('tf-route-scene', routeTransitionClass)}><Outlet /></div>}>
           <Route path="/" element={renderHomeWorkspace()} />
-          <Route path="/story/:id" element={<StoryRouteView />} />
-          <Route path="/reader/:chapterId" element={<ReaderRouteView />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="/story/:id" element={<LegacyStoryRouteRedirect />} />
+          <Route path="/reader/:chapterId" element={<LegacyReaderRouteRedirect />} />
+          <Route path="/:storySlug" element={<StoryRouteLayout />}>
+            <Route index element={<StoryRouteView />} />
+            <Route path=":chapterSlug" element={<ReaderRouteView />} />
+          </Route>
+          <Route path="*" element={<NotFoundRouteView />} />
         </Route>
       </Routes>
       </div>
