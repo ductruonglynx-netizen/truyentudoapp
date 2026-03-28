@@ -42,7 +42,7 @@ import {
   ImagePlus,
   Database,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useNavigationType, useParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
@@ -13700,10 +13700,12 @@ ${JSON.stringify(violatingPayload)}
 
 export default function App() {
   return (
-    <AuthProvider>
-      <ErrorBoundary>
-        <AppContent />
-      </ErrorBoundary>
-    </AuthProvider>
+    <MotionConfig reducedMotion="always">
+      <AuthProvider>
+        <ErrorBoundary>
+          <AppContent />
+        </ErrorBoundary>
+      </AuthProvider>
+    </MotionConfig>
   );
 }

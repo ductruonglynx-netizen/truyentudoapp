@@ -1585,3 +1585,23 @@ body {
 .tf-route-push {
   animation: none !important;
 }
+
+/* Hard disable all motion effects to eliminate UI jitter completely */
+*,
+*::before,
+*::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+html,
+body {
+  scroll-behavior: auto !important;
+}
+
+.tf-modal-overlay,
+.app-shell,
+.navbar-appear {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
