@@ -9726,6 +9726,32 @@ const AppContent = () => {
       ),
     },
     {
+      id: 'feedback',
+      title: 'Phản hồi & Góp ý',
+      content: (
+        <div className="space-y-3 leading-relaxed">
+          <p className="text-sm">
+            Nếu bạn thấy tính năng nào khó dùng, giao diện chưa rõ, hoặc cần thêm công cụ mới, hãy gửi góp ý trực tiếp để mình ưu tiên xử lý theo mức độ ảnh hưởng thực tế.
+          </p>
+          <p className="text-sm">
+            Cảm ơn đồng hương{' '}
+            <a
+              className={cn(
+                'font-semibold underline decoration-dotted underline-offset-2',
+                themeMode === 'dark' ? 'text-cyan-300 hover:text-cyan-200' : 'text-indigo-600 hover:text-indigo-700',
+              )}
+              href="https://www.facebook.com/groups/1375173561043585/user/61577801115781"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Thế Anh CTA
+            </a>{' '}
+            đã hỗ trợ cung cấp dịch vụ AI để phát triển web.
+          </p>
+        </div>
+      ),
+    },
+    {
       id: 'ai',
       title: 'TUYÊN BỐ MIỄN TRỪ TRÁCH NHIỆM VỀ AI',
       content: (
