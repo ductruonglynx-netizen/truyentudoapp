@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Merriweather:wght@700;900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Merriweather:wght@400;700;900&display=swap");
 @import "tailwindcss";
 
 @theme {
@@ -32,8 +32,8 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --tf-reader-bg: #0b1220;
-  --tf-reader-text: #e5edff;
+  --tf-reader-bg: #111a2b;
+  --tf-reader-text: #d3dceb;
 }
 
 :root[data-theme="dark"] body {
@@ -254,7 +254,7 @@
 }
 
 :root[data-theme="dark"] .markdown-body {
-  color: #e2e8f0;
+  color: var(--tf-reader-text);
 }
 
 @keyframes navbar-appear {

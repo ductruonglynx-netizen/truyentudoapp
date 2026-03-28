@@ -522,8 +522,8 @@ function saveUiProfile(profile: UiProfile): void {
 function getReaderDefaultColors(themeMode: ThemeMode): Pick<ReaderPrefs, 'background' | 'textColor'> {
   if (themeMode === 'dark') {
     return {
-      background: '#0b1220',
-      textColor: '#e2e8f0',
+      background: '#111a2b',
+      textColor: '#d3dceb',
     };
   }
   return {
@@ -6691,7 +6691,13 @@ const StoryDetail = ({
           </div>
         </div>
         
-        <div className="bg-white p-10 rounded-[40px] shadow-sm border border-slate-100 mb-8">
+        <div
+          className="p-10 rounded-[40px] shadow-sm border border-slate-100 mb-8"
+          style={{
+            backgroundColor: 'var(--tf-reader-bg)',
+            color: 'var(--tf-reader-text)',
+          }}
+        >
           <div className="max-w-2xl mx-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-bold text-indigo-600 uppercase tracking-widest">Chương {selectedChapter.order}</h2>
@@ -6710,7 +6716,6 @@ const StoryDetail = ({
               lineHeight: 'var(--tf-reader-line-height)',
               fontFamily: 'var(--tf-reader-font-family)',
               color: 'var(--tf-reader-text)',
-              backgroundColor: 'var(--tf-reader-bg)',
             }}
           >
               <ReactMarkdown>{formatContent(selectedChapter.content)}</ReactMarkdown>
