@@ -2001,6 +2001,47 @@ function buildStoryTranslationContext(dictionary: Array<{ original?: string; tra
   ].join('\n');
 }
 
+const DEFAULT_FORBIDDEN_CLICHE_PHRASES: string[] = [
+  'ánh mắt kiên định',
+  'nụ cười nửa miệng',
+  'hành trình chông gai',
+  'không thể tin vào mắt mình',
+  'hít sâu một hơi',
+  'tim đập thình thịch',
+  'khóe môi khẽ cong',
+  'khẽ mỉm cười',
+  'sắc mặt đại biến',
+  'im lặng bao trùm',
+  'bầu không khí trở nên ngột ngạt',
+  'lạnh sống lưng',
+];
+
+function parseForbiddenClichePhrases(raw: string): string[] {
+  const combined = [
+    ...DEFAULT_FORBIDDEN_CLICHE_PHRASES,
+    ...String(raw || '')
+      .split(/[\n,;|]+/)
+      .map((item) => item.trim()),
+  ];
+  const seen = new Set<string>();
+  const output: string[] = [];
+  combined.forEach((item) => {
+    const phrase = String(item || '').trim();
+    if (!phrase || phrase.length < 3) return;
+    const key = phrase.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    output.push(phrase);
+  });
+  return output;
+}
+
+function findForbiddenPhrasesInText(text: string, phrases: string[]): string[] {
+  const source = String(text || '').toLowerCase();
+  if (!source || !phrases.length) return [];
+  return phrases.filter((phrase) => source.includes(String(phrase || '').toLowerCase()));
+}
+
 function applyTranslationDictionaryToText(
   sourceText: string,
   translatedText: string,
@@ -8830,6 +8871,7 @@ const AIGenerationModal = ({
     styleReference: string,
     aiInstructions: string,
     chapterScript: string,
+    bannedPhrases: string,
     selectedRuleId?: string
   }) => void,
   initialOutline?: string,
@@ -8858,6 +8900,7 @@ const AIGenerationModal = ({
   const [styleReference, setStyleReference] = useState('');
   const [aiInstructions, setAiInstructions] = useState('');
   const [chapterScript, setChapterScript] = useState('');
+  const [bannedPhrases, setBannedPhrases] = useState(DEFAULT_FORBIDDEN_CLICHE_PHRASES.join('\n'));
   const [selectedRuleId, setSelectedRuleId] = useState<string>('');
   const [aiRules, setAiRules] = useState<AIRule[]>([]);
   const [isGeneratingScript, setIsGeneratingScript] = useState(false);
@@ -9146,6 +9189,20 @@ const AIGenerationModal = ({
                 placeholder="Ví dụ: Tập trung vào miêu tả tâm lý, viết theo phong cách kiếm hiệp cổ điển..."
                 className="w-full h-32 p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 resize-none text-sm tf-mobile-textarea"
               />
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                  Cụm từ cấm (chống sáo rỗng)
+                </label>
+                <textarea
+                  value={bannedPhrases}
+                  onChange={(e) => setBannedPhrases(e.target.value)}
+                  placeholder="Mỗi dòng một cụm từ cấm..."
+                  className="w-full h-24 p-3 rounded-xl border border-rose-200 bg-rose-50/40 focus:ring-2 focus:ring-rose-400 resize-none text-xs tf-mobile-textarea"
+                />
+                <p className="text-[11px] text-slate-500">
+                  Hệ thống sẽ ép AI tránh các cụm này và tự viết lại nếu còn dính.
+                </p>
+              </div>
             </div>
             <div className="space-y-4">
               <div className="flex items-center justify-between">
@@ -9500,6 +9557,7 @@ const AIGenerationModal = ({
               styleReference,
               aiInstructions,
               chapterScript,
+              bannedPhrases,
               selectedRuleId
             })}
             disabled={!predictPlot && !outline.trim()}
@@ -11965,12 +12023,13 @@ const AppContent = () => {
     styleReference: string,
     aiInstructions: string,
     chapterScript: string,
+    bannedPhrases: string,
     selectedRuleId?: string
   }) => {
     const { 
       outline, chapterLength, chapterCount, isAdult, pacing, tone, focus, predictPlot,
       customPacing, customTone, customFocus, selectedCharacters, keyEvents, previousContext,
-      perspective, audience, styleReference, aiInstructions, chapterScript, selectedRuleId
+      perspective, audience, styleReference, aiInstructions, chapterScript, bannedPhrases, selectedRuleId
     } = options;
     if (!user || !selectedStory) return;
     const latestStory = (storage.getStories() as Story[]).find((story) => story.id === selectedStory.id) || selectedStory;
@@ -11983,6 +12042,15 @@ const AppContent = () => {
       : '';
     const effectivePreviousContext = currentChapters.length
       ? (String(previousContext || '').trim() || latestChapterContext)
+      : '';
+    const forbiddenPhrases = parseForbiddenClichePhrases(bannedPhrases);
+    const forbiddenPhraseInstruction = forbiddenPhrases.length
+      ? [
+          'QUY TẮC BẮT BUỘC VỀ VĂN PHONG (CHỐNG SÁO RỖNG):',
+          'Tuyệt đối không sử dụng các cụm từ sau dưới bất kỳ biến thể nào:',
+          ...forbiddenPhrases.map((phrase, index) => `${index + 1}. "${phrase}"`),
+          'Nếu cần diễn đạt ý tương tự, phải đổi sang cách nói mới, cụ thể, có chi tiết hành động/giác quan.',
+        ].join('\n')
       : '';
     const sanitizeChapterDrafts = (items: Array<{ title?: string; content?: string }>) => {
       return items.map((item, idx) => {
@@ -12104,6 +12172,7 @@ const AppContent = () => {
         ${finalInstructions ? `CHỈ DẪN THÊM CHO AI:\n${finalInstructions}\n` : ""}
         ${chapterScript ? `KỊCH BẢN CHI TIẾT CHO CHƯƠNG NÀY:\n${chapterScript}\n` : ""}
         ${storyTranslationContext ? `${storyTranslationContext}\n` : ""}
+        ${forbiddenPhraseInstruction ? `${forbiddenPhraseInstruction}\n` : ""}
 
         BỐI CẢNH VÀ NHÂN VẬT:
         ${charContext ? `THÔNG TIN NHÂN VẬT THAM CHIẾU:\n${charContext}\n` : ""}
@@ -12186,6 +12255,8 @@ YÊU CẦU BẮT BUỘC:
 - Không dùng gạch đầu dòng, không liệt kê ý tưởng, không ghi "dàn ý", "gợi ý", "hướng phát triển".
 - Không giải thích cách viết. Chỉ trả nội dung truyện.
 - Mỗi chương tối thiểu ${chapterLength} từ.
+${forbiddenPhrases.length ? `- Tuyệt đối không dùng các cụm từ cấm sau:\n${forbiddenPhrases.map((phrase, index) => `  ${index + 1}. "${phrase}"`).join('\n')}` : ''}
+- Tuyệt đối không dùng bất kỳ cụm nào trong danh sách cấm.
 
 Bối cảnh truyện:
 - Tiêu đề: ${latestStory.title}
@@ -12230,6 +12301,76 @@ CHỈ trả JSON thuần, không bọc markdown.
       const unresolvedOutlineCount = chapterDrafts.filter((item) => looksLikeOutlineChapter(item.title, item.content)).length;
       if (chapterDrafts.length > 0 && unresolvedOutlineCount >= Math.max(1, Math.ceil(chapterDrafts.length * 0.5))) {
         throw new Error('AI vẫn đang trả kết quả dạng dàn ý. Hãy thử lại với model mạnh hơn hoặc giảm số chương mỗi lượt.');
+      }
+
+      const collectForbiddenHits = (items: Array<{ title: string; content: string }>) =>
+        items
+          .map((item, index) => ({
+            index,
+            title: item.title,
+            content: item.content,
+            hits: findForbiddenPhrasesInText(item.content, forbiddenPhrases),
+          }))
+          .filter((item) => item.hits.length > 0);
+
+      if (forbiddenPhrases.length) {
+        let violating = collectForbiddenHits(chapterDrafts);
+        if (violating.length > 0) {
+          updateAiRun(aiRun, {
+            message: 'Đang loại bỏ cụm từ sáo rỗng...',
+            stageLabel: 'Làm sạch văn phong',
+            detail: 'Hệ thống phát hiện cụm từ cấm và đang yêu cầu AI viết lại đoạn vi phạm.',
+          });
+          const violatingPayload = violating.map((item) => ({
+            title: item.title,
+            content: item.content,
+            violations: item.hits,
+          }));
+          const antiClicheRewritePrompt = `
+Bạn là biên tập viên văn học. Nhiệm vụ: viết lại các đoạn văn dưới đây cho tự nhiên và có hồn hơn.
+
+YÊU CẦU:
+- Giữ nguyên ý nghĩa, tình tiết, thứ tự sự kiện, tên nhân vật.
+- Tuyệt đối không dùng các cụm từ cấm:
+${forbiddenPhrases.map((phrase, index) => `${index + 1}. "${phrase}"`).join('\n')}
+- Tránh văn phong sáo rỗng, ưu tiên chi tiết cụ thể (hành động, giác quan, phản ứng tinh tế).
+- Chỉ trả JSON array cùng số phần tử, mỗi phần tử có dạng {"title":"...","content":"..."}.
+- Không thêm lời giải thích.
+
+Các đoạn cần viết lại:
+${JSON.stringify(violatingPayload)}
+`.trim();
+
+          const antiClicheRewriteRaw = await generateGeminiText(
+            ai,
+            'quality',
+            antiClicheRewritePrompt,
+            {
+              responseMimeType: "application/json",
+              maxOutputTokens: 8192,
+              minOutputChars: Math.max(1200, Math.round(violatingPayload.length * 1200)),
+              maxRetries: 1,
+              signal: abortSignal,
+            },
+          );
+          const antiClicheParsed = tryParseJson<any>(antiClicheRewriteRaw || '[]', 'array');
+          if (Array.isArray(antiClicheParsed) && antiClicheParsed.length) {
+            const rewrittenClean = sanitizeChapterDrafts(antiClicheParsed);
+            violating.forEach((item, idx) => {
+              const candidate = rewrittenClean[idx];
+              if (!candidate) return;
+              chapterDrafts[item.index] = {
+                title: candidate.title || chapterDrafts[item.index].title,
+                content: candidate.content || chapterDrafts[item.index].content,
+              };
+            });
+          }
+          violating = collectForbiddenHits(chapterDrafts);
+          if (violating.length > 0) {
+            const uniqueHits = Array.from(new Set(violating.flatMap((item) => item.hits))).slice(0, 8);
+            throw new Error(`Nội dung vẫn còn cụm từ sáo rỗng bị cấm: ${uniqueHits.join(', ')}.`);
+          }
+        }
       }
 
       const nextOrder = currentChapters.length + 1;
