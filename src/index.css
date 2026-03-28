@@ -1515,3 +1515,36 @@ body {
     border-radius: 0.9rem !important;
   }
 }
+.tf-route-scene {
+  min-height: calc(100vh - 80px);
+}
+
+.tf-route-pop {
+  animation: tfRoutePop 0.24s ease both;
+}
+
+.tf-route-push {
+  animation: tfRoutePush 0.24s ease both;
+}
+
+@keyframes tfRoutePop {
+  from {
+    opacity: 0.94;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes tfRoutePush {
+  from {
+    opacity: 0.94;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}

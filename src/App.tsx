@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import { useAuth, AuthProvider } from './AuthContext';
 import { supabase, hasSupabase } from './supabaseClient';
 import { storage, type StorageBackupPayload, type StorageImportReport } from './storage';
@@ -43,6 +43,7 @@ import {
   Database,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useNavigationType, useParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -6174,7 +6175,10 @@ const StoryDetail = ({
   onUpdateStory,
   onExportStory,
   onOpenReaderPrefs,
-  onNavigateState,
+  forcedChapterId,
+  onOpenChapter,
+  onReaderBack,
+  onReaderNavigateChapter,
 }: { 
   story: Story, 
   onBack: () => void, 
@@ -6183,12 +6187,16 @@ const StoryDetail = ({
   onUpdateStory: (story: Story) => void,
   onExportStory: (story: Story) => void,
   onOpenReaderPrefs: () => void,
-  onNavigateState?: (input: { level: 'story' | 'chapter'; storyId: string; chapterId?: string; mode?: 'push' | 'replace' }) => void,
+  forcedChapterId?: string | null,
+  onOpenChapter?: (chapter: Chapter) => void,
+  onReaderBack?: () => void,
+  onReaderNavigateChapter?: (chapterId: string, mode?: 'push' | 'replace') => void,
 }) => {
   const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null);
   const [isEditingChapter, setIsEditingChapter] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
+  const [showDictionaryPopup, setShowDictionaryPopup] = useState(false);
   const displayGenre = parseStoryGenreAndPrompt(story.genre || '', story.storyPromptNotes || '').genreLabel || 'Chưa phân loại';
 
   const getRenderableChapterContent = (content: string) => {
@@ -6238,12 +6246,7 @@ const StoryDetail = ({
     if (currentIndex < sorted.length - 1) {
       const nextChapter = sorted[currentIndex + 1];
       setSelectedChapter(nextChapter);
-      onNavigateState?.({
-        level: 'chapter',
-        storyId: story.id,
-        chapterId: nextChapter.id,
-        mode: 'replace',
-      });
+      onReaderNavigateChapter?.(nextChapter.id, 'replace');
       window.scrollTo(0, 0);
     }
   };
@@ -6255,50 +6258,59 @@ const StoryDetail = ({
     if (currentIndex > 0) {
       const prevChapter = sorted[currentIndex - 1];
       setSelectedChapter(prevChapter);
-      onNavigateState?.({
-        level: 'chapter',
-        storyId: story.id,
-        chapterId: prevChapter.id,
-        mode: 'replace',
-      });
+      onReaderNavigateChapter?.(prevChapter.id, 'replace');
       window.scrollTo(0, 0);
     }
   };
 
   const handleOpenChapter = (chapter: Chapter) => {
+    if (onOpenChapter) {
+      onOpenChapter(chapter);
+      return;
+    }
     setSelectedChapter(chapter);
-    onNavigateState?.({
-      level: 'chapter',
-      storyId: story.id,
-      chapterId: chapter.id,
-      mode: 'push',
-    });
   };
 
   useEffect(() => {
-    const handlePopState = (event: PopStateEvent) => {
-      const state = event.state as { tfNav?: string; storyId?: string; chapterId?: string } | null;
-      if (!state || state.tfNav === 'stories') {
-        setSelectedChapter(null);
-        return;
-      }
-      if (state.tfNav === 'story') {
-        if (state.storyId === story.id) {
-          setSelectedChapter(null);
-        }
-        return;
-      }
-      if (state.tfNav === 'chapter' && state.storyId === story.id) {
-        const nextChapterId = String(state.chapterId || '');
-        const nextChapter = (story.chapters || []).find((chapter) => chapter.id === nextChapterId) || null;
-        setSelectedChapter(nextChapter);
-        return;
-      }
+    if (!forcedChapterId) {
       setSelectedChapter(null);
+      return;
+    }
+    const nextChapter = (story.chapters || []).find((chapter) => chapter.id === forcedChapterId) || null;
+    setSelectedChapter(nextChapter);
+  }, [forcedChapterId, story.chapters]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const syncHashState = () => setShowDictionaryPopup(window.location.hash === '#dictionary');
+    syncHashState();
+    window.addEventListener('hashchange', syncHashState);
+    window.addEventListener('popstate', syncHashState);
+    return () => {
+      window.removeEventListener('hashchange', syncHashState);
+      window.removeEventListener('popstate', syncHashState);
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, [story.id, story.chapters]);
+  }, []);
+
+  const openDictionaryPopup = () => {
+    if (typeof window === 'undefined') return;
+    if (window.location.hash === '#dictionary') {
+      setShowDictionaryPopup(true);
+      return;
+    }
+    const url = `${window.location.pathname}${window.location.search}#dictionary`;
+    window.history.pushState({ ...(window.history.state || {}), tfPopup: 'dictionary' }, '', url);
+    setShowDictionaryPopup(true);
+  };
+
+  const closeDictionaryPopup = () => {
+    if (typeof window === 'undefined') return;
+    if (window.location.hash === '#dictionary') {
+      window.history.back();
+      return;
+    }
+    setShowDictionaryPopup(false);
+  };
 
   const handleSaveChapterEdit = async () => {
     if (!selectedChapter || !story.chapters) return;
@@ -6353,28 +6365,35 @@ const StoryDetail = ({
         <div className="flex items-center justify-between mb-8">
           <button 
             onClick={() => {
+              if (onReaderBack) {
+                onReaderBack();
+                return;
+              }
               setSelectedChapter(null);
-              onNavigateState?.({
-                level: 'story',
-                storyId: story.id,
-                mode: 'replace',
-              });
             }}
             className="flex items-center gap-2 text-slate-500 hover:text-slate-900 transition-colors font-bold"
           >
             <ChevronLeft className="w-6 h-6" /> Quay lại mục lục
           </button>
           
-          <button 
-            onClick={() => {
-              setEditTitle(getDisplayChapterTitle(selectedChapter));
-              setEditContent(formatContent(selectedChapter.content));
-              setIsEditingChapter(true);
-            }}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-bold"
-          >
-            <Edit3 className="w-4 h-4" /> Chỉnh sửa chương
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={openDictionaryPopup}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-bold"
+            >
+              <BookOpen className="w-4 h-4" /> Tra nhanh
+            </button>
+            <button 
+              onClick={() => {
+                setEditTitle(getDisplayChapterTitle(selectedChapter));
+                setEditContent(formatContent(selectedChapter.content));
+                setIsEditingChapter(true);
+              }}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-bold"
+            >
+              <Edit3 className="w-4 h-4" /> Chỉnh sửa chương
+            </button>
+          </div>
         </div>
         
         <div className="bg-white p-10 rounded-[40px] shadow-sm border border-slate-100 mb-8">
@@ -6421,6 +6440,25 @@ const StoryDetail = ({
             Chương sau <ChevronRight className="w-5 h-5" />
           </button>
         </div>
+
+        {showDictionaryPopup ? (
+          <div className="fixed inset-0 z-[215] bg-slate-950/45 backdrop-blur-sm p-4">
+            <div className="mx-auto mt-20 max-w-xl rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl">
+              <div className="mb-3 flex items-center justify-between">
+                <h4 className="text-base font-bold text-slate-900">Tra từ điển nhanh</h4>
+                <button
+                  onClick={closeDictionaryPopup}
+                  className="rounded-lg border border-slate-200 px-3 py-1 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Đóng
+                </button>
+              </div>
+              <p className="text-sm text-slate-600">
+                Đây là popup mẫu dùng URL hash <code>#dictionary</code>. Bấm nút Back vật lý sẽ đóng popup trước, không thoát trang đọc.
+              </p>
+            </div>
+          </div>
+        ) : null}
 
         <AnimatePresence>
           {isEditingChapter && (
@@ -8998,89 +9036,13 @@ const AppContent = () => {
     lastFingerprint: '',
     startupSnapshotDone: false,
   });
+  const scrollPositionsRef = useRef<Record<string, number>>({});
+  const prevLocationKeyRef = useRef<string>('');
+  const lastHomeBackAttemptRef = useRef(0);
 
-  type AppNavHistoryState = {
-    tfNav: 'stories' | 'story' | 'chapter';
-    storyId?: string;
-    chapterId?: string;
-  };
-
-  const pushAppNavState = useCallback((nextState: AppNavHistoryState) => {
-    if (typeof window === 'undefined') return;
-    window.history.pushState(nextState, '', window.location.href);
-  }, []);
-
-  const replaceAppNavState = useCallback((nextState: AppNavHistoryState) => {
-    if (typeof window === 'undefined') return;
-    window.history.replaceState(nextState, '', window.location.href);
-  }, []);
-
-  const openStoryDetail = useCallback((story: Story) => {
-    setView('stories');
-    setEditingStory(null);
-    setIsCreating(false);
-    setSelectedStory(story);
-    pushAppNavState({ tfNav: 'story', storyId: story.id });
-  }, [pushAppNavState]);
-
-  const closeStoryDetail = useCallback(() => {
-    setSelectedStory(null);
-    setEditingStory(null);
-    setIsCreating(false);
-    setView('stories');
-    replaceAppNavState({ tfNav: 'stories' });
-  }, [replaceAppNavState]);
-
-  const handleStoryDetailNavigateState = useCallback((input: {
-    level: 'story' | 'chapter';
-    storyId: string;
-    chapterId?: string;
-    mode?: 'push' | 'replace';
-  }) => {
-    const nextState: AppNavHistoryState = input.level === 'chapter'
-      ? { tfNav: 'chapter', storyId: input.storyId, chapterId: input.chapterId }
-      : { tfNav: 'story', storyId: input.storyId };
-    if (input.mode === 'push') {
-      pushAppNavState(nextState);
-      return;
-    }
-    replaceAppNavState(nextState);
-  }, [pushAppNavState, replaceAppNavState]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const existingState = window.history.state as AppNavHistoryState | null;
-    if (!existingState?.tfNav) {
-      replaceAppNavState({ tfNav: 'stories' });
-    }
-
-    const handlePopState = (event: PopStateEvent) => {
-      const state = event.state as AppNavHistoryState | null;
-      if ((state?.tfNav === 'story' || state?.tfNav === 'chapter') && state.storyId) {
-        const latestStories = storage.getStories();
-        const targetStory = latestStories.find((item) => item.id === state.storyId) || null;
-        if (targetStory) {
-          setView('stories');
-          setEditingStory(null);
-          setIsCreating(false);
-          setSelectedStory(targetStory);
-          return;
-        }
-      }
-
-      setSelectedStory(null);
-      setEditingStory(null);
-      setIsCreating(false);
-      setView('stories');
-      if (state?.tfNav !== 'stories') {
-        replaceAppNavState({ tfNav: 'stories' });
-      }
-    };
-
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, [replaceAppNavState]);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const navigationType = useNavigationType();
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -9094,6 +9056,51 @@ const AppContent = () => {
       if (interval) clearInterval(interval);
     };
   }, [isProcessingAI]);
+
+  useLayoutEffect(() => {
+    if (typeof window === 'undefined') return;
+    const previousKey = prevLocationKeyRef.current;
+    if (previousKey) {
+      scrollPositionsRef.current[previousKey] = window.scrollY;
+    }
+
+    if (navigationType === 'POP') {
+      const savedY = scrollPositionsRef.current[location.key] ?? 0;
+      window.scrollTo(0, savedY);
+    } else {
+      window.scrollTo(0, 0);
+    }
+
+    prevLocationKeyRef.current = location.key;
+  }, [location.key, navigationType]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (location.pathname !== '/') return;
+
+    if (!(window.history.state && window.history.state.tfHomeGuard)) {
+      window.history.pushState({ ...(window.history.state || {}), tfHomeGuard: true }, '', window.location.href);
+    }
+
+    const handlePopOnHome = () => {
+      const now = Date.now();
+      if (now - lastHomeBackAttemptRef.current < 1600) {
+        window.removeEventListener('popstate', handlePopOnHome);
+        window.history.back();
+        return;
+      }
+      lastHomeBackAttemptRef.current = now;
+      notifyApp({
+        tone: 'info',
+        message: 'Bấm Back lần nữa để thoát ứng dụng.',
+        groupKey: 'home-exit-guard',
+      });
+      window.history.pushState({ ...(window.history.state || {}), tfHomeGuard: true }, '', window.location.href);
+    };
+
+    window.addEventListener('popstate', handlePopOnHome);
+    return () => window.removeEventListener('popstate', handlePopOnHome);
+  }, [location.pathname]);
 
   const dismissToast = useCallback((groupKey: string) => {
     const existingTimer = toastTimeoutsRef.current.get(groupKey);
@@ -11691,6 +11698,226 @@ CHỈ trả JSON thuần, không bọc markdown.
   const driveConnected = hasUsableDriveToken(driveAuth);
   const latestBackupStoredOnDrive = latestBackup?.drive?.status === 'uploaded';
 
+  const routeTransitionClass = navigationType === 'POP' ? 'tf-route-pop' : 'tf-route-push';
+
+  const renderHomeWorkspace = () => {
+    if (view === 'characters') {
+      return (
+        <CharacterManager
+          key="characters"
+          onBack={() => setView('stories')}
+          onRequireAuth={() => setShowAuthModal(true)}
+        />
+      );
+    }
+
+    if (view === 'api') {
+      return (
+        <ToolsManager
+          key="api"
+          section="api"
+          onBack={() => setView('stories')}
+          onRequireAuth={() => setShowAuthModal(true)}
+          profile={profile}
+        />
+      );
+    }
+
+    if (view === 'tools') {
+      if (user) {
+        return (
+          <ToolsPage
+            onBack={() => setView('stories')}
+            onRequireAuth={() => setShowAuthModal(true)}
+          />
+        );
+      }
+      return (
+        <ToolsManager
+          key="tools"
+          section="tools"
+          onBack={() => setView('stories')}
+          onRequireAuth={() => setShowAuthModal(true)}
+          profile={profile}
+        />
+      );
+    }
+
+    if (isCreating || editingStory) {
+      return (
+        <StoryEditor
+          key="editor"
+          story={editingStory || undefined}
+          onSave={handleSaveStory}
+          onCancel={() => {
+            setEditingStory(null);
+            setIsCreating(false);
+          }}
+        />
+      );
+    }
+
+    return (
+      <motion.div
+        key="list"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="pt-32"
+      >
+        <div className="max-w-7xl mx-auto px-6 mb-12">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+            <div>
+              <h2 className="text-5xl font-serif font-bold text-slate-900 mb-4 tracking-tight">Thư viện</h2>
+            </div>
+            <div className="flex flex-wrap gap-4">
+              <button
+                onClick={() => setIsCreating(true)}
+                className="hero-action hero-action-primary glow-dot flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-xl shadow-indigo-900/20 font-bold text-lg group"
+              >
+                <Plus className="w-6 h-6 transition-transform duration-300 group-hover:rotate-90 group-hover:scale-110" />
+                Viết truyện mới
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="hero-action hero-action-outline glow-dot flex items-center justify-center gap-3 px-8 py-4 rounded-2xl text-white transition-all shadow-xl font-bold text-lg group"
+              >
+                <Sparkles className="w-6 h-6 transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:scale-110 group-hover:rotate-12" />
+                Tạo từ dàn ý (AI)
+              </button>
+              <button
+                onClick={handleUnifiedAiFileFlow}
+                className="hero-action hero-action-warm glow-dot flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white transition-all shadow-xl shadow-amber-900/20 font-bold text-lg group"
+              >
+                <Languages className="w-6 h-6 transition-transform duration-300 group-hover:scale-110 group-hover:-translate-y-0.5" />
+                AI từ file (Dịch / Viết tiếp)
+              </button>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setPendingFile(file);
+                    setShowAIStoryModal(true);
+                    e.target.value = '';
+                  }
+                }}
+                className="hidden"
+                accept=".docx,.txt,.json"
+              />
+            </div>
+          </div>
+        </div>
+
+        <StoryList
+          refreshKey={storiesVersion}
+          onView={(story) => {
+            setSelectedStory(story);
+            navigate(`/story/${story.id}`);
+          }}
+        />
+      </motion.div>
+    );
+  };
+
+  const StoryRouteView = () => {
+    const params = useParams<{ id: string }>();
+    const storyId = String(params.id || '').trim();
+    const routeStories = React.useMemo(() => storage.getStories(), [storiesVersion]);
+    const routeStory = React.useMemo(
+      () => routeStories.find((item) => item.id === storyId) || null,
+      [routeStories, storyId],
+    );
+
+    useEffect(() => {
+      setSelectedStory((prev) => {
+        if (!routeStory) return null;
+        return prev?.id === routeStory.id ? prev : routeStory;
+      });
+    }, [routeStory]);
+
+    if (!routeStory) {
+      return (
+        <div className="mx-auto max-w-3xl pt-32 px-6 text-center">
+          <p className="text-slate-500">Không tìm thấy truyện.</p>
+          <button className="mt-4 tf-btn tf-btn-primary" onClick={() => navigate('/')}>Về trang chủ</button>
+        </div>
+      );
+    }
+
+    return (
+      <StoryDetail
+        story={routeStory}
+        onBack={() => navigate('/')}
+        onEdit={() => {
+          setEditingStory(routeStory);
+          setSelectedStory(null);
+          navigate('/');
+        }}
+        onAddChapter={() => {
+          setSelectedStory(routeStory);
+          setShowAIGen(true);
+        }}
+        onUpdateStory={(updated) => setSelectedStory(updated)}
+        onExportStory={handleOpenExportStory}
+        onOpenReaderPrefs={() => setShowReaderPrefsModal(true)}
+        onOpenChapter={(chapter) => navigate(`/reader/${chapter.id}`, { state: { storyId: routeStory.id } })}
+      />
+    );
+  };
+
+  const ReaderRouteView = () => {
+    const params = useParams<{ chapterId: string }>();
+    const chapterId = String(params.chapterId || '').trim();
+    const routeState = (location.state || {}) as { storyId?: string };
+    const stories = React.useMemo(() => storage.getStories(), [storiesVersion]);
+    const storyByState = routeState.storyId ? stories.find((item) => item.id === routeState.storyId) : null;
+    const routeStory = storyByState || stories.find((item) => (item.chapters || []).some((chapter) => chapter.id === chapterId)) || null;
+    const routeChapter = routeStory ? (routeStory.chapters || []).find((chapter) => chapter.id === chapterId) : null;
+
+    useEffect(() => {
+      setSelectedStory((prev) => {
+        if (!routeStory) return null;
+        return prev?.id === routeStory.id ? prev : routeStory;
+      });
+    }, [routeStory]);
+
+    if (!routeStory || !routeChapter) {
+      return (
+        <div className="mx-auto max-w-3xl pt-32 px-6 text-center">
+          <p className="text-slate-500">Không tìm thấy chương hoặc truyện gốc.</p>
+          <button className="mt-4 tf-btn tf-btn-primary" onClick={() => navigate(routeStory ? `/story/${routeStory.id}` : '/')}>Quay lại</button>
+        </div>
+      );
+    }
+
+    return (
+      <StoryDetail
+        story={routeStory}
+        forcedChapterId={chapterId}
+        onBack={() => navigate('/')}
+        onEdit={() => {
+          setEditingStory(routeStory);
+          setSelectedStory(null);
+          navigate('/');
+        }}
+        onAddChapter={() => {
+          setSelectedStory(routeStory);
+          setShowAIGen(true);
+        }}
+        onUpdateStory={(updated) => setSelectedStory(updated)}
+        onExportStory={handleOpenExportStory}
+        onOpenReaderPrefs={() => setShowReaderPrefsModal(true)}
+        onReaderBack={() => navigate(`/story/${routeStory.id}`)}
+        onReaderNavigateChapter={(nextChapterId, mode) => navigate(`/reader/${nextChapterId}`, {
+          replace: mode === 'replace',
+          state: { storyId: routeStory.id },
+        })}
+      />
+    );
+  };
+
   if (loading) return <div className="min-h-screen flex items-center justify-center font-serif">Đang khởi động...</div>;
 
   return (
@@ -12107,20 +12334,20 @@ CHỈ trả JSON thuần, không bọc markdown.
           setSelectedStory(null);
           setEditingStory(null);
           setIsCreating(false);
-          replaceAppNavState({ tfNav: 'stories' });
+          navigate('/');
         }} 
         onHome={() => {
           setView('stories');
           setSelectedStory(null);
           setEditingStory(null);
           setIsCreating(false);
-          replaceAppNavState({ tfNav: 'stories' });
+          navigate('/');
         }}
         onCreateStory={() => {
           setSelectedStory(null);
           setEditingStory(null);
           setIsCreating(true);
-          replaceAppNavState({ tfNav: 'stories' });
+          navigate('/');
         }}
         themeMode={themeMode}
         onToggleTheme={handleToggleTheme}
@@ -12157,126 +12384,14 @@ CHỈ trả JSON thuần, không bọc markdown.
           </div>
         </div>
       ) : null}
-      <AnimatePresence mode="wait">
-        {selectedStory ? (
-          <StoryDetail 
-            story={selectedStory} 
-            onBack={closeStoryDetail}
-            onEdit={() => {
-              setEditingStory(selectedStory);
-              setSelectedStory(null);
-              replaceAppNavState({ tfNav: 'stories' });
-            }}
-            onAddChapter={() => setShowAIGen(true)}
-            onUpdateStory={(updated) => setSelectedStory(updated)}
-            onExportStory={handleOpenExportStory}
-            onOpenReaderPrefs={() => setShowReaderPrefsModal(true)}
-            onNavigateState={handleStoryDetailNavigateState}
-          />
-        ) : view === 'characters' ? (
-          <CharacterManager key="characters" onBack={() => {
-            setView('stories');
-            replaceAppNavState({ tfNav: 'stories' });
-          }} onRequireAuth={() => setShowAuthModal(true)} />
-        ) : view === 'api' ? (
-          <ToolsManager
-            key="api"
-            section="api"
-            onBack={() => {
-              setView('stories');
-              replaceAppNavState({ tfNav: 'stories' });
-            }}
-            onRequireAuth={() => setShowAuthModal(true)}
-            profile={profile}
-          />
-        ) : view === 'tools' ? (
-          user ? (
-            <ToolsPage
-              onBack={() => {
-                setView('stories');
-                replaceAppNavState({ tfNav: 'stories' });
-              }}
-              onRequireAuth={() => setShowAuthModal(true)}
-            />
-          ) : (
-            <ToolsManager
-              key="tools"
-              section="tools"
-              onBack={() => {
-                setView('stories');
-                replaceAppNavState({ tfNav: 'stories' });
-              }}
-              onRequireAuth={() => setShowAuthModal(true)}
-              profile={profile}
-            />
-          )
-        ) : (isCreating || editingStory) ? (
-          <StoryEditor 
-            key="editor"
-            story={editingStory || undefined}
-            onSave={handleSaveStory}
-            onCancel={() => {
-              setEditingStory(null);
-              setIsCreating(false);
-            }}
-          />
-        ) : (
-          <motion.div 
-            key="list"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="pt-32"
-          >
-            <div className="max-w-7xl mx-auto px-6 mb-12">
-              <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-                <div>
-                  <h2 className="text-5xl font-serif font-bold text-slate-900 mb-4 tracking-tight">Thư viện</h2>
-                </div>
-                <div className="flex flex-wrap gap-4">
-                  <button 
-                    onClick={() => setIsCreating(true)}
-                    className="hero-action hero-action-primary glow-dot flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-xl shadow-indigo-900/20 font-bold text-lg group"
-                  >
-                    <Plus className="w-6 h-6 transition-transform duration-300 group-hover:rotate-90 group-hover:scale-110" />
-                    Viết truyện mới
-                  </button>
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="hero-action hero-action-outline glow-dot flex items-center justify-center gap-3 px-8 py-4 rounded-2xl text-white transition-all shadow-xl font-bold text-lg group"
-                  >
-                    <Sparkles className="w-6 h-6 transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:scale-110 group-hover:rotate-12" />
-                    Tạo từ dàn ý (AI)
-                  </button>
-                  <button 
-                    onClick={handleUnifiedAiFileFlow}
-                    className="hero-action hero-action-warm glow-dot flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white transition-all shadow-xl shadow-amber-900/20 font-bold text-lg group"
-                  >
-                    <Languages className="w-6 h-6 transition-transform duration-300 group-hover:scale-110 group-hover:-translate-y-0.5" />
-                    AI từ file (Dịch / Viết tiếp)
-                  </button>
-                  <input 
-                    type="file" 
-                    ref={fileInputRef}
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        setPendingFile(file);
-                        setShowAIStoryModal(true);
-                        e.target.value = ''; // Reset input
-                      }
-                    }}
-                    className="hidden" 
-                    accept=".docx,.txt,.json"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <StoryList refreshKey={storiesVersion} onView={openStoryDetail} />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <Routes>
+        <Route element={<div className={cn('tf-route-scene', routeTransitionClass)}><Outlet /></div>}>
+          <Route path="/" element={renderHomeWorkspace()} />
+          <Route path="/story/:id" element={<StoryRouteView />} />
+          <Route path="/reader/:chapterId" element={<ReaderRouteView />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
       </div>
 
       <AiFileActionModal

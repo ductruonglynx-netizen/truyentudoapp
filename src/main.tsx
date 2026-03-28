@@ -1,5 +1,6 @@
 import { StrictMode, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
 import './index.css';
 
 const App = lazy(() => import('./App.tsx'));
@@ -29,7 +30,11 @@ createRoot(document.getElementById('root')!).render(
         if (query.get('phase2') === '1') return <Phase2App />;
         if (query.get('phase1') === '1') return <Phase1App />;
         if (query.get('phase0') === '1') return <Phase0DemoApp />;
-        return <App />;
+        return (
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        );
       })()}
     </Suspense>
   </StrictMode>,
