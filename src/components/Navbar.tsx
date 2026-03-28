@@ -136,6 +136,9 @@ export function Navbar({
   const dividerClass = isDark ? 'bg-white/10' : 'bg-slate-200';
   const titleClass = isDark ? 'text-slate-100' : 'text-slate-900';
   const subTextClass = isDark ? 'text-slate-400' : 'text-slate-400';
+  const normalizedAuthEmail = String(authEmail || '').trim().toLowerCase();
+  const isAdminAccount = normalizedAuthEmail === 'ductruong.lynx@gmail.com';
+  const profileDisplayLabel = isAdminAccount ? 'ADMIN' : profile.displayName;
   const activeIndex = navItems.findIndex((item) => item.key === currentView);
   const indicatorStyle = {
     width: `${100 / navItems.length}%`,
@@ -188,9 +191,6 @@ export function Navbar({
               <div className={cn('absolute right-0 mt-2 w-56 rounded-2xl border z-50 p-2 backdrop-blur-xl', dropdownClass)}>
                 <div className="px-3 py-2">
                   <p className="font-bold text-slate-800 truncate">{authEmail || 'Chưa đăng nhập'}</p>
-                  {versionLabel ? (
-                    <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-500">{versionLabel}</p>
-                  ) : null}
                 </div>
                 <button
                   onClick={() => {
@@ -404,7 +404,7 @@ export function Navbar({
           <div className={cn('app-navbar-divider h-8 w-[1px] mx-1 md:mx-2', dividerClass)} />
           <div className="flex items-center gap-3">
             <div className={cn('text-right hidden sm:block whitespace-nowrap', isCompact && 'hidden')}>
-              <p className={cn('text-sm font-bold leading-none', titleClass)}>{profile.displayName}</p>
+              <p className={cn('text-sm font-bold leading-none', titleClass)}>{profileDisplayLabel}</p>
               <p className={cn('text-[10px] uppercase tracking-widest mt-1', subTextClass)}>{authEmail || 'Chưa đăng nhập'}</p>
             </div>
             <div className="relative">
@@ -419,9 +419,6 @@ export function Navbar({
                 <div className={cn('absolute right-0 mt-2 w-56 rounded-2xl border z-50 p-2 backdrop-blur-xl', dropdownClass)}>
                   <div className="px-3 py-2">
                     <p className="font-bold text-slate-800 truncate">{authEmail || 'Khách/Local'}</p>
-                    {versionLabel ? (
-                      <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-500">{versionLabel}</p>
-                    ) : null}
                   </div>
                   <button
                     onClick={() => {
