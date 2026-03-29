@@ -370,6 +370,7 @@ const MAIN_AI_USAGE_UPDATED_EVENT = 'main_ai_usage_updated';
 const UI_PROFILE_KEY = 'ui_profile_v1';
 const UI_THEME_KEY = 'ui_theme_v1';
 const UI_VIEWPORT_MODE_KEY = 'ui_viewport_mode_v1';
+const APP_MODE_KEY = 'app_mode_v1';
 const READER_PREFS_KEY = 'reader_prefs_v1';
 const STORIES_UPDATED_EVENT = 'stories:updated';
 const WORKSPACE_RECOVERY_KEY = 'truyenforge:workspace-recovery-v1';
@@ -405,6 +406,7 @@ function writeScopedAppStorage(baseKey: string, value: string): void {
 
 type ThemeMode = 'light' | 'dark';
 type ViewportMode = 'desktop' | 'mobile';
+type AppMode = 'reader' | 'creator';
 
 interface UiProfile {
   displayName: string;
@@ -781,6 +783,17 @@ function loadViewportMode(): ViewportMode {
 function saveViewportMode(mode: ViewportMode): void {
   setScopedStorageItem(UI_VIEWPORT_MODE_KEY, mode);
   emitLocalWorkspaceChanged('ui_viewport_mode');
+}
+
+function loadAppMode(): AppMode {
+  const raw = getScopedStorageItem(APP_MODE_KEY, {
+    allowLegacyFallback: shouldAllowLegacyScopeFallback(),
+  });
+  return raw === 'creator' ? 'creator' : 'reader';
+}
+
+function saveAppMode(mode: AppMode): void {
+  setScopedStorageItem(APP_MODE_KEY, mode);
 }
 
 interface AccountWorkspaceSnapshot {
@@ -10374,6 +10387,7 @@ const AIGenerationModal = ({
 
 const AppContent = () => {
   const { user, loading, login, logout, register, loginWithProvider, provider } = useAuth();
+  const [appMode, setAppMode] = useState<AppMode>(() => loadAppMode());
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
   const [viewportMode, setViewportMode] = useState<ViewportMode>(() => loadViewportMode());
   const [profile, setProfile] = useState<UiProfile>(() => loadUiProfile(user?.displayName || undefined, user?.photoURL || undefined));
@@ -10451,6 +10465,16 @@ const AppContent = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const navigationType = useNavigationType();
+
+  useEffect(() => {
+    saveAppMode(appMode);
+  }, [appMode]);
+
+  useEffect(() => {
+    if (location.pathname.startsWith('/studio') && appMode !== 'creator') {
+      setAppMode('creator');
+    }
+  }, [appMode, location.pathname]);
 
   const commitAccountSyncedAt = useCallback((syncedAt: string, force = false) => {
     workspaceSyncRef.current.lastSyncedAt = syncedAt;
@@ -12345,6 +12369,15 @@ const AppContent = () => {
     setViewportMode((prev) => (prev === 'desktop' ? 'mobile' : 'desktop'));
   };
 
+  const handleSwitchAppMode = useCallback((nextMode: AppMode) => {
+    setAppMode(nextMode);
+    setView('stories');
+    setSelectedStory(null);
+    setEditingStory(null);
+    setIsCreating(false);
+    navigate(nextMode === 'creator' ? '/studio' : '/');
+  }, [navigate]);
+
   const applyReaderPrefsToDom = useCallback((prefs: ReaderPrefs) => {
     const root = document.documentElement;
     root.style.setProperty('--tf-reader-font-size', `${prefs.fontSize}px`);
@@ -13851,6 +13884,38 @@ ${JSON.stringify(violatingPayload)}
     );
   };
 
+  const renderReaderWorkspace = () => (
+    <motion.div
+      key="reader-home"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="pt-32"
+    >
+      <div className="max-w-7xl mx-auto px-6 mb-8">
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+          <div>
+            <h2 className="text-4xl font-serif font-bold text-slate-900 mb-2 tracking-tight">Tủ truyện</h2>
+            <p className="text-sm text-slate-500">Chế độ đọc tối giản. Chuyển sang Studio để viết, dịch và dùng công cụ AI nâng cao.</p>
+          </div>
+          <button
+            onClick={() => handleSwitchAppMode('creator')}
+            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-900/20 hover:bg-indigo-700"
+          >
+            Mở Studio
+          </button>
+        </div>
+      </div>
+      <StoryList
+        refreshKey={storiesVersion}
+        onView={(story) => {
+          setSelectedStory(story);
+          navigate(`/${resolveStorySlug(story)}`);
+        }}
+      />
+    </motion.div>
+  );
+
   const NotFoundRouteView = ({
     title = '404 - Không tìm thấy',
     message = 'Đường dẫn không hợp lệ hoặc nội dung đã bị xóa.',
@@ -14428,25 +14493,33 @@ ${JSON.stringify(violatingPayload)}
       <Navbar 
         currentView={view} 
         setView={(v) => {
+          if (appMode !== 'creator') {
+            handleSwitchAppMode('creator');
+          }
           setView(v);
           setSelectedStory(null);
           setEditingStory(null);
           setIsCreating(false);
-          navigate('/');
+          navigate('/studio');
         }} 
         onHome={() => {
           setView('stories');
           setSelectedStory(null);
           setEditingStory(null);
           setIsCreating(false);
-          navigate('/');
+          navigate(appMode === 'creator' ? '/studio' : '/');
         }}
         onCreateStory={() => {
+          if (appMode !== 'creator') {
+            setAppMode('creator');
+          }
           setSelectedStory(null);
           setEditingStory(null);
           setIsCreating(true);
-          navigate('/');
+          navigate('/studio');
         }}
+        appMode={appMode}
+        onSwitchAppMode={handleSwitchAppMode}
         themeMode={themeMode}
         onToggleTheme={handleToggleTheme}
         viewportMode={viewportMode}
@@ -14484,7 +14557,8 @@ ${JSON.stringify(violatingPayload)}
       ) : null}
       <Routes>
         <Route element={<div className={cn('tf-route-scene', routeTransitionClass)}><Outlet /></div>}>
-          <Route path="/" element={renderHomeWorkspace()} />
+          <Route path="/" element={appMode === 'creator' ? <Navigate to="/studio" replace /> : renderReaderWorkspace()} />
+          <Route path="/studio" element={renderHomeWorkspace()} />
           <Route path="/oauth/consent" element={<Navigate to={oauthConsentRedirectTarget} replace />} />
           <Route path="/oauth/consent/" element={<Navigate to={oauthConsentRedirectTarget} replace />} />
           <Route path="/story/:id" element={<LegacyStoryRouteRedirect />} />

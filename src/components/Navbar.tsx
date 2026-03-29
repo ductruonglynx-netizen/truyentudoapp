@@ -15,6 +15,7 @@ interface UiProfile {
 
 type ThemeMode = 'light' | 'dark';
 type ViewportMode = 'desktop' | 'mobile';
+type AppMode = 'reader' | 'creator';
 
 interface NavbarProps {
   currentView: string;
@@ -32,6 +33,8 @@ interface NavbarProps {
   viewportMode: ViewportMode;
   onToggleViewportMode: () => void;
   profile: UiProfile;
+  appMode: AppMode;
+  onSwitchAppMode: (mode: AppMode) => void;
   finopsWarning?: string;
   authEmail?: string;
   versionLabel?: string;
@@ -53,6 +56,8 @@ export function Navbar({
   viewportMode,
   onToggleViewportMode,
   profile,
+  appMode,
+  onSwitchAppMode,
   finopsWarning,
   authEmail,
   versionLabel,
@@ -78,30 +83,42 @@ export function Navbar({
 
   const isDark = themeMode === 'dark';
   const navItems = useMemo(
-    () => [
-      { key: 'stories', label: 'Trang chủ', icon: BookOpen, action: onHome },
-      { key: 'api', label: 'API', icon: Zap, action: () => setView('api') },
-      { key: 'tools', label: 'Công cụ', icon: Settings, action: () => setView('tools') },
-      { key: 'characters', label: 'Nhân vật', icon: Users, action: () => setView('characters') },
-    ] as const,
-    [onHome, setView],
+    () => appMode === 'reader'
+      ? [{ key: 'stories', label: 'Trang chủ', icon: BookOpen, action: onHome }] as const
+      : [
+          { key: 'stories', label: 'Trang chủ', icon: BookOpen, action: onHome },
+          { key: 'api', label: 'API', icon: Zap, action: () => setView('api') },
+          { key: 'tools', label: 'Công cụ', icon: Settings, action: () => setView('tools') },
+          { key: 'characters', label: 'Nhân vật', icon: Users, action: () => setView('characters') },
+        ] as const,
+    [appMode, onHome, setView],
   );
   const quickActions = useMemo(
     () => [
       ...(isMobile
         ? [
             { key: 'home', label: 'Trang chủ', icon: BookOpen, action: onHome, tone: 'neutral' as const },
-            { key: 'api', label: 'API', icon: Zap, action: () => setView('api'), tone: 'neutral' as const },
-            { key: 'tools', label: 'Công cụ', icon: Settings, action: () => setView('tools'), tone: 'neutral' as const },
-            { key: 'characters', label: 'Nhân vật', icon: Users, action: () => setView('characters'), tone: 'neutral' as const },
+            ...(appMode === 'creator'
+              ? [
+                  { key: 'api', label: 'API', icon: Zap, action: () => setView('api'), tone: 'neutral' as const },
+                  { key: 'tools', label: 'Công cụ', icon: Settings, action: () => setView('tools'), tone: 'neutral' as const },
+                  { key: 'characters', label: 'Nhân vật', icon: Users, action: () => setView('characters'), tone: 'neutral' as const },
+                ]
+              : []),
           ]
         : []),
-      { key: 'create', label: 'Viết truyện mới', icon: Plus, action: onCreateStory, tone: 'brand' as const },
-      { key: 'prompt', label: 'Kho prompt', icon: Library, action: onOpenPromptManager, tone: 'neutral' as const },
-      { key: 'release', label: 'Cập nhật', icon: History, action: onOpenReleaseHistory, tone: 'neutral' as const },
+      { key: 'mode-reader', label: 'Chế độ đọc', icon: BookOpen, action: () => onSwitchAppMode('reader'), tone: appMode === 'reader' ? 'brand' as const : 'neutral' as const },
+      { key: 'mode-creator', label: 'Chế độ studio', icon: Settings, action: () => onSwitchAppMode('creator'), tone: appMode === 'creator' ? 'brand' as const : 'neutral' as const },
+      ...(appMode === 'creator'
+        ? [
+            { key: 'create', label: 'Viết truyện mới', icon: Plus, action: onCreateStory, tone: 'brand' as const },
+            { key: 'prompt', label: 'Kho prompt', icon: Library, action: onOpenPromptManager, tone: 'neutral' as const },
+            { key: 'release', label: 'Cập nhật', icon: History, action: onOpenReleaseHistory, tone: 'neutral' as const },
+          ]
+        : []),
       { key: 'theme', label: isDark ? 'Nền sáng' : 'Nền tối', icon: isDark ? Sun : Moon, action: onToggleTheme, tone: 'neutral' as const },
     ],
-    [isDark, isMobile, onCreateStory, onHome, onOpenPromptManager, onOpenReleaseHistory, onToggleTheme, setView],
+    [appMode, isDark, isMobile, onCreateStory, onHome, onOpenPromptManager, onOpenReleaseHistory, onSwitchAppMode, onToggleTheme, setView],
   );
 
   const surfaceClass = isDark
@@ -369,28 +386,56 @@ export function Navbar({
               {finopsWarning}
             </span>
           ) : null}
+          <div className={cn('hidden lg:flex items-center gap-1 rounded-xl border px-1 py-1', isDark ? 'border-white/10 bg-white/5' : 'border-indigo-100 bg-white/80')}>
+            <button
+              onClick={() => onSwitchAppMode('reader')}
+              className={cn(
+                'px-3 py-1.5 rounded-lg text-xs font-bold transition-colors',
+                appMode === 'reader'
+                  ? (isDark ? 'bg-cyan-500 text-slate-950' : 'bg-indigo-600 text-white')
+                  : (isDark ? 'text-slate-300 hover:bg-cyan-500/15' : 'text-slate-600 hover:bg-indigo-50')
+              )}
+            >
+              Đọc
+            </button>
+            <button
+              onClick={() => onSwitchAppMode('creator')}
+              className={cn(
+                'px-3 py-1.5 rounded-lg text-xs font-bold transition-colors',
+                appMode === 'creator'
+                  ? (isDark ? 'bg-cyan-500 text-slate-950' : 'bg-indigo-600 text-white')
+                  : (isDark ? 'text-slate-300 hover:bg-cyan-500/15' : 'text-slate-600 hover:bg-indigo-50')
+              )}
+            >
+              Studio
+            </button>
+          </div>
           {!isCompact && (
             <>
-              <button
-                onClick={onOpenPromptManager}
-                className={cn(
-                  'hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300',
-                  isDark ? 'text-cyan-200 border border-cyan-400/25 hover:bg-cyan-500/10' : 'text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100',
-                )}
-                title="Kho prompt"
-              >
-                <Library className="w-4 h-4" /> Prompt
-              </button>
-              <button
-                onClick={onOpenReleaseHistory}
-                className={cn(
-                  'hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300',
-                  isDark ? 'text-cyan-200 border border-cyan-400/25 hover:bg-cyan-500/10' : 'text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100',
-                )}
-                title="Lịch sử cập nhật"
-              >
-                <History className="w-4 h-4" /> Cập nhật
-              </button>
+              {appMode === 'creator' ? (
+                <>
+                  <button
+                    onClick={onOpenPromptManager}
+                    className={cn(
+                      'hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300',
+                      isDark ? 'text-cyan-200 border border-cyan-400/25 hover:bg-cyan-500/10' : 'text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100',
+                    )}
+                    title="Kho prompt"
+                  >
+                    <Library className="w-4 h-4" /> Prompt
+                  </button>
+                  <button
+                    onClick={onOpenReleaseHistory}
+                    className={cn(
+                      'hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300',
+                      isDark ? 'text-cyan-200 border border-cyan-400/25 hover:bg-cyan-500/10' : 'text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100',
+                    )}
+                    title="Lịch sử cập nhật"
+                  >
+                    <History className="w-4 h-4" /> Cập nhật
+                  </button>
+                </>
+              ) : null}
             </>
           )}
           <div className={cn('app-navbar-divider h-8 w-[1px] mx-1 md:mx-2', dividerClass)} />
