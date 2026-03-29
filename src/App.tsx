@@ -60,7 +60,7 @@ import { APP_NOTICE_EVENT, notifyApp, type AppNoticePayload, type AppNoticeTone 
 import { loadPromptLibraryState, savePromptLibraryState, type PromptLibraryState } from './promptLibraryStore';
 import { LOCAL_WORKSPACE_CHANGED_EVENT, emitLocalWorkspaceChanged, loadLocalWorkspaceMeta, markLocalWorkspaceHydrated, type LocalWorkspaceMeta, type LocalWorkspaceSection } from './localWorkspaceSync';
 import { WorkspaceConflictError, loadServerWorkspace, saveQaReport, saveServerWorkspace, SUPABASE_STORAGE_TABLES } from './supabaseWorkspace';
-import { syncNormalizedWorkspaceRecords } from './supabaseNormalizedWorkspace';
+import { SUPABASE_NORMALIZED_TABLES, syncNormalizedWorkspaceRecords } from './supabaseNormalizedWorkspace';
 import { IMAGE_AI_PROVIDER_META, getDefaultImageAiModel, type ImageAiProvider } from './imageAiProviders';
 import { createBackupSnapshot, getBackupSnapshot, listBackupSnapshots, updateBackupSnapshotDriveMeta, type BackupReason, type BackupSnapshot } from './backupVault';
 import { buildDriveBackupFilename, connectGoogleDriveInteractive, ensureGoogleDriveAccessToken, hasGoogleDriveBackupConfig, loadStoredDriveAuth, uploadBackupSnapshotToDrive, type GoogleDriveAuthState, type GoogleDriveAccountProfile } from './googleDriveBackups';
@@ -393,6 +393,7 @@ const STORY_IMPORT_MAX_STORIES = 180;
 const STORY_IMPORT_MAX_CHAPTERS_PER_STORY = 1200;
 const STORY_IMPORT_MAX_CHARACTERS = 6000;
 const IMAGE_PROVIDER_WARNING_COOLDOWN_MS = 2 * 60 * 1000;
+const PUBLIC_STORY_FEED_LIMIT = 48;
 
 function readScopedAppStorage(baseKey: string): string | null {
   return getScopedStorageItem(baseKey, {
@@ -3947,6 +3948,20 @@ interface Story {
   updatedAt: any;
 }
 
+interface PublicStoryFeedItem {
+  id: string;
+  slug?: string;
+  authorId: string;
+  title: string;
+  introduction?: string;
+  coverImageUrl?: string;
+  type?: 'original' | 'translated' | 'continued';
+  genre?: string;
+  chapterCount: number;
+  isAdult?: boolean;
+  updatedAt: string;
+}
+
 type BreadcrumbItem = {
   label: string;
   to?: string;
@@ -7412,6 +7427,7 @@ const StoryDetail = ({
   onReaderBack,
   onReaderNavigateChapter,
   breadcrumbs,
+  isReadOnly = false,
 }: { 
   story: Story, 
   onBack: () => void, 
@@ -7425,6 +7441,7 @@ const StoryDetail = ({
   onReaderBack?: () => void,
   onReaderNavigateChapter?: (chapterId: string, mode?: 'push' | 'replace') => void,
   breadcrumbs?: BreadcrumbItem[],
+  isReadOnly?: boolean,
 }) => {
   const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null);
   const [isEditingChapter, setIsEditingChapter] = useState(false);
@@ -7601,6 +7618,7 @@ const StoryDetail = ({
   };
 
   const handleDeleteChapter = async (chapterId: string) => {
+    if (isReadOnly) return;
     if (!story.chapters || !story.chapters.length) return;
     const target = story.chapters.find((item) => item.id === chapterId);
     if (!target) return;
@@ -7700,22 +7718,26 @@ const StoryDetail = ({
             >
               <BookOpen className="w-4 h-4" /> Tra nhanh
             </button>
-            <button 
-              onClick={() => {
-                setEditTitle(getDisplayChapterTitle(selectedChapter));
-                setEditContent(formatContent(selectedChapter.content));
-                setIsEditingChapter(true);
-              }}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-bold"
-            >
-              <Edit3 className="w-4 h-4" /> Chỉnh sửa chương
-            </button>
-            <button
-              onClick={() => void handleDeleteChapter(selectedChapter.id)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 transition-colors text-sm font-bold"
-            >
-              <Trash2 className="w-4 h-4" /> Xóa chương
-            </button>
+            {!isReadOnly ? (
+              <>
+                <button 
+                  onClick={() => {
+                    setEditTitle(getDisplayChapterTitle(selectedChapter));
+                    setEditContent(formatContent(selectedChapter.content));
+                    setIsEditingChapter(true);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-bold"
+                >
+                  <Edit3 className="w-4 h-4" /> Chỉnh sửa chương
+                </button>
+                <button
+                  onClick={() => void handleDeleteChapter(selectedChapter.id)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 transition-colors text-sm font-bold"
+                >
+                  <Trash2 className="w-4 h-4" /> Xóa chương
+                </button>
+              </>
+            ) : null}
           </div>
         </div>
         
@@ -7877,18 +7899,26 @@ const StoryDetail = ({
           >
             <Download className="w-4 h-4" /> Xuất truyện
           </button>
-          <button 
-            onClick={onEdit}
-            className="flex items-center gap-2 px-6 py-2 rounded-full border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-bold"
-          >
-            <Edit3 className="w-4 h-4" /> Chỉnh sửa thông tin
-          </button>
-          <button 
-            onClick={onAddChapter}
-            className="flex items-center gap-2 px-6 py-2 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white transition-colors text-sm font-bold shadow-md"
-          >
-            <Plus className="w-4 h-4" /> Viết chương mới
-          </button>
+          {!isReadOnly ? (
+            <>
+              <button 
+                onClick={onEdit}
+                className="flex items-center gap-2 px-6 py-2 rounded-full border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-bold"
+              >
+                <Edit3 className="w-4 h-4" /> Chỉnh sửa thông tin
+              </button>
+              <button 
+                onClick={onAddChapter}
+                className="flex items-center gap-2 px-6 py-2 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white transition-colors text-sm font-bold shadow-md"
+              >
+                <Plus className="w-4 h-4" /> Viết chương mới
+              </button>
+            </>
+          ) : (
+            <span className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-bold uppercase tracking-[0.15em] text-indigo-700">
+              Bản công khai
+            </span>
+          )}
         </div>
       </div>
 
@@ -7982,18 +8012,20 @@ const StoryDetail = ({
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <button
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              void handleDeleteChapter(chapter.id);
-                            }}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-200 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600"
-                            title="Xóa chương"
-                            aria-label={`Xóa ${chapter.title || `chương ${chapter.order}`}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          {!isReadOnly ? (
+                            <button
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                void handleDeleteChapter(chapter.id);
+                              }}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-200 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600"
+                              title="Xóa chương"
+                              aria-label={`Xóa ${chapter.title || `chương ${chapter.order}`}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          ) : null}
                           <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-indigo-400 transition-colors" />
                         </div>
                       </>
@@ -10466,6 +10498,169 @@ const AppContent = () => {
   const location = useLocation();
   const navigationType = useNavigationType();
 
+  const cachePublicStory = useCallback((story: Story) => {
+    if (!story?.id) return;
+    publicStoryCacheRef.current[String(story.id)] = story;
+    setPublicStoryCacheVersion((prev) => prev + 1);
+  }, []);
+
+  const hydratePublicStoryFromRows = useCallback((storyRow: any, chapterRows: any[]): Story | null => {
+    if (!storyRow || !storyRow.story_id) return null;
+    const chapters: Chapter[] = (Array.isArray(chapterRows) ? chapterRows : [])
+      .map((chapter: any) => ({
+        id: String(chapter.chapter_id || ''),
+        title: String(chapter.title || ''),
+        content: String(chapter.content || ''),
+        order: Number(chapter.sort_order || 0),
+        aiInstructions: chapter.ai_instructions ? String(chapter.ai_instructions) : '',
+        script: chapter.script ? String(chapter.script) : '',
+        createdAt: chapter.created_at || new Date().toISOString(),
+        updatedAt: chapter.updated_at || chapter.created_at || new Date().toISOString(),
+      }))
+      .filter((chapter) => chapter.id)
+      .sort((a, b) => a.order - b.order);
+
+    return {
+      id: String(storyRow.story_id),
+      slug: storyRow.slug ? String(storyRow.slug) : undefined,
+      authorId: String(storyRow.user_id || ''),
+      title: String(storyRow.title || 'Truyện chưa đặt tên'),
+      content: String(storyRow.content || ''),
+      coverImageUrl: storyRow.cover_image_url ? String(storyRow.cover_image_url) : undefined,
+      type: (storyRow.type === 'translated' || storyRow.type === 'continued') ? storyRow.type : 'original',
+      genre: storyRow.genre ? String(storyRow.genre) : '',
+      introduction: storyRow.introduction ? String(storyRow.introduction) : '',
+      expectedChapters: Number(storyRow.expected_chapters || 0),
+      expectedWordCount: Number(storyRow.expected_word_count || 0),
+      chapters,
+      isPublic: Boolean(storyRow.is_public),
+      isAdult: Boolean(storyRow.is_adult),
+      isAI: Boolean(storyRow.is_ai),
+      storyPromptNotes: storyRow.story_prompt_notes ? String(storyRow.story_prompt_notes) : '',
+      characterRoster: Array.isArray(storyRow.character_roster) ? storyRow.character_roster : [],
+      translationMemory: Array.isArray(storyRow.translation_memory) ? storyRow.translation_memory : [],
+      createdAt: storyRow.created_at || new Date().toISOString(),
+      updatedAt: storyRow.updated_at || storyRow.created_at || new Date().toISOString(),
+    };
+  }, []);
+
+  const loadPublicStoryById = useCallback(async (storyId: string): Promise<Story | null> => {
+    if (!hasSupabase) return null;
+    const targetStoryId = String(storyId || '').trim();
+    if (!targetStoryId) return null;
+    const supabase = await getSupabaseClient();
+    if (!supabase) return null;
+
+    const { data: storyRow, error: storyError } = await supabase
+      .from(SUPABASE_NORMALIZED_TABLES.stories)
+      .select('story_id,slug,user_id,title,content,introduction,genre,type,is_public,is_adult,is_ai,expected_chapters,expected_word_count,story_prompt_notes,cover_image_url,character_roster,translation_memory,created_at,updated_at')
+      .eq('story_id', targetStoryId)
+      .eq('is_public', true)
+      .maybeSingle();
+
+    if (storyError || !storyRow) return null;
+
+    const { data: chapterRows, error: chapterError } = await supabase
+      .from(SUPABASE_NORMALIZED_TABLES.chapters)
+      .select('chapter_id,title,content,sort_order,ai_instructions,script,created_at,updated_at')
+      .eq('story_id', targetStoryId)
+      .order('sort_order', { ascending: true });
+
+    if (chapterError) return null;
+
+    const story = hydratePublicStoryFromRows(storyRow, chapterRows || []);
+    if (!story) return null;
+    cachePublicStory(story);
+    return story;
+  }, [cachePublicStory, hydratePublicStoryFromRows, hasSupabase]);
+
+  const loadPublicStoryBySlug = useCallback(async (storySlug: string): Promise<Story | null> => {
+    if (!hasSupabase) return null;
+    const normalizedSlug = sanitizeStorySlug(String(storySlug || '').trim());
+    if (!normalizedSlug) return null;
+
+    const cachedStories = Object.values(publicStoryCacheRef.current || {});
+    const cached = cachedStories.find((story) => resolveStorySlug(story) === normalizedSlug) || null;
+    if (cached) return cached;
+
+    const supabase = await getSupabaseClient();
+    if (!supabase) return null;
+
+    const { data: row, error } = await supabase
+      .from(SUPABASE_NORMALIZED_TABLES.stories)
+      .select('story_id')
+      .eq('is_public', true)
+      .eq('slug', normalizedSlug)
+      .maybeSingle();
+
+    if (error || !row?.story_id) return null;
+    return loadPublicStoryById(String(row.story_id));
+  }, [hasSupabase, loadPublicStoryById]);
+
+  const refreshPublicStoryFeed = useCallback(async () => {
+    if (!hasSupabase) {
+      setPublicStoryFeed([]);
+      setPublicFeedError('Chưa cấu hình Supabase nên chưa đọc được truyện công khai.');
+      return;
+    }
+    setPublicFeedLoading(true);
+    setPublicFeedError('');
+    try {
+      const supabase = await getSupabaseClient();
+      if (!supabase) throw new Error('Không khởi tạo được Supabase client.');
+
+      let query = supabase
+        .from(SUPABASE_NORMALIZED_TABLES.stories)
+        .select('story_id,slug,user_id,title,introduction,cover_image_url,type,genre,is_public,is_adult,updated_at')
+        .eq('is_public', true)
+        .order('updated_at', { ascending: false })
+        .limit(PUBLIC_STORY_FEED_LIMIT);
+
+      if (user?.uid) {
+        query = query.neq('user_id', user.uid);
+      }
+
+      const { data: rows, error } = await query;
+      if (error) throw error;
+
+      const storyIds = (rows || []).map((row: any) => String(row.story_id || '')).filter(Boolean);
+      let chapterCountMap: Record<string, number> = {};
+      if (storyIds.length) {
+        const { data: chapterRows } = await supabase
+          .from(SUPABASE_NORMALIZED_TABLES.chapters)
+          .select('story_id')
+          .in('story_id', storyIds);
+        chapterCountMap = (chapterRows || []).reduce((acc: Record<string, number>, row: any) => {
+          const id = String(row.story_id || '');
+          if (!id) return acc;
+          acc[id] = (acc[id] || 0) + 1;
+          return acc;
+        }, {});
+      }
+
+      const feed: PublicStoryFeedItem[] = (rows || []).map((row: any) => ({
+        id: String(row.story_id || ''),
+        slug: row.slug ? String(row.slug) : undefined,
+        authorId: String(row.user_id || ''),
+        title: String(row.title || 'Truyện chưa đặt tên'),
+        introduction: row.introduction ? String(row.introduction) : '',
+        coverImageUrl: row.cover_image_url ? String(row.cover_image_url) : undefined,
+        type: (row.type === 'translated' || row.type === 'continued') ? row.type : 'original',
+        genre: row.genre ? String(row.genre) : '',
+        chapterCount: chapterCountMap[String(row.story_id || '')] || 0,
+        isAdult: Boolean(row.is_adult),
+        updatedAt: String(row.updated_at || new Date().toISOString()),
+      })).filter((item) => item.id);
+
+      setPublicStoryFeed(feed);
+    } catch (error) {
+      setPublicStoryFeed([]);
+      setPublicFeedError(error instanceof Error ? error.message : 'Không thể tải truyện công khai.');
+    } finally {
+      setPublicFeedLoading(false);
+    }
+  }, [hasSupabase, user?.uid]);
+
   useEffect(() => {
     saveAppMode(appMode);
   }, [appMode]);
@@ -11460,6 +11655,12 @@ const AppContent = () => {
   const [showAIGen, setShowAIGen] = useState(false);
   const [storiesVersion, setStoriesVersion] = useState(0);
   const [view, setView] = useState<'stories' | 'characters' | 'tools' | 'api'>('stories');
+  const [readerFeedTab, setReaderFeedTab] = useState<'mine' | 'public'>('mine');
+  const [publicStoryFeed, setPublicStoryFeed] = useState<PublicStoryFeedItem[]>([]);
+  const [publicFeedLoading, setPublicFeedLoading] = useState(false);
+  const [publicFeedError, setPublicFeedError] = useState('');
+  const [loadingPublicStoryId, setLoadingPublicStoryId] = useState<string | null>(null);
+  const [publicStoryCacheVersion, setPublicStoryCacheVersion] = useState(0);
   const [showAIStoryModal, setShowAIStoryModal] = useState(false);
   const [showAIContinueModal, setShowAIContinueModal] = useState(false);
   const [showTranslateModal, setShowTranslateModal] = useState(false);
@@ -11481,6 +11682,13 @@ const AppContent = () => {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState('');
+  const publicStoryCacheRef = useRef<Record<string, Story>>({});
+
+  useEffect(() => {
+    if (appMode !== 'reader') return;
+    if (readerFeedTab !== 'public') return;
+    void refreshPublicStoryFeed();
+  }, [appMode, readerFeedTab, refreshPublicStoryFeed]);
 
   useEffect(() => {
     const stories = storage.getStories();
@@ -13884,37 +14092,186 @@ ${JSON.stringify(violatingPayload)}
     );
   };
 
-  const renderReaderWorkspace = () => (
-    <motion.div
-      key="reader-home"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="pt-32"
-    >
-      <div className="max-w-7xl mx-auto px-6 mb-8">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-          <div>
-            <h2 className="text-4xl font-serif font-bold text-slate-900 mb-2 tracking-tight">Tủ truyện</h2>
-            <p className="text-sm text-slate-500">Chế độ đọc tối giản. Chuyển sang Studio để viết, dịch và dùng công cụ AI nâng cao.</p>
+  const renderReaderWorkspace = () => {
+    const handleOpenPublicStory = async (item: PublicStoryFeedItem) => {
+      if (loadingPublicStoryId) return;
+      setLoadingPublicStoryId(item.id);
+      try {
+        const story = await loadPublicStoryById(item.id);
+        if (!story) {
+          notifyApp({
+            tone: 'warn',
+            message: 'Không mở được truyện công khai này. Có thể truyện đã bị ẩn hoặc xóa.',
+          });
+          return;
+        }
+        setSelectedStory(story);
+        navigate(`/${resolveStorySlug(story)}`, { state: { storyId: story.id } });
+      } finally {
+        setLoadingPublicStoryId(null);
+      }
+    };
+
+    const formatPublicUpdatedAt = (updatedAt: string) => {
+      if (!updatedAt) return 'N/A';
+      const date = new Date(updatedAt);
+      if (Number.isNaN(date.getTime())) return 'N/A';
+      return date.toLocaleDateString('vi-VN');
+    };
+
+    return (
+      <motion.div
+        key="reader-home"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="pt-32"
+      >
+        <div className="max-w-7xl mx-auto px-6 mb-8">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="mb-2 text-4xl font-serif font-bold tracking-tight text-slate-900">Tủ truyện</h2>
+              <p className="text-sm text-slate-500">Chọn truyện của bạn hoặc đọc truyện công khai từ cộng đồng.</p>
+            </div>
+            <button
+              onClick={() => handleSwitchAppMode('creator')}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-900/20 hover:bg-indigo-700"
+            >
+              Mở Studio
+            </button>
           </div>
-          <button
-            onClick={() => handleSwitchAppMode('creator')}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-900/20 hover:bg-indigo-700"
-          >
-            Mở Studio
-          </button>
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => setReaderFeedTab('mine')}
+              className={cn(
+                'inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-bold transition-colors',
+                readerFeedTab === 'mine'
+                  ? 'border-indigo-600 bg-indigo-600 text-white'
+                  : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:text-indigo-700',
+              )}
+            >
+              <Library className="h-4 w-4" />
+              Truyện của bạn
+            </button>
+            <button
+              onClick={() => setReaderFeedTab('public')}
+              className={cn(
+                'inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-bold transition-colors',
+                readerFeedTab === 'public'
+                  ? 'border-indigo-600 bg-indigo-600 text-white'
+                  : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:text-indigo-700',
+              )}
+            >
+              <Users className="h-4 w-4" />
+              Truyện công khai
+            </button>
+            {readerFeedTab === 'public' ? (
+              <button
+                onClick={() => void refreshPublicStoryFeed()}
+                disabled={publicFeedLoading}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 transition-colors hover:border-indigo-200 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {publicFeedLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+                Làm mới truyện công khai
+              </button>
+            ) : null}
+          </div>
         </div>
-      </div>
-      <StoryList
-        refreshKey={storiesVersion}
-        onView={(story) => {
-          setSelectedStory(story);
-          navigate(`/${resolveStorySlug(story)}`);
-        }}
-      />
-    </motion.div>
-  );
+
+        {readerFeedTab === 'mine' ? (
+          <StoryList
+            refreshKey={storiesVersion}
+            onView={(story) => {
+              setSelectedStory(story);
+              navigate(`/${resolveStorySlug(story)}`);
+            }}
+          />
+        ) : (
+          <div className="mx-auto max-w-7xl px-6 pb-24">
+            {!hasSupabase ? (
+              <div className="rounded-3xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-800">
+                Chưa cấu hình Supabase nên chưa tải được kho truyện công khai.
+              </div>
+            ) : null}
+            {hasSupabase && publicFeedError ? (
+              <div className="rounded-3xl border border-rose-200 bg-rose-50 p-6 text-sm text-rose-800">
+                {publicFeedError}
+              </div>
+            ) : null}
+            {hasSupabase && !publicFeedError && publicFeedLoading && publicStoryFeed.length === 0 ? (
+              <div className="flex min-h-[12rem] items-center justify-center rounded-3xl border border-slate-200 bg-white text-slate-600">
+                <span className="inline-flex items-center gap-2 text-sm font-semibold">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Đang tải truyện công khai...
+                </span>
+              </div>
+            ) : null}
+            {hasSupabase && !publicFeedError && !publicFeedLoading && publicStoryFeed.length === 0 ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center text-slate-500">
+                Chưa có truyện công khai nào để đọc.
+              </div>
+            ) : null}
+            {hasSupabase && publicStoryFeed.length > 0 ? (
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                {publicStoryFeed.map((item) => {
+                  const isLoading = loadingPublicStoryId === item.id;
+                  return (
+                    <article
+                      key={item.id}
+                      className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-900/10"
+                    >
+                      <div className="mb-4 flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h3 className="line-clamp-2 text-xl font-serif font-bold text-slate-900">{item.title}</h3>
+                          <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                            {item.genre || 'Chưa phân loại'}
+                          </p>
+                        </div>
+                        {item.isAdult ? (
+                          <span className="inline-flex shrink-0 items-center rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-red-600">
+                            18+
+                          </span>
+                        ) : null}
+                      </div>
+
+                      {item.coverImageUrl ? (
+                        <div className="mb-4 overflow-hidden rounded-2xl border border-slate-100 bg-slate-100">
+                          <img
+                            src={item.coverImageUrl}
+                            alt={`Bìa truyện ${item.title}`}
+                            className="h-44 w-full object-cover object-center"
+                            loading="lazy"
+                          />
+                        </div>
+                      ) : null}
+
+                      <p className="line-clamp-3 text-sm leading-relaxed text-slate-600">
+                        {item.introduction || 'Chưa có giới thiệu ngắn.'}
+                      </p>
+
+                      <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4 text-[11px] font-semibold text-slate-500">
+                        <span>{item.chapterCount} chương</span>
+                        <span>Cập nhật {formatPublicUpdatedAt(item.updatedAt)}</span>
+                      </div>
+
+                      <button
+                        onClick={() => void handleOpenPublicStory(item)}
+                        disabled={isLoading}
+                        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <BookOpen className="h-4 w-4" />}
+                        Đọc truyện
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+        )}
+      </motion.div>
+    );
+  };
 
   const NotFoundRouteView = ({
     title = '404 - Không tìm thấy',
@@ -13943,8 +14300,13 @@ ${JSON.stringify(violatingPayload)}
       if (!story) continue;
       if (resolveStorySlug(story) === normalizedSlug) return story;
     }
+    const publicStories = Object.values(publicStoryCacheRef.current || {});
+    for (const story of publicStories) {
+      if (!story) continue;
+      if (resolveStorySlug(story) === normalizedSlug) return story;
+    }
     return null;
-  }, []);
+  }, [publicStoryCacheVersion]);
 
   const findStoryByChapterIdFromStorage = useCallback((chapterId: string): { story: Story; chapter: Chapter } | null => {
     const targetId = String(chapterId || '').trim();
@@ -13956,16 +14318,39 @@ ${JSON.stringify(violatingPayload)}
       const chapter = (story.chapters || []).find((item) => item.id === targetId);
       if (chapter) return { story, chapter };
     }
+    const publicStories = Object.values(publicStoryCacheRef.current || {});
+    for (const story of publicStories) {
+      const chapter = (story.chapters || []).find((item) => item.id === targetId);
+      if (chapter) return { story, chapter };
+    }
     return null;
-  }, []);
+  }, [publicStoryCacheVersion]);
 
   const StoryRouteView = () => {
     const params = useParams<{ storySlug: string }>();
     const storySlug = sanitizeStorySlug(String(params.storySlug || '').trim());
+    const [resolvingPublicStory, setResolvingPublicStory] = useState(false);
     const routeStory = React.useMemo(
       () => findStoryBySlugFromStorage(storySlug),
       [findStoryBySlugFromStorage, storySlug, storiesVersion],
     );
+
+    useEffect(() => {
+      let cancelled = false;
+      if (routeStory || !storySlug) {
+        setResolvingPublicStory(false);
+        return () => {
+          cancelled = true;
+        };
+      }
+      setResolvingPublicStory(true);
+      void loadPublicStoryBySlug(storySlug).finally(() => {
+        if (!cancelled) setResolvingPublicStory(false);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [loadPublicStoryBySlug, routeStory, storySlug]);
 
     useEffect(() => {
       setSelectedStory((prev) => {
@@ -13974,11 +14359,23 @@ ${JSON.stringify(violatingPayload)}
       });
     }, [routeStory]);
 
+    if (resolvingPublicStory && !routeStory) {
+      return (
+        <div className="mx-auto flex min-h-[40vh] max-w-3xl items-center justify-center px-6 pt-32">
+          <p className="inline-flex items-center gap-2 text-sm font-semibold text-slate-500">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Đang tải truyện công khai...
+          </p>
+        </div>
+      );
+    }
+
     if (!routeStory) {
       return <NotFoundRouteView title="Không tìm thấy truyện" message="Story slug không tồn tại hoặc truyện đã bị xóa." />;
     }
 
     const storyPath = `/${resolveStorySlug(routeStory)}`;
+    const canEdit = Boolean(user?.uid && routeStory.authorId && String(user.uid) === String(routeStory.authorId));
 
     return (
       <StoryDetail
@@ -13989,11 +14386,19 @@ ${JSON.stringify(violatingPayload)}
         ]}
         onBack={() => navigate('/')}
         onEdit={() => {
+          if (!canEdit) {
+            notifyApp({ tone: 'warn', message: 'Bạn chỉ có quyền chỉnh sửa truyện của chính mình.' });
+            return;
+          }
           setEditingStory(routeStory);
           setSelectedStory(null);
           navigate('/');
         }}
         onAddChapter={() => {
+          if (!canEdit) {
+            notifyApp({ tone: 'warn', message: 'Bạn chỉ có thể thêm chương cho truyện của chính mình.' });
+            return;
+          }
           setSelectedStory(routeStory);
           setShowAIGen(true);
         }}
@@ -14001,6 +14406,7 @@ ${JSON.stringify(violatingPayload)}
         onExportStory={handleOpenExportStory}
         onOpenReaderPrefs={() => setShowReaderPrefsModal(true)}
         onOpenChapter={(chapter) => navigate(`${storyPath}/${getChapterRouteSlug(chapter)}`, { state: { storyId: routeStory.id } })}
+        isReadOnly={!canEdit}
       />
     );
   };
@@ -14010,9 +14416,15 @@ ${JSON.stringify(violatingPayload)}
     const storySlug = sanitizeStorySlug(String(params.storySlug || '').trim());
     const chapterSlug = String(params.chapterSlug || '').trim().toLowerCase();
     const routeState = (location.state || {}) as { storyId?: string };
+    const [resolvingPublicStory, setResolvingPublicStory] = useState(false);
     const storyByState = React.useMemo(
-      () => (routeState.storyId ? storage.getStoryById(routeState.storyId) as Story | null : null),
-      [routeState.storyId, storiesVersion],
+      () => {
+        if (!routeState.storyId) return null;
+        const local = storage.getStoryById(routeState.storyId) as Story | null;
+        if (local) return local;
+        return publicStoryCacheRef.current[routeState.storyId] || null;
+      },
+      [routeState.storyId, storiesVersion, publicStoryCacheVersion],
     );
     const storyBySlug = React.useMemo(
       () => findStoryBySlugFromStorage(storySlug),
@@ -14022,17 +14434,46 @@ ${JSON.stringify(violatingPayload)}
     const routeChapter = routeStory ? findChapterByRouteSlug(routeStory.chapters || [], chapterSlug) : null;
 
     useEffect(() => {
+      let cancelled = false;
+      if (routeStory || !storySlug) {
+        setResolvingPublicStory(false);
+        return () => {
+          cancelled = true;
+        };
+      }
+      setResolvingPublicStory(true);
+      void loadPublicStoryBySlug(storySlug).finally(() => {
+        if (!cancelled) setResolvingPublicStory(false);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [loadPublicStoryBySlug, routeStory, storySlug]);
+
+    useEffect(() => {
       setSelectedStory((prev) => {
         if (!routeStory) return null;
         return prev?.id === routeStory.id ? prev : routeStory;
       });
     }, [routeStory]);
 
+    if (resolvingPublicStory && !routeStory) {
+      return (
+        <div className="mx-auto flex min-h-[40vh] max-w-3xl items-center justify-center px-6 pt-32">
+          <p className="inline-flex items-center gap-2 text-sm font-semibold text-slate-500">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Đang tải chương truyện công khai...
+          </p>
+        </div>
+      );
+    }
+
     if (!routeStory || !routeChapter) {
       return <NotFoundRouteView title="Không tìm thấy chương" message="Chapter slug không hợp lệ hoặc chương đã bị thay đổi." />;
     }
 
     const storyPath = `/${resolveStorySlug(routeStory)}`;
+    const canEdit = Boolean(user?.uid && routeStory.authorId && String(user.uid) === String(routeStory.authorId));
 
     return (
       <StoryDetail
@@ -14045,11 +14486,19 @@ ${JSON.stringify(violatingPayload)}
         ]}
         onBack={() => navigate('/')}
         onEdit={() => {
+          if (!canEdit) {
+            notifyApp({ tone: 'warn', message: 'Bạn chỉ có quyền chỉnh sửa truyện của chính mình.' });
+            return;
+          }
           setEditingStory(routeStory);
           setSelectedStory(null);
           navigate('/');
         }}
         onAddChapter={() => {
+          if (!canEdit) {
+            notifyApp({ tone: 'warn', message: 'Bạn chỉ có thể thêm chương cho truyện của chính mình.' });
+            return;
+          }
           setSelectedStory(routeStory);
           setShowAIGen(true);
         }}
@@ -14065,6 +14514,7 @@ ${JSON.stringify(violatingPayload)}
             state: { storyId: routeStory.id },
           });
         }}
+        isReadOnly={!canEdit}
       />
     );
   };

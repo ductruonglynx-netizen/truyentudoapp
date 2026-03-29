@@ -183,7 +183,9 @@ create table if not exists public.api_key_telemetry_events (
 );
 
 create index if not exists stories_user_id_updated_at_idx on public.stories (user_id, updated_at desc);
+create index if not exists stories_public_updated_at_idx on public.stories (is_public, updated_at desc);
 create index if not exists story_chapters_user_story_order_idx on public.story_chapters (user_id, story_id, sort_order);
+create index if not exists story_chapters_story_order_idx on public.story_chapters (story_id, sort_order);
 create index if not exists workspace_characters_user_id_idx on public.workspace_characters (user_id);
 create index if not exists workspace_ai_rules_user_id_idx on public.workspace_ai_rules (user_id);
 create index if not exists workspace_translation_names_user_id_idx on public.workspace_translation_names (user_id);
@@ -236,6 +238,11 @@ create policy "stories_select_own" on public.stories
 for select to authenticated
 using (auth.uid()::text = user_id);
 
+drop policy if exists "stories_select_public" on public.stories;
+create policy "stories_select_public" on public.stories
+for select to anon, authenticated
+using (is_public = true);
+
 drop policy if exists "stories_insert_own" on public.stories;
 create policy "stories_insert_own" on public.stories
 for insert to authenticated
@@ -256,6 +263,18 @@ drop policy if exists "story_chapters_select_own" on public.story_chapters;
 create policy "story_chapters_select_own" on public.story_chapters
 for select to authenticated
 using (auth.uid()::text = user_id);
+
+drop policy if exists "story_chapters_select_public" on public.story_chapters;
+create policy "story_chapters_select_public" on public.story_chapters
+for select to anon, authenticated
+using (
+  exists (
+    select 1
+    from public.stories s
+    where s.story_id = story_chapters.story_id
+      and s.is_public = true
+  )
+);
 
 drop policy if exists "story_chapters_insert_own" on public.story_chapters;
 create policy "story_chapters_insert_own" on public.story_chapters
