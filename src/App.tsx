@@ -1,7 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import { useAuth, AuthProvider } from './AuthContext';
 import { supabase, hasSupabase } from './supabaseClient';
-import { storage, type StorageBackupPayload, type StorageImportReport, type StoryListItem } from './storage';
+import {
+  storage,
+  STORAGE_SAVE_FAILED_EVENT,
+  type StorageBackupPayload,
+  type StorageImportReport,
+  type StorageSaveFailedDetail,
+  type StoryListItem,
+} from './storage';
 import { 
   Plus, 
   LogOut, 
@@ -60,8 +67,8 @@ import { WorkspaceConflictError, loadServerWorkspace, saveQaReport, saveServerWo
 import { syncNormalizedWorkspaceRecords } from './supabaseNormalizedWorkspace';
 import { IMAGE_AI_PROVIDER_META, getDefaultImageAiModel, type ImageAiProvider } from './imageAiProviders';
 import { createBackupSnapshot, getBackupSnapshot, listBackupSnapshots, updateBackupSnapshotDriveMeta, type BackupReason, type BackupSnapshot } from './backupVault';
-import { buildDriveBackupFilename, connectGoogleDriveInteractive, disconnectGoogleDrive, ensureGoogleDriveAccessToken, hasGoogleDriveBackupConfig, hasUsableDriveToken, loadStoredDriveAuth, uploadBackupSnapshotToDrive, type GoogleDriveAuthState, type GoogleDriveAccountProfile } from './googleDriveBackups';
-import { getScopedStorageItem, getWorkspaceScopeUser, setScopedStorageItem, setWorkspaceScopeUser, shouldAllowLegacyScopeFallback } from './workspaceScope';
+import { buildDriveBackupFilename, connectGoogleDriveInteractive, ensureGoogleDriveAccessToken, hasGoogleDriveBackupConfig, loadStoredDriveAuth, uploadBackupSnapshotToDrive, type GoogleDriveAuthState, type GoogleDriveAccountProfile } from './googleDriveBackups';
+import { buildScopedStorageKey, getScopedStorageItem, getWorkspaceScopeUser, setScopedStorageItem, setWorkspaceScopeUser, shouldAllowLegacyScopeFallback } from './workspaceScope';
 import { clearWorkspaceSyncQueue, enqueueWorkspaceSyncJob, getWorkspaceSyncQueueStats, processWorkspaceSyncQueue, subscribeWorkspaceSyncQueue, type WorkspaceSyncQueueStats } from './workspaceSyncQueue';
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
@@ -292,14 +299,20 @@ ${includeToc ? navItems.join('\n') : ''}
 
 
 type ApiMode = 'manual' | 'relay';
-const DEFAULT_RELAY_WS_BASE = 'wss://proxymid.ductruong-lynx.workers.dev/';
-const DEFAULT_RELAY_WEB_BASE = 'https://proxymid.ductruong-lynx.workers.dev/';
+const DEFAULT_RELAY_WS_BASE = 'wss://your-relay.workers.dev/';
+const DEFAULT_RELAY_WEB_BASE = 'https://your-relay.workers.dev/';
 const LEGACY_RELAY_HOST_RE = /(relay2026\.up\.railway\.app|relay2026\.vercel\.app|proxymid\.your-subdomain\.workers\.dev)/i;
 const RELAY_SOCKET_BASE = normalizeRelaySocketBase(import.meta.env.VITE_RELAY_WS_BASE || DEFAULT_RELAY_WS_BASE);
 const RELAY_WEB_BASE = ((import.meta.env.VITE_RELAY_WEB_BASE || DEFAULT_RELAY_WEB_BASE).trim().replace(/\/+$/, '') + '/');
 const RAPHAEL_API_BASE = 'https://api.evolink.ai/v1';
 const DEFAULT_RAPHAEL_MODEL = 'z-image-turbo';
 const DEFAULT_RAPHAEL_SIZE = '2:3';
+const GEMINI_UNRESTRICTED_SAFETY_SETTINGS = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+];
 
 type ExportFormat = 'txt' | 'epub';
 
@@ -352,6 +365,21 @@ const ACCOUNT_AUTOSYNC_TRIGGER_SECTIONS: ReadonlySet<LocalWorkspaceSection> = ne
 ]);
 const WORKSPACE_DEVICE_ID_KEY = 'truyenforge:workspace-device-id-v1';
 const WORKSPACE_EDIT_LOCK_TTL_MS = 3 * 60 * 1000;
+const STORY_IMPORT_MAX_FILE_BYTES = 18 * 1024 * 1024;
+const STORY_IMPORT_MAX_STORIES = 180;
+const STORY_IMPORT_MAX_CHAPTERS_PER_STORY = 1200;
+const STORY_IMPORT_MAX_CHARACTERS = 6000;
+const IMAGE_PROVIDER_WARNING_COOLDOWN_MS = 2 * 60 * 1000;
+
+function readScopedAppStorage(baseKey: string): string | null {
+  return getScopedStorageItem(baseKey, {
+    allowLegacyFallback: shouldAllowLegacyScopeFallback(),
+  });
+}
+
+function writeScopedAppStorage(baseKey: string, value: string): void {
+  setScopedStorageItem(baseKey, value);
+}
 
 type ThemeMode = 'light' | 'dark';
 type ViewportMode = 'desktop' | 'mobile';
@@ -745,8 +773,8 @@ interface AccountWorkspaceSnapshot {
   stories: Story[];
   characters: Character[];
   aiRules: AIRule[];
-  styleReferences: any[];
-  translationNames: any[];
+  styleReferences: StyleReference[];
+  translationNames: TranslationName[];
   promptLibrary: PromptLibraryState;
   finopsBudget: ReturnType<typeof loadBudgetState>;
   driveBinding?: GoogleDriveBinding | null;
@@ -776,7 +804,8 @@ function sanitizeAccountWorkspaceForUser(snapshot: AccountWorkspaceSnapshot, use
     stories: normalizeOwnedRows(snapshot.stories, userId),
     characters: normalizeOwnedRows(snapshot.characters, userId),
     aiRules: normalizeOwnedRows(snapshot.aiRules, userId),
-    translationNames: normalizeOwnedRows(snapshot.translationNames as Record<string, unknown>[], userId),
+    styleReferences: normalizeOwnedRows(snapshot.styleReferences, userId),
+    translationNames: normalizeOwnedRows(snapshot.translationNames, userId),
   };
 }
 
@@ -923,15 +952,89 @@ function chooseWorkspaceSectionValue<T>(
   return { value: localValue, updatedAt: localTimestamp || remoteTimestamp };
 }
 
-function mergeChaptersById(localChapters: Chapter[] = [], remoteChapters: Chapter[] = [], prefer: 'local' | 'remote'): Chapter[] {
+function normalizeDeletedChapterMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const next: Record<string, string> = {};
+  Object.entries(value as Record<string, unknown>).forEach(([chapterId, deletedAt]) => {
+    const id = String(chapterId || '').trim();
+    if (!id) return;
+    const rawTimestamp = String(deletedAt || '').trim();
+    if (!rawTimestamp) return;
+    const parsed = new Date(rawTimestamp);
+    if (Number.isNaN(parsed.getTime())) return;
+    next[id] = rawTimestamp;
+  });
+  return next;
+}
+
+function mergeDeletedChapterMaps(localMap: unknown, remoteMap: unknown): Record<string, string> {
+  const local = normalizeDeletedChapterMap(localMap);
+  const remote = normalizeDeletedChapterMap(remoteMap);
+  const ids = new Set<string>([...Object.keys(local), ...Object.keys(remote)]);
+  const merged: Record<string, string> = {};
+  ids.forEach((id) => {
+    const localTs = local[id];
+    const remoteTs = remote[id];
+    if (!localTs && remoteTs) {
+      merged[id] = remoteTs;
+      return;
+    }
+    if (localTs && !remoteTs) {
+      merged[id] = localTs;
+      return;
+    }
+    const localMs = toTimestampMs(localTs);
+    const remoteMs = toTimestampMs(remoteTs);
+    merged[id] = localMs >= remoteMs ? localTs : (remoteTs || localTs);
+  });
+  return merged;
+}
+
+function pruneDeletedChapterMap(map: Record<string, string>, ttlDays = 45): Record<string, string> {
+  const cutoff = Date.now() - ttlDays * 24 * 60 * 60 * 1000;
+  const next: Record<string, string> = {};
+  Object.entries(map || {}).forEach(([chapterId, deletedAt]) => {
+    if (toTimestampMs(deletedAt) >= cutoff) {
+      next[chapterId] = deletedAt;
+    }
+  });
+  return next;
+}
+
+function isChapterDeletedByTombstone(
+  chapterId: string,
+  tombstoneMap: Record<string, string>,
+  chapter: Chapter | undefined,
+): boolean {
+  const deletedAt = tombstoneMap[chapterId];
+  if (!deletedAt) return false;
+  const deletedAtMs = toTimestampMs(deletedAt);
+  const chapterUpdatedMs = toTimestampMs(chapter?.updatedAt || chapter?.createdAt);
+  return deletedAtMs >= chapterUpdatedMs;
+}
+
+function mergeChaptersById(
+  localChapters: Chapter[] = [],
+  remoteChapters: Chapter[] = [],
+  prefer: 'local' | 'remote',
+  localDeletedChapterIds?: Record<string, string>,
+  remoteDeletedChapterIds?: Record<string, string>,
+): Chapter[] {
   const localMap = new Map(localChapters.map((chapter) => [String(chapter.id || ''), chapter]));
   const remoteMap = new Map(remoteChapters.map((chapter) => [String(chapter.id || ''), chapter]));
+  const mergedDeletedMap = pruneDeletedChapterMap(
+    mergeDeletedChapterMaps(localDeletedChapterIds || {}, remoteDeletedChapterIds || {}),
+  );
   const merged: Chapter[] = [];
   const ids = new Set([...localMap.keys(), ...remoteMap.keys()].filter(Boolean));
 
   ids.forEach((id) => {
     const localChapter = localMap.get(id);
     const remoteChapter = remoteMap.get(id);
+    const chapterForTombstone = localChapter || remoteChapter;
+    if (isChapterDeletedByTombstone(id, mergedDeletedMap, chapterForTombstone)) {
+      return;
+    }
     if (localChapter && remoteChapter) {
       merged.push(prefer === 'local' ? localChapter : remoteChapter);
       return;
@@ -958,11 +1061,17 @@ function mergeStoriesByEntity(
     const localStory = localMap.get(id);
     const remoteStory = remoteMap.get(id);
     if (!localStory && remoteStory) {
-      merged.push(remoteStory);
+      merged.push({
+        ...remoteStory,
+        deletedChapterIds: pruneDeletedChapterMap(normalizeDeletedChapterMap(remoteStory.deletedChapterIds || {})),
+      });
       return;
     }
     if (localStory && !remoteStory) {
-      merged.push(localStory);
+      merged.push({
+        ...localStory,
+        deletedChapterIds: pruneDeletedChapterMap(normalizeDeletedChapterMap(localStory.deletedChapterIds || {})),
+      });
       return;
     }
     if (!localStory || !remoteStory) return;
@@ -974,7 +1083,10 @@ function mergeStoriesByEntity(
       lock.deviceId !== deviceId,
     );
     if (lockByOtherDevice) {
-      merged.push(remoteStory);
+      merged.push({
+        ...remoteStory,
+        deletedChapterIds: pruneDeletedChapterMap(normalizeDeletedChapterMap(remoteStory.deletedChapterIds || {})),
+      });
       return;
     }
 
@@ -985,7 +1097,17 @@ function mergeStoriesByEntity(
     const base = prefer === 'local'
       ? { ...remoteStory, ...localStory }
       : { ...localStory, ...remoteStory };
-    base.chapters = mergeChaptersById(localStory.chapters || [], remoteStory.chapters || [], prefer);
+    const mergedDeletedChapterIds = pruneDeletedChapterMap(
+      mergeDeletedChapterMaps(localStory.deletedChapterIds || {}, remoteStory.deletedChapterIds || {}),
+    );
+    base.deletedChapterIds = mergedDeletedChapterIds;
+    base.chapters = mergeChaptersById(
+      localStory.chapters || [],
+      remoteStory.chapters || [],
+      prefer,
+      localStory.deletedChapterIds || {},
+      remoteStory.deletedChapterIds || {},
+    );
     merged.push(base);
   });
 
@@ -1073,10 +1195,10 @@ function mergeAccountWorkspaceSnapshots(
         merged.aiRules = picked.value as AIRule[];
         break;
       case 'styleReferences':
-        merged.styleReferences = picked.value as any[];
+        merged.styleReferences = picked.value as StyleReference[];
         break;
       case 'translationNames':
-        merged.translationNames = picked.value as any[];
+        merged.translationNames = picked.value as TranslationName[];
         break;
       case 'promptLibrary':
         merged.promptLibrary = picked.value as PromptLibraryState;
@@ -1201,7 +1323,7 @@ function applyAccountWorkspaceSnapshot(snapshot: Partial<AccountWorkspaceSnapsho
     saveViewportMode(snapshot.uiViewportMode);
   }
   if (Array.isArray(snapshot.stories)) {
-    storage.saveStories(sanitizedSnapshot?.stories || snapshot.stories);
+    saveStoriesAndRefresh(sanitizedSnapshot?.stories || snapshot.stories);
   }
   if (Array.isArray(snapshot.characters)) {
     storage.saveCharacters(sanitizedSnapshot?.characters || snapshot.characters);
@@ -1359,7 +1481,7 @@ function normalizeStoredRelayUrl(input: string): string {
 
 function getApiRuntimeConfig(): ApiRuntimeConfig {
   try {
-    const raw = localStorage.getItem(API_RUNTIME_CONFIG_KEY);
+    const raw = readScopedAppStorage(API_RUNTIME_CONFIG_KEY);
     const parsed = raw ? (JSON.parse(raw) as Partial<ApiRuntimeConfig>) : {};
     return {
       mode: parsed.mode === 'relay' ? 'relay' : 'manual',
@@ -1404,7 +1526,7 @@ function getApiRuntimeConfig(): ApiRuntimeConfig {
 }
 
 function saveApiRuntimeConfig(config: ApiRuntimeConfig): void {
-  localStorage.setItem(API_RUNTIME_CONFIG_KEY, JSON.stringify(config));
+  writeScopedAppStorage(API_RUNTIME_CONFIG_KEY, JSON.stringify(config));
 }
 
 function getDefaultImageProviderApiKey(provider: ImageAiProvider): string {
@@ -1437,7 +1559,7 @@ function createDefaultImageProvidersConfig(): ImageApiConfig['providers'] {
 function getImageApiConfig(): ImageApiConfig {
   const defaults = createDefaultImageProvidersConfig();
   try {
-    const raw = localStorage.getItem(IMAGE_API_CONFIG_KEY);
+    const raw = readScopedAppStorage(IMAGE_API_CONFIG_KEY);
     const parsed = raw ? (JSON.parse(raw) as Partial<ImageApiConfig>) : {};
     const provider = parsed.provider === 'openai' || parsed.provider === 'fal' || parsed.provider === 'bfl' ? parsed.provider : 'evolink';
     const rawProviders = parsed.providers && typeof parsed.providers === 'object'
@@ -1481,7 +1603,7 @@ function getImageApiConfig(): ImageApiConfig {
 }
 
 function saveImageApiConfig(config: ImageApiConfig): void {
-  localStorage.setItem(IMAGE_API_CONFIG_KEY, JSON.stringify(config));
+  writeScopedAppStorage(IMAGE_API_CONFIG_KEY, JSON.stringify(config));
 }
 
 function normalizeDateValue(value: unknown): string {
@@ -1499,10 +1621,11 @@ function normalizeDateValue(value: unknown): string {
   return new Date().toISOString();
 }
 
-function normalizeChaptersForLocal<T extends { createdAt?: unknown }>(chapters: T[]): T[] {
+function normalizeChaptersForLocal<T extends { createdAt?: unknown; updatedAt?: unknown }>(chapters: T[]): T[] {
   return chapters.map((chapter) => ({
     ...chapter,
     createdAt: normalizeDateValue(chapter.createdAt),
+    updatedAt: normalizeDateValue(chapter.updatedAt || chapter.createdAt),
   })) as T[];
 }
 
@@ -1598,7 +1721,7 @@ function getProfileModel(kind: 'fast' | 'quality', provider?: ApiProvider): stri
 
 function readGeminiCache(): Record<string, { text: string; ts: number }> {
   try {
-    const raw = localStorage.getItem(GEMINI_RESPONSE_CACHE_KEY);
+    const raw = readScopedAppStorage(GEMINI_RESPONSE_CACHE_KEY);
     const parsed = raw ? (JSON.parse(raw) as Record<string, { text: string; ts: number }>) : {};
     return parsed || {};
   } catch {
@@ -1607,7 +1730,7 @@ function readGeminiCache(): Record<string, { text: string; ts: number }> {
 }
 
 function writeGeminiCache(cache: Record<string, { text: string; ts: number }>): void {
-  localStorage.setItem(GEMINI_RESPONSE_CACHE_KEY, JSON.stringify(cache));
+  writeScopedAppStorage(GEMINI_RESPONSE_CACHE_KEY, JSON.stringify(cache));
 }
 
 function quickHash(input: string): string {
@@ -1635,6 +1758,11 @@ function normalizeJsonLikeText(raw: string): string {
     .replace(/\uFF0C/g, ',')
     .replace(/\u3000/g, ' ')
     .trim();
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
 }
 
 function tryParseJson<T = unknown>(raw: string, prefer: 'array' | 'object' | 'any' = 'any'): T | null {
@@ -1671,6 +1799,52 @@ function tryParseJson<T = unknown>(raw: string, prefer: 'array' | 'object' | 'an
     }
   }
   return null;
+}
+
+interface ChapterDraftPayloadItem {
+  title?: string;
+  content?: string;
+  outline?: string;
+}
+
+function toChapterDraftPayloadItem(value: unknown): ChapterDraftPayloadItem | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const title = String(record.title || record.name || '').trim();
+  const content = String(record.content || record.text || '').trim();
+  const outline = String(record.outline || record.summary || record.brief || '').trim();
+  if (!title && !content && !outline) return null;
+  return {
+    title: title || undefined,
+    content: content || undefined,
+    outline: outline || undefined,
+  };
+}
+
+function extractChapterDraftItems(value: unknown): ChapterDraftPayloadItem[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => toChapterDraftPayloadItem(item))
+      .filter((item): item is ChapterDraftPayloadItem => Boolean(item));
+  }
+  const record = asRecord(value);
+  if (!record) return [];
+  const candidates: unknown[] = [record.chapters, record.items, record.data, record.result];
+  for (const candidate of candidates) {
+    const extracted = extractChapterDraftItems(candidate);
+    if (extracted.length) return extracted;
+  }
+  const single = toChapterDraftPayloadItem(record);
+  return single ? [single] : [];
+}
+
+function readErrorMessageFromPayload(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) return '';
+  const direct = String(record.message || record.error_description || '').trim();
+  if (direct) return direct;
+  const nestedError = asRecord(record.error);
+  return String(nestedError?.message || '').trim();
 }
 
 function extractJsonContent(raw: string): { title?: string; content?: string } | null {
@@ -2475,18 +2649,17 @@ function readRaphaelEnv(key: 'VITE_RAPHAEL_API_KEY' | 'VITE_RAPHAEL_MODEL' | 'VI
   return ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.[key] || '').trim();
 }
 
-function getRaphaelApiKey(): string {
-  const config = getImageApiConfig();
-  if (!config.enabled || config.provider !== 'evolink') return '';
+function getRaphaelApiKey(config = getImageApiConfig()): string {
+  if (!config.enabled) return '';
   return config.providers.evolink.apiKey || getDefaultImageProviderApiKey('evolink');
 }
 
-function getRaphaelModel(): string {
-  return getImageApiConfig().providers.evolink.model || readRaphaelEnv('VITE_RAPHAEL_MODEL') || DEFAULT_RAPHAEL_MODEL;
+function getRaphaelModel(config = getImageApiConfig()): string {
+  return config.providers.evolink.model || readRaphaelEnv('VITE_RAPHAEL_MODEL') || DEFAULT_RAPHAEL_MODEL;
 }
 
-function getRaphaelSize(): string {
-  return getImageApiConfig().size || readRaphaelEnv('VITE_RAPHAEL_SIZE') || DEFAULT_RAPHAEL_SIZE;
+function getRaphaelSize(config = getImageApiConfig()): string {
+  return config.size || readRaphaelEnv('VITE_RAPHAEL_SIZE') || DEFAULT_RAPHAEL_SIZE;
 }
 
 function extractRaphaelResultUrls(payload: unknown): string[] {
@@ -2518,8 +2691,8 @@ async function readApiErrorMessage(resp: Response): Promise<string> {
   }
 }
 
-async function generateRaphaelCoverImage(prompt: string): Promise<string> {
-  const apiKey = getRaphaelApiKey();
+async function generateRaphaelCoverImage(prompt: string, imageConfig = getImageApiConfig()): Promise<string> {
+  const apiKey = getRaphaelApiKey(imageConfig);
   if (!apiKey) return '';
 
   const createResponse = await fetchWithTimeout(`${RAPHAEL_API_BASE}/images/generations`, {
@@ -2529,9 +2702,9 @@ async function generateRaphaelCoverImage(prompt: string): Promise<string> {
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: getRaphaelModel(),
+      model: getRaphaelModel(imageConfig),
       prompt,
-      size: getRaphaelSize(),
+      size: getRaphaelSize(imageConfig),
       seed: Math.floor(Math.random() * 2147483646) + 1,
       nsfw_check: false,
       request_uuid: createClientId('raphael-cover'),
@@ -2594,6 +2767,246 @@ async function generateRaphaelCoverImage(prompt: string): Promise<string> {
   }
 
   throw new Error('Raphael xử lý quá lâu, hệ thống đã chuyển sang đường tạo bìa dự phòng.');
+}
+
+function resolveCoverImageSize(sizeHint: string): { width: number; height: number; openAiSize: string } {
+  const raw = String(sizeHint || '').trim();
+  const match = raw.match(/^(\d+)\s*:\s*(\d+)$/);
+  if (match) {
+    const w = Math.max(1, Number(match[1]));
+    const h = Math.max(1, Number(match[2]));
+    if (Number.isFinite(w) && Number.isFinite(h)) {
+      const scale = Math.max(1, Math.round(1536 / h));
+      const width = Math.max(512, Math.min(2048, w * scale));
+      const height = Math.max(768, Math.min(2048, h * scale));
+      return { width, height, openAiSize: `${width}x${height}` };
+    }
+  }
+  return { width: 1024, height: 1536, openAiSize: '1024x1536' };
+}
+
+function extractImageUrlsFromUnknown(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const record = payload as Record<string, unknown>;
+  const candidates: unknown[] = [
+    record.results,
+    record.images,
+    record.output,
+    record.data,
+    record.result,
+  ];
+  if (record.data && typeof record.data === 'object') {
+    const dataRecord = record.data as Record<string, unknown>;
+    candidates.push(dataRecord.images, dataRecord.results, dataRecord.output);
+  }
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  const collect = (value: unknown) => {
+    if (!value) return;
+    if (typeof value === 'string') {
+      const next = value.trim();
+      if (!next) return;
+      if (next.startsWith('http') || next.startsWith('data:image/')) {
+        if (!seen.has(next)) {
+          seen.add(next);
+          urls.push(next);
+        }
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item) => collect(item));
+      return;
+    }
+    if (typeof value === 'object') {
+      const obj = value as Record<string, unknown>;
+      collect(obj.url);
+      collect(obj.image);
+      collect(obj.src);
+      collect(obj.b64_json ? `data:image/png;base64,${String(obj.b64_json)}` : '');
+    }
+  };
+  candidates.forEach((item) => collect(item));
+  return urls;
+}
+
+async function generateOpenAiCoverImage(input: {
+  prompt: string;
+  apiKey: string;
+  model: string;
+  baseUrl?: string;
+  sizeHint?: string;
+}): Promise<string> {
+  const apiKey = String(input.apiKey || '').trim();
+  if (!apiKey) return '';
+  const model = String(input.model || '').trim() || 'gpt-image-1';
+  const baseUrl = String(input.baseUrl || 'https://api.openai.com/v1').trim().replace(/\/+$/, '');
+  const size = resolveCoverImageSize(String(input.sizeHint || ''));
+  const endpoint = /\/images\/generations$/i.test(baseUrl) ? baseUrl : `${baseUrl}/images/generations`;
+  const response = await fetchWithTimeout(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      prompt: input.prompt,
+      size: size.openAiSize,
+    }),
+  }, 24000);
+  if (!response.ok) {
+    const detail = await readApiErrorMessage(response);
+    throw new Error(detail || `OpenAI image API trả về HTTP ${response.status}.`);
+  }
+  const payload = await response.json();
+  const urls = extractImageUrlsFromUnknown(payload);
+  if (!urls.length) return '';
+  const reachable = await pickFirstReachableImageUrl(urls, 8000, 2);
+  return reachable || urls[0] || '';
+}
+
+async function generateFalCoverImage(input: {
+  prompt: string;
+  apiKey: string;
+  model: string;
+  sizeHint?: string;
+}): Promise<string> {
+  const apiKey = String(input.apiKey || '').trim();
+  if (!apiKey) return '';
+  const model = String(input.model || '').trim();
+  if (!model) return '';
+  const size = resolveCoverImageSize(String(input.sizeHint || ''));
+  const modelPath = model.replace(/^\/+/, '');
+  const endpoint = `https://fal.run/${modelPath}`;
+  const response = await fetchWithTimeout(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Key ${apiKey}`,
+    },
+    body: JSON.stringify({
+      prompt: input.prompt,
+      num_images: 1,
+      image_size: {
+        width: size.width,
+        height: size.height,
+      },
+    }),
+  }, 26000);
+  if (!response.ok) {
+    const detail = await readApiErrorMessage(response);
+    throw new Error(detail || `fal trả về HTTP ${response.status}.`);
+  }
+  const payload = await response.json();
+  const immediate = extractImageUrlsFromUnknown(payload);
+  if (immediate.length) {
+    const reachable = await pickFirstReachableImageUrl(immediate, 8000, 2);
+    if (reachable) return reachable;
+  }
+  const requestId = String(
+    (payload as Record<string, unknown>)?.request_id
+    || (payload as Record<string, unknown>)?.id
+    || '',
+  ).trim();
+  if (!requestId) return immediate[0] || '';
+
+  const pollUrls = [
+    `https://queue.fal.run/${modelPath}/requests/${encodeURIComponent(requestId)}`,
+    `https://fal.run/${modelPath}/requests/${encodeURIComponent(requestId)}`,
+  ];
+  const deadline = Date.now() + 75_000;
+  while (Date.now() < deadline) {
+    await sleepMs(1300);
+    for (const pollUrl of pollUrls) {
+      const poll = await fetchWithTimeout(pollUrl, {
+        headers: {
+          Authorization: `Key ${apiKey}`,
+        },
+      }, 15000);
+      if (!poll.ok) continue;
+      const pollPayload = await poll.json();
+      const urls = extractImageUrlsFromUnknown(pollPayload);
+      if (urls.length) {
+        const reachable = await pickFirstReachableImageUrl(urls, 8000, 2);
+        return reachable || urls[0] || '';
+      }
+      const status = String((pollPayload as Record<string, unknown>)?.status || '').toLowerCase();
+      if (status.includes('failed') || status.includes('error')) {
+        const reason = String((pollPayload as Record<string, unknown>)?.error || '').trim();
+        throw new Error(reason || 'fal từ chối tác vụ tạo ảnh.');
+      }
+    }
+  }
+  throw new Error('fal xử lý quá lâu, đã chuyển sang đường dự phòng.');
+}
+
+async function generateBflCoverImage(input: {
+  prompt: string;
+  apiKey: string;
+  model: string;
+  sizeHint?: string;
+}): Promise<string> {
+  const apiKey = String(input.apiKey || '').trim();
+  if (!apiKey) return '';
+  const model = String(input.model || '').trim();
+  if (!model) return '';
+  const size = resolveCoverImageSize(String(input.sizeHint || ''));
+  const endpoint = `https://api.bfl.ai/v1/${encodeURIComponent(model)}`;
+  const response = await fetchWithTimeout(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-key': apiKey,
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      prompt: input.prompt,
+      width: size.width,
+      height: size.height,
+    }),
+  }, 24000);
+  if (!response.ok) {
+    const detail = await readApiErrorMessage(response);
+    throw new Error(detail || `BFL trả về HTTP ${response.status}.`);
+  }
+  const payload = await response.json();
+  const immediate = extractImageUrlsFromUnknown(payload);
+  if (immediate.length) {
+    const reachable = await pickFirstReachableImageUrl(immediate, 8000, 2);
+    if (reachable) return reachable;
+  }
+  const requestId = String(
+    (payload as Record<string, unknown>)?.id
+    || (payload as Record<string, unknown>)?.request_id
+    || (payload as Record<string, unknown>)?.task_id
+    || '',
+  ).trim();
+  if (!requestId) return immediate[0] || '';
+
+  const deadline = Date.now() + 75_000;
+  while (Date.now() < deadline) {
+    await sleepMs(1300);
+    const poll = await fetchWithTimeout(`https://api.bfl.ai/v1/get_result?id=${encodeURIComponent(requestId)}`, {
+      headers: {
+        'x-key': apiKey,
+        Authorization: `Bearer ${apiKey}`,
+      },
+    }, 15000);
+    if (!poll.ok) continue;
+    const pollPayload = await poll.json();
+    const urls = extractImageUrlsFromUnknown(pollPayload);
+    if (urls.length) {
+      const reachable = await pickFirstReachableImageUrl(urls, 8000, 2);
+      return reachable || urls[0] || '';
+    }
+    const status = String((pollPayload as Record<string, unknown>)?.status || '').toLowerCase();
+    if (status.includes('failed') || status.includes('error')) {
+      const reason = String((pollPayload as Record<string, unknown>)?.error || '').trim();
+      throw new Error(reason || 'BFL từ chối tác vụ tạo ảnh.');
+    }
+  }
+  throw new Error('BFL xử lý quá lâu, đã chuyển sang đường dự phòng.');
 }
 
 function escapeSvgText(input: string): string {
@@ -2723,9 +3136,58 @@ function buildFallbackChapters(raw: string, targetCount: number): Array<{ title:
   return [{ title: `Chương mới ${Math.max(1, targetCount)}`, content: cleaned }];
 }
 
+function containsOutlineSignals(text: string): boolean {
+  const lower = String(text || '').toLowerCase();
+  const outlineSignals = [
+    'dàn ý',
+    'ý tưởng',
+    'gợi ý',
+    'hướng phát triển',
+    'mở bài',
+    'thân bài',
+    'kết bài',
+    'plot twist',
+    'checklist',
+    'gạch đầu dòng',
+  ];
+  return outlineSignals.some((signal) => lower.includes(signal));
+}
+
+function getNarrativeQualityIssue(title: string, content: string, minChars = 900): string {
+  const text = String(content || '').trim();
+  if (!text) return 'Nội dung rỗng.';
+  if (text.length < Math.max(280, minChars)) return 'Nội dung quá ngắn.';
+  if (containsOutlineSignals(text) || /(?:dàn ý|ý tưởng|kịch bản|phác thảo)/i.test(String(title || ''))) {
+    return 'Nội dung đang thiên về dàn ý thay vì văn xuôi.';
+  }
+  const bulletCount = (text.match(/(?:^|\n)\s*(?:[-*•]|\d+[.)])\s+/g) || []).length;
+  if (bulletCount >= 3) return 'Nội dung chứa quá nhiều gạch đầu dòng.';
+  const sentenceCount = text
+    .replace(/\n+/g, ' ')
+    .split(/[.!?。！？]+/g)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .length;
+  if (sentenceCount < 8) return 'Nội dung chưa đủ mạch văn.';
+  return '';
+}
+
+function validateNarrativeBatch(
+  items: Array<{ title: string; content: string }>,
+  minCharsPerChapter: number,
+): { invalidCount: number; reasons: string[] } {
+  const reasons = items
+    .map((item) => getNarrativeQualityIssue(item.title, item.content, minCharsPerChapter))
+    .filter(Boolean);
+  return {
+    invalidCount: reasons.length,
+    reasons,
+  };
+}
+
 function readMainAiUsage(): { requests: number; estTokens: number } {
   try {
-    const raw = localStorage.getItem(MAIN_AI_USAGE_KEY);
+    const raw = readScopedAppStorage(MAIN_AI_USAGE_KEY);
     const parsed = raw ? (JSON.parse(raw) as Partial<{ requests: number; estTokens: number }>) : {};
     return {
       requests: Number(parsed.requests || 0),
@@ -2737,7 +3199,7 @@ function readMainAiUsage(): { requests: number; estTokens: number } {
 }
 
 function writeMainAiUsage(next: { requests: number; estTokens: number }): void {
-  localStorage.setItem(MAIN_AI_USAGE_KEY, JSON.stringify(next));
+  writeScopedAppStorage(MAIN_AI_USAGE_KEY, JSON.stringify(next));
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(MAIN_AI_USAGE_UPDATED_EVENT));
   }
@@ -2800,29 +3262,43 @@ function throwIfAborted(signal?: AbortSignal): void {
   throw new Error('AI operation cancelled by user.');
 }
 
-function extractTextFromModelPayload(payload: any): string {
-  if (!payload) return '';
+function extractTextFromModelPayload(payload: unknown): string {
+  const record = asRecord(payload);
+  if (!record) return '';
+  const dataRecord = asRecord(record.data);
+  const responseRecord = asRecord(record.response);
   const direct = [
-    payload?.text,
-    payload?.output,
-    payload?.result,
-    payload?.data?.text,
-    payload?.response?.text,
+    record.text,
+    record.output,
+    record.result,
+    dataRecord?.text,
+    responseRecord?.text,
   ]
     .map((item) => String(item || '').trim())
     .find(Boolean);
   if (direct) return direct;
 
-  const candidates = payload?.candidates || payload?.data?.candidates || payload?.response?.candidates;
+  const candidates = record.candidates || dataRecord?.candidates || responseRecord?.candidates;
   if (Array.isArray(candidates)) {
     const combined = candidates
-      .map((candidate: any) => {
-        const partText = Array.isArray(candidate?.content?.parts)
-          ? candidate.content.parts.map((p: any) => String(p?.text || '').trim()).filter(Boolean).join('')
+      .map((candidate) => {
+        const candidateRecord = asRecord(candidate);
+        const candidateContent = asRecord(candidateRecord?.content);
+        const partText = Array.isArray(candidateContent?.parts)
+          ? candidateContent.parts
+              .map((part) => String(asRecord(part)?.text || '').trim())
+              .filter(Boolean)
+              .join('')
           : '';
         return (
           partText ||
-          String(candidate?.content?.text || candidate?.text || candidate?.output || candidate?.output_text || '').trim()
+          String(
+            candidateContent?.text
+              || candidateRecord?.text
+              || candidateRecord?.output
+              || candidateRecord?.output_text
+              || '',
+          ).trim()
         );
       })
       .filter(Boolean)
@@ -3114,7 +3590,7 @@ async function generateGeminiText(
             config: attemptConfig,
           });
           throwIfAborted(splitConfig.signal);
-          text = response.text || extractTextFromModelPayload(response as any) || '';
+          text = response.text || extractTextFromModelPayload(response) || '';
         } else if (auth.provider === 'gemini' || auth.provider === 'gcli') {
           const geminiBase = auth.baseUrl || getProviderBaseUrl('gcli');
           const geminiEndpoint = geminiBase.includes('/models/')
@@ -3243,15 +3719,15 @@ async function generateGeminiText(
 
       text = String(text || '').trim();
       const wantsJson = String(attemptConfig.responseMimeType || '').toLowerCase().includes('json');
-      const parsedAny = wantsJson ? tryParseJson<any>(text, 'any') : null;
+      const parsedAny = wantsJson ? tryParseJson<unknown>(text, 'any') : null;
+      const parsedAnyRecord = asRecord(parsedAny);
+      const issuesCandidate = parsedAnyRecord?.issues;
+      const hasExplicitEmptyIssues = Array.isArray(issuesCandidate) && issuesCandidate.length === 0;
       const jsonOk = !wantsJson || Boolean(parsedAny);
       const isExplicitEmpty =
         wantsJson &&
         ((Array.isArray(parsedAny) && parsedAny.length === 0) ||
-          (parsedAny &&
-            typeof parsedAny === 'object' &&
-            Array.isArray((parsedAny as any).issues) &&
-            (parsedAny as any).issues.length === 0));
+          hasExplicitEmptyIssues);
       const longEnough = isExplicitEmpty || expectedMinChars <= 0 || text.length >= expectedMinChars;
       if ((jsonOk && longEnough) || attempt >= maxAttempts) {
         break;
@@ -3266,7 +3742,6 @@ async function generateGeminiText(
     }
 
     bumpMainAiUsage(contents, text);
-
     if (runtime.enableCache && text) {
       const cache = readGeminiCache();
       cache[cacheKey] = { text, ts: Date.now() };
@@ -3280,6 +3755,8 @@ async function generateGeminiText(
   inFlightAiRequests.set(cacheKey, task);
   try {
     return await task;
+  } catch (error) {
+    throw error;
   } finally {
     inFlightAiRequests.delete(cacheKey);
   }
@@ -3289,7 +3766,7 @@ function getConfiguredGeminiApiKey(): string {
   try {
     const runtime = getApiRuntimeConfig();
     if (runtime.mode === 'relay') {
-      const relayToken = localStorage.getItem(RELAY_TOKEN_CACHE_KEY)?.trim() || runtime.relayToken?.trim() || '';
+      const relayToken = readScopedAppStorage(RELAY_TOKEN_CACHE_KEY)?.trim() || runtime.relayToken?.trim() || '';
       if (relayToken) return relayToken;
     }
 
@@ -3400,6 +3877,7 @@ interface Chapter {
   aiInstructions?: string;
   script?: string;
   createdAt: any;
+  updatedAt?: any;
 }
 
 interface StoryCharacterProfile {
@@ -3429,6 +3907,7 @@ interface Story {
   storyPromptNotes?: string;
   characterRoster?: StoryCharacterProfile[];
   translationMemory?: TranslationDictionaryEntry[];
+  deletedChapterIds?: Record<string, string>;
   createdAt: any;
   updatedAt: any;
 }
@@ -3482,6 +3961,16 @@ function resolveStorySlug(story: Pick<Story, 'id' | 'slug'>): string {
   if (fromId.length >= 6) return fromId.slice(0, 18);
 
   return createRandomAlphaNumericId(10);
+}
+
+function createStorySlugFromStories(stories: Array<Pick<Story, 'id' | 'slug'>>): string {
+  const usedSlugs = new Set(stories.map((item) => resolveStorySlug(item)));
+  return createStoryRouteSlug(usedSlugs);
+}
+
+function saveStoriesAndRefresh(nextStories: Story[]): void {
+  storage.saveStories(nextStories);
+  bumpStoriesVersion();
 }
 
 function normalizeStoriesWithSlug(stories: Story[]): { stories: Story[]; changed: boolean } {
@@ -3548,6 +4037,100 @@ interface Character {
   appearance: string;
   personality: string;
   createdAt: any;
+}
+
+interface JsonImportPayload {
+  stories: Record<string, unknown>[];
+  characters: Record<string, unknown>[];
+  droppedStories: number;
+  droppedCharacters: number;
+}
+
+function parseJsonImportPayload(rawText: string): JsonImportPayload {
+  const parsed = tryParseJson<unknown>(rawText, 'any');
+  const data = asRecord(parsed);
+  if (!data) {
+    throw new Error('File JSON không hợp lệ hoặc sai định dạng.');
+  }
+  const importedStoriesRaw = Array.isArray(data.stories) ? data.stories : [];
+  const importedCharactersRaw = Array.isArray(data.characters) ? data.characters : [];
+
+  const stories = importedStoriesRaw
+    .slice(0, STORY_IMPORT_MAX_STORIES)
+    .map((item) => asRecord(item))
+    .filter((item): item is Record<string, unknown> => Boolean(item));
+  const characters = importedCharactersRaw
+    .slice(0, STORY_IMPORT_MAX_CHARACTERS)
+    .map((item) => asRecord(item))
+    .filter((item): item is Record<string, unknown> => Boolean(item));
+
+  return {
+    stories,
+    characters,
+    droppedStories: Math.max(0, importedStoriesRaw.length - stories.length),
+    droppedCharacters: Math.max(0, importedCharactersRaw.length - characters.length),
+  };
+}
+
+function buildImportedStoriesFromJson(input: {
+  stories: Record<string, unknown>[];
+  authorId: string;
+  existingStories: Story[];
+}): Story[] {
+  const usedSlugs = new Set(input.existingStories.map((item) => resolveStorySlug(item)));
+  const now = new Date().toISOString();
+  return input.stories.map((storyRecord) => {
+    const { id, ...rest } = storyRecord;
+    const chaptersRaw = Array.isArray(rest.chapters)
+      ? rest.chapters.slice(0, STORY_IMPORT_MAX_CHAPTERS_PER_STORY)
+      : [];
+    return {
+      ...rest,
+      id: createClientId('story'),
+      slug: createStoryRouteSlug(usedSlugs),
+      authorId: input.authorId,
+      createdAt: now,
+      updatedAt: now,
+      chapters: normalizeChaptersForLocal(chaptersRaw as Chapter[]),
+    } as Story;
+  });
+}
+
+function buildImportedCharactersFromJson(input: {
+  characters: Record<string, unknown>[];
+  authorId: string;
+}): Character[] {
+  const now = new Date().toISOString();
+  return input.characters.map((characterRecord) => {
+    const { id, ...rest } = characterRecord;
+    return {
+      ...rest,
+      id: createClientId('char'),
+      authorId: input.authorId,
+      createdAt: now,
+    } as Character;
+  });
+}
+
+function buildImportedTextStory(input: {
+  fileName: string;
+  extensionPattern: RegExp;
+  text: string;
+  authorId: string;
+  existingStories: Story[];
+}): Story {
+  const now = new Date().toISOString();
+  return {
+    id: createClientId('story'),
+    slug: createStorySlugFromStories(input.existingStories),
+    authorId: input.authorId,
+    title: String(input.fileName).replace(input.extensionPattern, '').substring(0, 480),
+    content: String(input.text).substring(0, 1_999_900),
+    isPublic: false,
+    createdAt: now,
+    updatedAt: now,
+    chapters: [],
+  };
 }
 
 interface AIRule {
@@ -4038,8 +4621,22 @@ const WriterProPanel = () => {
   }
 
   const trimForAi = (text: string, max = 6000) => String(text || '').trim().slice(0, max);
-  const extractJson = (raw: string) => {
-    return tryParseJson<any>(raw, 'object') || tryParseJson<any>(normalizeJsonLikeText(raw), 'object');
+  const extractJson = (raw: string): Record<string, unknown> | null => {
+    return tryParseJson<Record<string, unknown>>(raw, 'object')
+      || tryParseJson<Record<string, unknown>>(normalizeJsonLikeText(raw), 'object');
+  };
+
+  const normalizeNamedEntries = (value: unknown): Array<{ name: string; description: string }> => {
+    if (!Array.isArray(value)) return [];
+    return value
+      .map((item) => {
+        const row = asRecord(item);
+        const name = String(row?.name || '').trim();
+        const description = String(row?.description || '').trim();
+        if (!name) return null;
+        return { name, description };
+      })
+      .filter((item): item is { name: string; description: string } => Boolean(item));
   };
 
   const runAutocomplete = async () => {
@@ -4070,10 +4667,15 @@ ${trimForAi(autoContext, 7000)}
       });
       const parsed = extractJson(raw);
       const variants = Array.isArray(parsed?.variants)
-        ? parsed.variants.map((item: any, idx: number) => ({
-          label: String(item?.label || `Gợi ý ${idx + 1}`),
-          text: String(item?.text || ''),
-        })).filter((item: { text: string }) => item.text.trim())
+        ? parsed.variants
+            .map((item, idx: number) => {
+              const row = asRecord(item);
+              return {
+                label: String(row?.label || `Gợi ý ${idx + 1}`),
+                text: String(row?.text || ''),
+              };
+            })
+            .filter((item: { text: string }) => item.text.trim())
         : [{ label: 'Gợi ý', text: raw }];
       setAutoVariants(variants);
     } catch (err) {
@@ -4214,18 +4816,9 @@ ${trimForAi(wikiSource, 9000)}
       });
       const parsed = extractJson(raw);
       setWikiResult({
-        characters: Array.isArray(parsed?.characters) ? parsed.characters.map((c: any) => ({
-          name: String(c?.name || '').trim(),
-          description: String(c?.description || '').trim(),
-        })).filter((c: { name: string }) => c.name) : [],
-        locations: Array.isArray(parsed?.locations) ? parsed.locations.map((c: any) => ({
-          name: String(c?.name || '').trim(),
-          description: String(c?.description || '').trim(),
-        })).filter((c: { name: string }) => c.name) : [],
-        items: Array.isArray(parsed?.items) ? parsed.items.map((c: any) => ({
-          name: String(c?.name || '').trim(),
-          description: String(c?.description || '').trim(),
-        })).filter((c: { name: string }) => c.name) : [],
+        characters: normalizeNamedEntries(parsed?.characters),
+        locations: normalizeNamedEntries(parsed?.locations),
+        items: normalizeNamedEntries(parsed?.items),
       });
       setWikiSavedNotice('');
     } catch (err) {
@@ -4637,7 +5230,7 @@ const ToolsManager = ({
       runtime.mode = 'manual';
     }
     try {
-      const rawRuntime = localStorage.getItem(API_RUNTIME_CONFIG_KEY);
+      const rawRuntime = readScopedAppStorage(API_RUNTIME_CONFIG_KEY);
       const parsedRuntime = rawRuntime ? (JSON.parse(rawRuntime) as Partial<ApiRuntimeConfig>) : {};
       const originalRelayUrl = String(parsedRuntime.relayUrl || '').trim();
       if (originalRelayUrl && originalRelayUrl !== runtime.relayUrl) {
@@ -4674,7 +5267,7 @@ const ToolsManager = ({
     setImageAiProvider(imageApi.provider);
     setImageAiModel(imageApi.providers[imageApi.provider]?.model || getDefaultImageAiModel(imageApi.provider));
     setImageAiApiKey(imageApi.providers[imageApi.provider]?.apiKey || '');
-    const token = (localStorage.getItem(RELAY_TOKEN_CACHE_KEY) || runtime.relayToken || '').trim();
+    const token = (readScopedAppStorage(RELAY_TOKEN_CACHE_KEY) || runtime.relayToken || '').trim();
     setRelayMaskedToken(token ? maskSensitive(token) : 'Chưa nhận token');
     refreshAiUsageStats();
   }, []);
@@ -4683,7 +5276,8 @@ const ToolsManager = ({
     if (typeof window === 'undefined') return;
     const handleUsageEvent = () => refreshAiUsageStats();
     const handleStorage = (event: StorageEvent) => {
-      if (!event.key || event.key === MAIN_AI_USAGE_KEY) {
+      const scopedUsageKey = buildScopedStorageKey(MAIN_AI_USAGE_KEY);
+      if (!event.key || event.key === MAIN_AI_USAGE_KEY || event.key === scopedUsageKey) {
         refreshAiUsageStats();
       }
     };
@@ -5131,7 +5725,7 @@ const ToolsManager = ({
         if (payload.token && isMatch) {
           const token = payload.token.trim();
           if (!token) return;
-          localStorage.setItem(RELAY_TOKEN_CACHE_KEY, token);
+          writeScopedAppStorage(RELAY_TOKEN_CACHE_KEY, token);
           setRelayMatchedLong(payload.longId || expectedLong);
           setRelayMaskedToken(maskSensitive(token));
           setRelayStatusText(`Đã nhận khóa truy cập (mã: ${payload.codeId || expectedCode || 'n/a'}).`);
@@ -5226,7 +5820,7 @@ const ToolsManager = ({
       setRelayStatusText('Khóa truy cập chưa đúng định dạng.');
       return;
     }
-    localStorage.setItem(RELAY_TOKEN_CACHE_KEY, token);
+    writeScopedAppStorage(RELAY_TOKEN_CACHE_KEY, token);
     setRelayMaskedToken(maskSensitive(token));
     setManualRelayTokenInput('');
     setRelayStatus('connected');
@@ -5464,44 +6058,38 @@ const ToolsManager = ({
     try {
       if (fileName.endsWith('.json')) {
         console.log("Xử lý file JSON...");
+        if (file.size > STORY_IMPORT_MAX_FILE_BYTES) {
+          throw new Error(`File JSON quá lớn (${Math.round(file.size / 1024 / 1024)}MB). Vui lòng chia nhỏ file trước khi nhập.`);
+        }
         const text = await file.text();
-        const data = JSON.parse(text);
-        if (window.confirm(`Bạn có muốn nhập ${data.stories?.length || 0} truyện và ${data.characters?.length || 0} nhân vật?`)) {
+        const parsedPayload = parseJsonImportPayload(text);
+
+        if (window.confirm(`Bạn có muốn nhập ${parsedPayload.stories.length} truyện và ${parsedPayload.characters.length} nhân vật?`)) {
           const existingStories = storage.getStories();
-          const usedSlugs = new Set(existingStories.map((item) => resolveStorySlug(item)));
-          const newStories: Story[] = [];
-          for (const story of (data.stories || [])) {
-            const { id, ...rest } = story;
-            newStories.push({
-              ...rest,
-              id: createClientId('story'),
-              slug: createStoryRouteSlug(usedSlugs),
-              authorId: user.uid,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-              chapters: normalizeChaptersForLocal(Array.isArray(rest.chapters) ? rest.chapters : []),
-            } as Story);
-          }
+          const newStories = buildImportedStoriesFromJson({
+            stories: parsedPayload.stories,
+            authorId: user.uid,
+            existingStories,
+          });
           if (newStories.length > 0) {
-            storage.saveStories([...newStories, ...existingStories]);
-            bumpStoriesVersion();
+            saveStoriesAndRefresh([...newStories, ...existingStories]);
           }
 
-          const newChars: Character[] = [];
-          for (const char of (data.characters || [])) {
-            const { id, ...rest } = char;
-            newChars.push({
-              ...rest,
-              id: createClientId('char'),
-              authorId: user.uid,
-              createdAt: new Date().toISOString(),
-            } as Character);
-          }
+          const newChars = buildImportedCharactersFromJson({
+            characters: parsedPayload.characters,
+            authorId: user.uid,
+          });
           if (newChars.length > 0) {
             const chars = storage.getCharacters();
             storage.saveCharacters([...newChars, ...chars]);
           }
-          notifyApp({ tone: 'success', message: "Nhập dữ liệu thành công!" });
+          notifyApp({
+            tone: 'success',
+            message: "Nhập dữ liệu thành công!",
+            detail: parsedPayload.droppedStories || parsedPayload.droppedCharacters
+              ? `Đã giới hạn import: bỏ qua ${parsedPayload.droppedStories} truyện và ${parsedPayload.droppedCharacters} nhân vật vượt mức.`
+              : undefined,
+          });
         }
       } else if (fileName.endsWith('.docx')) {
         console.log("Xử lý file DOCX...");
@@ -5515,19 +6103,14 @@ const ToolsManager = ({
         }
 
         const stories = storage.getStories();
-        const usedSlugs = new Set(stories.map((item) => resolveStorySlug(item)));
-        storage.saveStories([{
-          id: createClientId('story'),
-          slug: createStoryRouteSlug(usedSlugs),
+        const importedStory = buildImportedTextStory({
+          fileName: file.name,
+          extensionPattern: /\.docx$/i,
+          text,
           authorId: user.uid,
-          title: String(file.name).replace(/\.docx$/i, '').substring(0, 480),
-          content: String(text).substring(0, 1999900),
-          isPublic: false,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          chapters: []
-        }, ...stories]);
-        bumpStoriesVersion();
+          existingStories: stories,
+        });
+        saveStoriesAndRefresh([importedStory, ...stories]);
         notifyApp({ tone: 'success', message: "Nhập file .docx thành công!" });
       } else if (fileName.endsWith('.txt')) {
         console.log("Xử lý file TXT...");
@@ -5536,19 +6119,14 @@ const ToolsManager = ({
           throw new Error("File .txt không có nội dung.");
         }
         const stories = storage.getStories();
-        const usedSlugs = new Set(stories.map((item) => resolveStorySlug(item)));
-        storage.saveStories([{
-          id: createClientId('story'),
-          slug: createStoryRouteSlug(usedSlugs),
+        const importedStory = buildImportedTextStory({
+          fileName: file.name,
+          extensionPattern: /\.txt$/i,
+          text,
           authorId: user.uid,
-          title: String(file.name).replace(/\.txt$/i, '').substring(0, 480),
-          content: String(text).substring(0, 1999900),
-          isPublic: false,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          chapters: []
-        }, ...stories]);
-        bumpStoriesVersion();
+          existingStories: stories,
+        });
+        saveStoriesAndRefresh([importedStory, ...stories]);
         notifyApp({ tone: 'success', message: "Nhập file .txt thành công!" });
       } else {
         console.warn("Định dạng file không được hỗ trợ:", fileName);
@@ -6042,6 +6620,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
   const [isGeneratingCover, setIsGeneratingCover] = useState(false);
   const [isAnalyzingCharacters, setIsAnalyzingCharacters] = useState(false);
   const coverInputRef = useRef<HTMLInputElement>(null);
+  const imageProviderWarnRef = useRef<{ lastAt: number; signature: string }>({ lastAt: 0, signature: '' });
 
   const buildCoverPrompt = () => {
     const intro = String(introduction || '').replace(/\s+/g, ' ').trim().slice(0, 220);
@@ -6054,6 +6633,116 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
       'single focal subject, elegant composition, premium illustration, cinematic lighting, high detail, vertical book cover, no text, no watermark, no logo',
     ];
     return promptParts.filter(Boolean).join(', ');
+  };
+
+  const shouldNotifyImageWarning = (signature: string): boolean => {
+    const now = Date.now();
+    const shouldNotify = now - imageProviderWarnRef.current.lastAt > IMAGE_PROVIDER_WARNING_COOLDOWN_MS
+      || imageProviderWarnRef.current.signature !== signature;
+    if (shouldNotify) {
+      imageProviderWarnRef.current = { lastAt: now, signature };
+    }
+    return shouldNotify;
+  };
+
+  const resolveCoverPrompt = async (): Promise<string> => {
+    const typedPrompt = sanitizePromptForUrl(String(coverPrompt || '').trim());
+    if (typedPrompt) return typedPrompt;
+
+    const basePrompt = sanitizePromptForUrl(buildCoverPrompt());
+    let ai: AiAuth | null = null;
+    try {
+      ai = createGeminiClient('auxiliary');
+    } catch {
+      ai = null;
+    }
+    if (!ai) return basePrompt;
+
+    try {
+      const generatedPrompt = await generateGeminiText(
+        ai,
+        'fast',
+        [
+          'Write one concise English prompt for an AI book cover generator.',
+          'Keep it under 220 characters, no markdown, no quotes.',
+          'Must describe visual subject, mood, genre cues, and composition.',
+          'Always include: vertical book cover, no text, no watermark.',
+          `Title: ${title}`,
+          `Genre: ${genre || 'literary fiction'}`,
+          `Introduction: ${String(introduction || '').slice(0, 500)}`,
+        ].join('\n'),
+        {
+          responseMimeType: 'text/plain',
+          temperature: 0.6,
+          maxOutputTokens: 120,
+          minOutputChars: 70,
+          maxRetries: 1,
+        },
+      );
+      return sanitizePromptForUrl(generatedPrompt) || basePrompt;
+    } catch (error) {
+      console.warn('Không tạo được prompt ảnh bìa bằng AI, chuyển sang prompt nội suy.', error);
+      return basePrompt;
+    }
+  };
+
+  const generateCoverFromConfiguredProviders = async (prompt: string): Promise<{ imageUrl: string; providerErrors: string[] }> => {
+    const imageConfig = getImageApiConfig();
+    const providerErrors: string[] = [];
+    let imageUrl = '';
+
+    const tryImageProvider = async (provider: ImageAiProvider): Promise<string> => {
+      const providerConfig = imageConfig.providers[provider];
+      const apiKey = String(providerConfig?.apiKey || '').trim();
+      if (!apiKey) return '';
+      if (provider === 'evolink') {
+        return generateRaphaelCoverImage(prompt, imageConfig);
+      }
+      if (provider === 'openai') {
+        return generateOpenAiCoverImage({
+          prompt,
+          apiKey,
+          model: providerConfig.model,
+          sizeHint: imageConfig.size,
+        });
+      }
+      if (provider === 'fal') {
+        return generateFalCoverImage({
+          prompt,
+          apiKey,
+          model: providerConfig.model,
+          sizeHint: imageConfig.size,
+        });
+      }
+      return generateBflCoverImage({
+        prompt,
+        apiKey,
+        model: providerConfig.model,
+        sizeHint: imageConfig.size,
+      });
+    };
+
+    if (imageConfig.enabled) {
+      const providerOrder: ImageAiProvider[] = [
+        imageConfig.provider,
+        ...(['evolink', 'openai', 'fal', 'bfl'] as ImageAiProvider[]).filter(
+          (provider) => provider !== imageConfig.provider && Boolean(imageConfig.providers[provider]?.apiKey?.trim()),
+        ),
+      ];
+      const dedupedOrder = Array.from(new Set(providerOrder));
+      for (const provider of dedupedOrder) {
+        if (imageUrl) break;
+        try {
+          imageUrl = await tryImageProvider(provider);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error || '');
+          providerErrors.push(`${IMAGE_AI_PROVIDER_META[provider].label}: ${message}`);
+          console.warn(`Image provider ${provider} failed`, error);
+        }
+      }
+    }
+
+    return { imageUrl, providerErrors };
   };
 
   const handlePickCoverFile = () => {
@@ -6098,116 +6787,23 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
     }
     setIsGeneratingCover(true);
     try {
-      const typedPrompt = sanitizePromptForUrl(String(coverPrompt || '').trim());
-      const basePrompt = sanitizePromptForUrl(buildCoverPrompt());
-      let prompt = typedPrompt;
-      let ai: AiAuth | null = null;
-
-      try {
-        ai = createGeminiClient('auxiliary');
-      } catch {
-        ai = null;
-      }
-
-      if (!prompt && ai) {
-        try {
-          const generatedPrompt = await generateGeminiText(
-            ai,
-            'fast',
-            [
-              'Write one concise English prompt for an AI book cover generator.',
-              'Keep it under 220 characters, no markdown, no quotes.',
-              'Must describe visual subject, mood, genre cues, and composition.',
-              'Always include: vertical book cover, no text, no watermark.',
-              `Title: ${title}`,
-              `Genre: ${genre || 'literary fiction'}`,
-              `Introduction: ${String(introduction || '').slice(0, 500)}`,
-            ].join('\n'),
-            {
-              responseMimeType: 'text/plain',
-              temperature: 0.6,
-              maxOutputTokens: 120,
-              minOutputChars: 70,
-              maxRetries: 1,
-            },
-          );
-          prompt = sanitizePromptForUrl(generatedPrompt);
-        } catch (error) {
-          console.warn('Không tạo được prompt ảnh bìa bằng AI, chuyển sang prompt nội suy.', error);
-        }
-      }
-
-      if (!prompt) {
-        prompt = basePrompt;
-      }
+      const prompt = await resolveCoverPrompt();
       if (!prompt) {
         notifyApp({ tone: 'warn', message: 'Không đủ dữ liệu để tạo ảnh bìa.' });
         return;
       }
-      let imageUrl = '';
+      const { imageUrl, providerErrors: imageProviderErrors } = await generateCoverFromConfiguredProviders(prompt);
 
-      try {
-        imageUrl = await generateRaphaelCoverImage(prompt);
-      } catch (error) {
-        console.warn('Raphael image generation not available, fallback to existing cover services.', error);
-      }
-
-      // Try OpenAI image API next when user is configured with OpenAI/custom endpoint.
-      try {
-        if (!imageUrl && ai && (ai.provider === 'openai' || ai.provider === 'custom') && ai.apiKey.trim()) {
-          const openAiBase = ai.baseUrl || getProviderBaseUrl(ai.provider === 'custom' ? 'custom' : 'openai');
-          const imageEndpoint = /\/images\/generations$/i.test(openAiBase)
-            ? openAiBase
-            : `${openAiBase.replace(/\/chat\/completions$/i, '').replace(/\/+$/, '')}/images/generations`;
-          const model = /gpt-image|dall-e/i.test(ai.model) ? ai.model : 'gpt-image-1';
-          const resp = await fetchWithTimeout(imageEndpoint, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${ai.apiKey}`,
-            },
-            body: JSON.stringify({
-              model,
-              prompt,
-              size: '1024x1536',
-            }),
-          }, 18000);
-          if (resp.ok) {
-            const data = await resp.json();
-            const url = String(data?.data?.[0]?.url || '').trim();
-            const b64 = String(data?.data?.[0]?.b64_json || '').trim();
-            if (url && await probeImageUrl(url, 9000)) {
-              imageUrl = url;
-            } else if (b64) {
-              imageUrl = `data:image/png;base64,${b64}`;
-            }
-          }
-        }
-      } catch (error) {
-        console.warn('OpenAI image generation not available, fallback to public image service.', error);
-      }
-
-      // Fallback to public AI image service.
-      if (!imageUrl) {
-        const seed = Math.floor(Math.random() * 1000000000);
-        const promptVariants = Array.from(new Set([prompt, basePrompt].filter(Boolean))).slice(0, 2);
-        const buildCandidates = (variant: string, offset: number) => {
-          const encoded = encodeURIComponent(variant);
-          return [
-            `https://image.pollinations.ai/prompt/${encoded}?width=896&height=1344&seed=${seed + offset}&nologo=true&enhance=true&model=flux`,
-            `https://image.pollinations.ai/prompt/${encoded}?width=896&height=1344&seed=${seed + offset}&nologo=true&enhance=true&model=turbo`,
-          ];
-        };
-
-        for (let attempt = 0; attempt < 2 && !imageUrl; attempt += 1) {
-          for (const variant of promptVariants) {
-            const candidates = buildCandidates(variant, attempt * 97);
-            imageUrl = await pickFirstReachableImageUrl(candidates, 6000, 2);
-            if (imageUrl) break;
-          }
-          if (!imageUrl && attempt < 1) {
-            await sleepMs(450);
-          }
+      if (!imageUrl && imageProviderErrors.length > 0) {
+        const signature = imageProviderErrors.slice(0, 2).join('|');
+        if (shouldNotifyImageWarning(signature)) {
+          notifyApp({
+            tone: 'warn',
+            message: 'Các nhà cung cấp AI sinh ảnh cấu hình trong app đều chưa trả kết quả.',
+            detail: imageProviderErrors.slice(0, 2).join(' · '),
+            timeoutMs: 5200,
+            groupKey: 'image-provider-fallback',
+          });
         }
       }
 
@@ -6217,10 +6813,14 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
         if (!coverPrompt.trim()) {
           setCoverPrompt(prompt);
         }
-        notifyApp({ tone: 'warn', message: 'Dịch vụ ảnh AI đang bận nên hệ thống đã chuyển sang bìa dự phòng ngay để bạn không phải chờ lâu. Bạn có thể bấm tạo lại sau ít phút nếu muốn lấy bìa AI.', timeoutMs: 5200 });
+        const fallbackSignature = 'fallback-cover-active';
+        if (shouldNotifyImageWarning(fallbackSignature)) {
+          notifyApp({ tone: 'warn', message: 'Dịch vụ ảnh AI đang bận nên hệ thống đã chuyển sang bìa dự phòng ngay để bạn không phải chờ lâu. Bạn có thể bấm tạo lại sau ít phút nếu muốn lấy bìa AI.', timeoutMs: 5200 });
+        }
         return;
       }
       setCoverImageUrl(imageUrl);
+      imageProviderWarnRef.current = { lastAt: 0, signature: '' };
       if (!coverPrompt.trim()) {
         setCoverPrompt(prompt);
       }
@@ -6924,21 +7524,21 @@ const StoryDetail = ({
   const persistUpdatedStory = (updatedStory: Story): void => {
     const stories = storage.getStories();
     const newList = stories.map((s: Story) => (s.id === story.id ? updatedStory : s));
-    storage.saveStories(newList);
-    bumpStoriesVersion();
+    saveStoriesAndRefresh(newList);
     onUpdateStory(updatedStory);
   };
 
   const handleSaveChapterEdit = async () => {
     if (!selectedChapter || !story.chapters) return;
+    const updatedAt = new Date().toISOString();
     
     const updatedChapters = story.chapters.map(c => 
       c.id === selectedChapter.id 
-        ? { ...c, title: editTitle, content: editContent } 
+        ? { ...c, title: editTitle, content: editContent, updatedAt } 
         : c
     );
 
-    const updatedStory = { ...story, chapters: updatedChapters, updatedAt: new Date().toISOString() };
+    const updatedStory = { ...story, chapters: updatedChapters, updatedAt };
     
     try {
       persistUpdatedStory(updatedStory);
@@ -6957,18 +7557,26 @@ const StoryDetail = ({
     if (!window.confirm(`Xóa chương "${target.title || `Chương ${target.order}`}"?`)) return;
 
     try {
+      const deletedAt = new Date().toISOString();
       const remaining = story.chapters
         .filter((item) => item.id !== chapterId)
         .sort((a, b) => a.order - b.order)
         .map((chapter, index) => ({
           ...chapter,
           order: index + 1,
+          updatedAt: deletedAt,
         }));
+
+      const nextDeletedMap = pruneDeletedChapterMap({
+        ...normalizeDeletedChapterMap(story.deletedChapterIds || {}),
+        [chapterId]: deletedAt,
+      });
 
       const updatedStory: Story = {
         ...story,
         chapters: normalizeChaptersForLocal(remaining),
-        updatedAt: new Date().toISOString(),
+        deletedChapterIds: nextDeletedMap,
+        updatedAt: deletedAt,
       };
       persistUpdatedStory(updatedStory);
 
@@ -7433,7 +8041,7 @@ const StoryList = ({ onView, refreshKey }: { onView: (story: Story) => void; ref
     if (!deleteId) return;
     const allStories = storage.getStories();
     const newList = allStories.filter((s) => String(s.id) !== deleteId);
-    storage.saveStories(newList);
+    saveStoriesAndRefresh(newList);
     setStories((prev) => prev.filter((s) => s.id !== deleteId));
     setDeleteId(null);
   };
@@ -9132,12 +9740,7 @@ const AIGenerationModal = ({
           maxOutputTokens: 5200,
           minOutputChars: 700,
           maxRetries: 2,
-          safetySettings: [
-            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          ]
+          safetySettings: GEMINI_UNRESTRICTED_SAFETY_SETTINGS,
         },
       );
       setChapterScript(scriptText || '');
@@ -9166,12 +9769,7 @@ const AIGenerationModal = ({
           maxOutputTokens: 2400,
           minOutputChars: 220,
           maxRetries: 2,
-          safetySettings: [
-            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          ]
+          safetySettings: GEMINI_UNRESTRICTED_SAFETY_SETTINGS,
         },
       );
       setOutline(outlineText || '');
@@ -9981,6 +10579,27 @@ const AppContent = () => {
     return () => window.removeEventListener(APP_NOTICE_EVENT, handler as EventListener);
   }, [dismissToast]);
 
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<StorageSaveFailedDetail>).detail;
+      if (!detail?.section) return;
+      const estimatedMb = detail.estimatedBytes && detail.estimatedBytes > 0
+        ? Math.max(1, Math.round(detail.estimatedBytes / 1024 / 1024))
+        : 0;
+      notifyApp({
+        tone: 'error',
+        message: 'Lưu dữ liệu thất bại: bộ nhớ cục bộ đã đầy hoặc bị từ chối ghi.',
+        detail: estimatedMb
+          ? `Mục lỗi: ${detail.section}. Kích thước ước tính khoảng ${estimatedMb}MB. Hãy Sao lưu ngay rồi dọn bớt dữ liệu cũ trước khi lưu lại.`
+          : `Mục lỗi: ${detail.section}. Hãy Sao lưu ngay rồi dọn bớt dữ liệu cũ trước khi lưu lại.`,
+        groupKey: `storage-save-failed:${detail.section}`,
+        persist: true,
+      });
+    };
+    window.addEventListener(STORAGE_SAVE_FAILED_EVENT, handler as EventListener);
+    return () => window.removeEventListener(STORAGE_SAVE_FAILED_EVENT, handler as EventListener);
+  }, []);
+
   useEffect(() => () => {
     toastTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
     toastTimeoutsRef.current.clear();
@@ -10159,13 +10778,13 @@ const AppContent = () => {
     if (!accessToken) {
       await updateBackupSnapshotDriveMeta(snapshot.id, {
         status: 'failed',
-        error: 'Phiên Google Drive đã hết hạn. Hãy kết nối lại để tiếp tục sao lưu tự động.',
+        error: 'Phiên Google Drive tạm thời chưa làm mới được. Hệ thống sẽ tự thử lại bằng tài khoản đã liên kết.',
       });
       await refreshBackupHistory();
       if (!options?.quiet) {
         notifyApp({
           tone: 'warn',
-          message: 'Google Drive chưa sẵn sàng. Hãy kết nối lại để tiếp tục tự động sao lưu.',
+          message: 'Google Drive tạm thời chưa sẵn sàng. Hệ thống sẽ tự thử lại tự động.',
           groupKey: 'backup-drive-token-missing',
         });
       }
@@ -10338,14 +10957,42 @@ const AppContent = () => {
     payload: StorageBackupPayload,
   ): Promise<StorageImportReport> => {
     backupAutomationRef.current.isRestoring = true;
+    workspaceSyncRef.current.isHydrating = true;
+    let restoredSections: string[] = [];
     try {
+      if (user?.uid) {
+        await clearWorkspaceSyncQueue(user.uid);
+      }
+      workspaceSyncRef.current.lastQueuedSectionHash = {};
+      workspaceSyncRef.current.lastSyncedSectionHash = {};
       const report = storage.importData(payload);
+      restoredSections = report.restoredSections;
       refreshWorkspaceUiFromStorage();
+      if (user?.uid) {
+        await clearWorkspaceSyncQueue(user.uid);
+        await refreshAccountSyncQueueStats();
+      }
       return report;
     } finally {
       backupAutomationRef.current.isRestoring = false;
+      workspaceSyncRef.current.isHydrating = false;
+      if (restoredSections.length > 0) {
+        const sectionMap: Partial<Record<string, LocalWorkspaceSection>> = {
+          stories: 'stories',
+          characters: 'characters',
+          ai_rules: 'ai_rules',
+          style_references: 'style_references',
+          translation_names: 'translation_names',
+          finops_budget: 'finops_budget',
+        };
+        restoredSections.forEach((sectionName) => {
+          const section = sectionMap[sectionName];
+          if (!section) return;
+          emitLocalWorkspaceChanged(section);
+        });
+      }
     }
-  }, [refreshWorkspaceUiFromStorage]);
+  }, [refreshAccountSyncQueueStats, refreshWorkspaceUiFromStorage, user?.uid]);
 
   const handleRestoreBackupSnapshot = useCallback(async (snapshotId: string) => {
     setBackupBusyAction(`restore:${snapshotId}`);
@@ -10423,26 +11070,24 @@ const AppContent = () => {
     setBackupBusyAction('connect-drive');
     try {
       const boundDrive = driveBinding || await loadBoundDriveBinding();
-      const auth = await connectGoogleDriveInteractive();
-      const authBinding = toDriveBinding(auth.account, boundDrive);
-      if (boundDrive && authBinding.sub !== boundDrive.sub) {
-        await disconnectGoogleDrive();
-        setDriveAuth(null);
+      if (boundDrive) {
         notifyApp({
-          tone: 'error',
-          message: `Tài khoản này đã liên kết với Google Drive ${boundDrive.email}.`,
-          detail: `Bạn vừa chọn ${auth.account.email}. Hãy đăng nhập lại đúng Gmail đã liên kết nếu muốn tiếp tục sao lưu.`,
-          groupKey: 'backup-drive-binding-locked',
+          tone: 'info',
+          message: `Tài khoản này đã khóa với Google Drive ${boundDrive.email}.`,
+          detail: 'Liên kết Drive chỉ thiết lập một lần và không thể đổi bằng giao diện người dùng.',
+          groupKey: 'backup-drive-binding-already-locked',
         });
         return;
       }
+      const auth = await connectGoogleDriveInteractive();
+      const authBinding = toDriveBinding(auth.account);
 
       await persistDriveBinding(authBinding);
       setDriveAuth(auth);
       notifyApp({
         tone: 'success',
         message: `Đã liên kết tài khoản này với Google Drive ${auth.account.email}.`,
-        detail: 'Từ giờ app sẽ chỉ dùng đúng Gmail này để sao lưu dữ liệu của tài khoản hiện tại.',
+        detail: 'Liên kết này được khóa cố định cho tài khoản hiện tại và dùng lại tự động ở các lần đăng nhập sau.',
         groupKey: 'backup-drive-connect-success',
       });
       dismissToast('account-sync-disabled');
@@ -10461,30 +11106,6 @@ const AppContent = () => {
       setBackupBusyAction('');
     }
   }, [backupSettings.autoUploadToDrive, backupSnapshots, dismissToast, driveBinding, loadBoundDriveBinding, persistDriveBinding, uploadSnapshotToDrive, user?.uid]);
-
-  const handleDisconnectDrive = useCallback(async () => {
-    setBackupBusyAction('disconnect-drive');
-    try {
-      await disconnectGoogleDrive();
-      setDriveAuth(null);
-      notifyApp({
-        tone: 'info',
-        message: 'Đã ngắt kết nối Google Drive trên trình duyệt này.',
-        detail: driveBinding ? `Tài khoản TruyenForge vẫn đang liên kết với ${driveBinding.email}. Khi kết nối lại, bạn phải dùng đúng Gmail đó.` : 'Bạn có thể kết nối lại Google Drive sau.',
-        groupKey: 'backup-drive-disconnect',
-      });
-    } catch (error) {
-      notifyApp({
-        tone: 'warn',
-        message: 'Chưa thể ngắt kết nối Google Drive trọn vẹn, nhưng phiên cục bộ đã được xóa.',
-        detail: error instanceof Error ? error.message : undefined,
-        groupKey: 'backup-drive-disconnect-warn',
-      });
-      setDriveAuth(loadStoredDriveAuth());
-    } finally {
-      setBackupBusyAction('');
-    }
-  }, [driveBinding]);
 
   const handleUploadSnapshotManually = useCallback(async (snapshotId: string) => {
     setBackupBusyAction(`drive-upload:${snapshotId}`);
@@ -10636,6 +11257,23 @@ const AppContent = () => {
   }, [refreshBackupHistory, refreshWorkspaceUiFromStorage, user?.uid]);
 
   useEffect(() => {
+    const configured = hasGoogleDriveBackupConfig();
+    if (!user?.uid || !driveBinding || !configured) return;
+    let cancelled = false;
+    const warmupDriveToken = async () => {
+      const token = await ensureGoogleDriveAccessToken(false);
+      if (cancelled) return;
+      if (token) {
+        setDriveAuth(loadStoredDriveAuth());
+      }
+    };
+    void warmupDriveToken();
+    return () => {
+      cancelled = true;
+    };
+  }, [driveBinding?.sub, user?.uid]);
+
+  useEffect(() => {
     if (!backupHistoryReady || !backupSettings.autoSnapshotEnabled || backupAutomationRef.current.startupSnapshotDone) return;
     backupAutomationRef.current.startupSnapshotDone = true;
     void createWorkspaceBackup('auto', { quiet: true }).catch((error) => {
@@ -10782,8 +11420,7 @@ const AppContent = () => {
     const stories = storage.getStories();
     const normalized = normalizeStoriesWithSlug(stories);
     if (!normalized.changed) return;
-    storage.saveStories(normalized.stories);
-    bumpStoriesVersion();
+    saveStoriesAndRefresh(normalized.stories);
   }, [storiesVersion]);
 
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -10974,7 +11611,7 @@ const AppContent = () => {
     const tryRestoreStories = async () => {
       const legacyBackup = storage.getLatestStoriesBackup();
       if (legacyBackup.length) {
-        storage.saveStories(legacyBackup);
+        saveStoriesAndRefresh(legacyBackup);
         notifyApp({
           tone: 'warn',
           message: 'Đã tự khôi phục truyện từ backup cục bộ gần nhất trên máy này.',
@@ -10989,7 +11626,7 @@ const AppContent = () => {
         ? latestSnapshot.payload.stories
         : [];
       if (cancelled || !snapshotStories.length) return;
-      storage.saveStories(snapshotStories);
+      saveStoriesAndRefresh(snapshotStories);
       notifyApp({
         tone: 'warn',
         message: 'Đã khôi phục truyện từ mốc sao lưu cục bộ gần nhất.',
@@ -11007,7 +11644,7 @@ const AppContent = () => {
 
   const syncWorkspaceToAccount = useCallback(async (changedSection?: LocalWorkspaceSection) => {
     if (!ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
-    if (!user || !hasSupabase || workspaceSyncRef.current.isHydrating) return;
+    if (!user || !hasSupabase || workspaceSyncRef.current.isHydrating || backupAutomationRef.current.isRestoring) return;
     if (workspaceSyncRef.current.isSyncing) {
       workspaceSyncRef.current.hasPendingSync = true;
       return;
@@ -11327,11 +11964,14 @@ const AppContent = () => {
 
   const runAccountSyncQueue = useCallback(async () => {
     if (!user?.uid || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
+    if (backupAutomationRef.current.isRestoring || workspaceSyncRef.current.isHydrating) return;
     if (syncQueuePumpRef.current.running) return;
     syncQueuePumpRef.current.running = true;
     try {
       const stats = await processWorkspaceSyncQueue(user.uid, async (job) => {
         await syncWorkspaceToAccount(job.section);
+      }, {
+        shouldPause: () => backupAutomationRef.current.isRestoring || workspaceSyncRef.current.isHydrating,
       });
       applyAccountSyncQueueStats(stats);
       if (stats.failed > 0 && shouldNotifyAccountSyncError(workspaceSyncRef.current.lastErrorNotifiedAt)) {
@@ -11351,6 +11991,7 @@ const AppContent = () => {
 
   const scheduleAccountSyncQueue = useCallback((delayMs = ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS) => {
     if (typeof window === 'undefined') return;
+    if (backupAutomationRef.current.isRestoring || workspaceSyncRef.current.isHydrating) return;
     if (syncQueuePumpRef.current.timer) {
       window.clearTimeout(syncQueuePumpRef.current.timer);
     }
@@ -11378,7 +12019,7 @@ const AppContent = () => {
   useEffect(() => {
     if (typeof window === 'undefined' || !user || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
     const handler = (event: Event) => {
-      if (workspaceSyncRef.current.isHydrating) return;
+      if (workspaceSyncRef.current.isHydrating || backupAutomationRef.current.isRestoring) return;
       const detail = (event as CustomEvent<LocalWorkspaceMeta> | null)?.detail;
       const changedSection = typeof detail?.section === 'string'
         ? (detail.section as LocalWorkspaceSection)
@@ -11677,6 +12318,26 @@ const AppContent = () => {
     saveReaderPrefs(readerPrefs);
   }, [applyReaderPrefsToDom, readerPrefs]);
 
+  const createAndStoreStory = (
+    buildStory: (context: {
+      existingStories: Story[];
+      storyId: string;
+      storySlug: string;
+      now: string;
+    }) => Story,
+  ): Story => {
+    const existingStories = storage.getStories();
+    const now = new Date().toISOString();
+    const newStory = buildStory({
+      existingStories,
+      storyId: createClientId('story'),
+      storySlug: createStorySlugFromStories(existingStories),
+      now,
+    });
+    saveStoriesAndRefresh([newStory, ...existingStories]);
+    return newStory;
+  };
+
   const handleTranslateStory = async (options: {
     isAdult: boolean,
     additionalInstructions: string,
@@ -11747,12 +12408,7 @@ const AppContent = () => {
           : (extremeFileMode ? 4200 : hugeFileMode ? 5600 : (turboMode ? 9000 : 7200));
       const batchItemLimit = extremeFileMode ? 1 : lowQuotaMode ? 1 : hugeFileMode ? 2 : (turboMode ? 3 : 2);
       const translationRequestRetries = lowQuotaMode && !hugeFileMode ? 0 : 1;
-      const sharedSafetySettings = [
-        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-      ];
+      const sharedSafetySettings = GEMINI_UNRESTRICTED_SAFETY_SETTINGS;
       const preparationLabel = shouldRunAnalysis ? 'Đang phân tích nội dung gốc...' : 'Đang chuẩn bị dịch theo lô...';
 
       const translationPreparationMessage = detectedSections.length >= 2 && turboMode && lowQuotaMode
@@ -11777,10 +12433,14 @@ const AppContent = () => {
       });
 
       // 1. Analyze the story for metadata (skip on low quota mode)
-      let analysis = {
+      let analysis: {
+        summary: string;
+        genre: string;
+        characters: string[];
+      } = {
         summary: `Bản dịch tự động từ file "${String(translateFileName || "Truyện dịch").replace(/\.[^/.]+$/, "")}".`,
         genre: 'Dịch thuật',
-        characters: [] as any[],
+        characters: [],
       };
       if (shouldRunAnalysis) {
         const analysisExcerpt = buildAnalysisExcerpt(translateFileContent, effectiveUnits);
@@ -11814,16 +12474,17 @@ const AppContent = () => {
           },
         );
 
-        const analysisParsed = tryParseJson<any>(analysisTextRaw || '', 'object');
+        const analysisParsed = tryParseJson<Record<string, unknown>>(analysisTextRaw || '', 'object');
+        const analysisCharacters = Array.isArray(analysisParsed?.characters)
+          ? analysisParsed.characters.map((item) => String(item || '').trim()).filter(Boolean)
+          : [];
         analysis = {
           summary: String(analysisParsed?.summary || '').trim() || stripJsonFence(analysisTextRaw || '').trim(),
           genre: String(analysisParsed?.genre || '').trim() || 'Dịch thuật',
-          characters: Array.isArray(analysisParsed?.characters) ? analysisParsed.characters : [],
+          characters: analysisCharacters,
         };
       }
       
-      const storyId = createClientId('story');
-
       // 3. Split content into chapters/chunks and translate
       const maxTranslateChunks = effectiveUnits.length;
       let processedSegments = 0;
@@ -12084,11 +12745,9 @@ const AppContent = () => {
 
       // Save to local storage so it shows up in the UI
       const localChapters = normalizeChaptersForLocal(translatedChapters);
-      const stories = storage.getStories();
-      const usedSlugs = new Set(stories.map((item) => resolveStorySlug(item)));
-      const newStory = {
+      createAndStoreStory(({ storyId, storySlug, now }) => ({
         id: storyId,
-        slug: createStoryRouteSlug(usedSlugs),
+        slug: storySlug,
         authorId: user.uid,
         title: String(translateFileName || "Truyện dịch").replace(/\.[^/.]+$/, "").substring(0, 480) + " (Bản dịch)",
         content: String(translateFileContent || "").substring(0, 5000) + "...",
@@ -12098,12 +12757,10 @@ const AppContent = () => {
         isAdult: Boolean(options.isAdult),
         isPublic: false,
         translationMemory: storyTranslationMemory,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        chapters: localChapters
-      };
-      storage.saveStories([newStory, ...stories]);
-      bumpStoriesVersion();
+        createdAt: now,
+        updatedAt: now,
+        chapters: localChapters,
+      }));
 
       const elapsedSeconds = Math.max(1, Math.round((Date.now() - translateStartedAt) / 1000));
       notifyApp({
@@ -12274,10 +12931,7 @@ const AppContent = () => {
       }
       plannedChapters = plannedChapters.slice(0, Math.max(1, options.chapterCount));
       
-      // 3. Create the story
-      const storyId = createClientId('story');
-
-      // 4. Generate chapters
+      // 3. Generate chapters
       const generatedChapters: Chapter[] = [];
       const minChapterWords = 1800;
       const chapterMaxTokens = Math.min(16384, Math.max(3600, Math.round(minChapterWords * 2.4)));
@@ -12320,12 +12974,7 @@ const AppContent = () => {
             maxOutputTokens: chapterMaxTokens,
             minOutputChars: minChapterChars,
             maxRetries: extremeContinueMode ? 1 : 2,
-            safetySettings: [
-              { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-              { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-              { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-              { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
-            ],
+            safetySettings: GEMINI_UNRESTRICTED_SAFETY_SETTINGS,
             signal: abortSignal,
           },
         );
@@ -12339,15 +12988,35 @@ const AppContent = () => {
               maxOutputTokens: Math.min(16384, Math.round(chapterMaxTokens * 1.35)),
               minOutputChars: Math.round(minChapterChars * 1.15),
               maxRetries: 1,
-              safetySettings: [
-                { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-                { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-                { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-                { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
-              ],
+              safetySettings: GEMINI_UNRESTRICTED_SAFETY_SETTINGS,
               signal: abortSignal,
             },
           );
+        }
+
+        const chapterQualityIssue = getNarrativeQualityIssue(ch.title, chapterText || '', Math.max(850, Math.round(minChapterChars * 0.7)));
+        if (chapterQualityIssue) {
+          chapterText = await generateGeminiText(
+            ai,
+            'quality',
+            `${chapterPrompt}
+
+YÊU CẦU SỬA LỖI:
+- Bản trước bị lỗi: ${chapterQualityIssue}
+- Tuyệt đối không trả dàn ý, không checklist, không gạch đầu dòng.
+- Chỉ trả một chương truyện hoàn chỉnh, văn xuôi liền mạch, có hành động và đối thoại.`,
+            {
+              maxOutputTokens: Math.min(16384, Math.round(chapterMaxTokens * 1.2)),
+              minOutputChars: Math.round(minChapterChars * 1.1),
+              maxRetries: 1,
+              signal: abortSignal,
+            },
+          );
+        }
+
+        const finalChapterIssue = getNarrativeQualityIssue(ch.title, chapterText || '', Math.max(800, Math.round(minChapterChars * 0.55)));
+        if (finalChapterIssue) {
+          throw new Error(`AI trả chương "${ch.title}" chưa đạt chuẩn: ${finalChapterIssue}`);
         }
 
         generatedChapters.push({
@@ -12361,11 +13030,9 @@ const AppContent = () => {
 
       // Save to local storage so it shows up in the UI
       const localChapters = normalizeChaptersForLocal(generatedChapters);
-      const stories = storage.getStories();
-      const usedSlugs = new Set(stories.map((item) => resolveStorySlug(item)));
-      const newStory = {
+      createAndStoreStory(({ storyId, storySlug, now }) => ({
         id: storyId,
-        slug: createStoryRouteSlug(usedSlugs),
+        slug: storySlug,
         authorId: user.uid,
         title: String(continueFileName || "Truyện viết tiếp").replace(/\.[^/.]+$/, "").substring(0, 480) + " (Viết tiếp)",
         content: String(continueFileContent || "").substring(0, 5000) + "...",
@@ -12374,12 +13041,10 @@ const AppContent = () => {
         type: 'continued',
         isAdult: Boolean(options.isAdult),
         isPublic: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        chapters: localChapters
-      };
-      storage.saveStories([newStory, ...stories]);
-      bumpStoriesVersion();
+        createdAt: now,
+        updatedAt: now,
+        chapters: localChapters,
+      }));
 
       notifyApp({ tone: 'success', message: `Đã viết tiếp thành công ${options.chapterCount} chương!`, timeoutMs: 5200 });
       setView('stories');
@@ -12455,29 +13120,6 @@ const AppContent = () => {
           content: String(normalized.content || rawContent || '').trim(),
         };
       });
-    };
-    const looksLikeOutlineChapter = (title: string, content: string) => {
-      const text = String(content || '').trim();
-      if (!text) return true;
-      const lower = text.toLowerCase();
-      const outlineSignals = [
-        'dàn ý',
-        'ý tưởng',
-        'gợi ý',
-        'hướng phát triển',
-        'plot twist',
-        'mở bài',
-        'thân bài',
-        'kết bài',
-      ];
-      const hasOutlineSignal = outlineSignals.some((signal) => lower.includes(signal));
-      const bulletCount = (text.match(/(?:^|\n)\s*(?:[-*•]|\d+[.)])\s+/g) || []).length;
-      const dialogCount = (text.match(/[“"«»]/g) || []).length;
-      const paragraphCount = text.split(/\n{2,}/).filter(Boolean).length;
-      const shortBody = text.length < 1100;
-      const sparseNarrative = paragraphCount <= 2 && dialogCount <= 1;
-      const titleLooksPlanning = /(?:dàn ý|ý tưởng|kịch bản|phác thảo)/i.test(String(title || ''));
-      return titleLooksPlanning || hasOutlineSignal || (bulletCount >= 3 && shortBody) || (shortBody && sparseNarrative);
     };
     setShowAIGen(false);
     const aiRun = beginAiRun("Đang chuẩn bị dữ liệu...", {
@@ -12605,25 +13247,18 @@ const AppContent = () => {
           maxOutputTokens: 8192,
           minOutputChars: batchMinChars,
           maxRetries: 2,
-          safetySettings: [
-            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          ],
+          safetySettings: GEMINI_UNRESTRICTED_SAFETY_SETTINGS,
           signal: abortSignal,
         },
       );
 
       const textResponse = generatedChapterBatchText || '[]';
-      const parsed = tryParseJson<any>(textResponse, 'array');
+      const parsed = tryParseJson<unknown>(textResponse, 'any');
       let newChaptersData: Array<{ title?: string; content?: string }> = [];
-      if (Array.isArray(parsed)) {
-        newChaptersData = parsed;
-      } else if (parsed && typeof parsed === 'object') {
-        if (Array.isArray((parsed as any).chapters)) newChaptersData = (parsed as any).chapters;
-        if (Array.isArray((parsed as any).items) && !newChaptersData.length) newChaptersData = (parsed as any).items;
-      }
+      newChaptersData = extractChapterDraftItems(parsed).map((item) => ({
+        title: item.title,
+        content: item.content || item.outline,
+      }));
 
       if (!newChaptersData.length) {
         newChaptersData = buildFallbackChapters(textResponse, chapterCount);
@@ -12632,8 +13267,10 @@ const AppContent = () => {
         throw new Error("AI không trả về nội dung hợp lệ để tạo chương.");
       }
       let chapterDrafts = sanitizeChapterDrafts(newChaptersData);
-      const outlineLikeCount = chapterDrafts.filter((item) => looksLikeOutlineChapter(item.title, item.content)).length;
-      if (chapterDrafts.length > 0 && outlineLikeCount >= Math.max(1, Math.ceil(chapterDrafts.length * 0.5))) {
+      const chapterLengthTarget = Number.parseInt(String(chapterLength || '1000'), 10);
+      const minimumChapterChars = Math.max(900, Math.round((Number.isFinite(chapterLengthTarget) ? chapterLengthTarget : 1000) * 1.6));
+      const firstPassValidation = validateNarrativeBatch(chapterDrafts, minimumChapterChars);
+      if (chapterDrafts.length > 0 && firstPassValidation.invalidCount >= Math.max(1, Math.ceil(chapterDrafts.length * 0.5))) {
         updateAiRun(aiRun, {
           message: 'Đang làm sạch đầu ra để đúng dạng chương truyện...',
           stageLabel: 'Sửa đầu ra',
@@ -12676,14 +13313,12 @@ CHỈ trả JSON thuần, không bọc markdown.
             signal: abortSignal,
           },
         );
-        const rewrittenParsed = tryParseJson<any>(rewritten || '[]', 'array');
+        const rewrittenParsed = tryParseJson<unknown>(rewritten || '[]', 'any');
         let rewrittenItems: Array<{ title?: string; content?: string }> = [];
-        if (Array.isArray(rewrittenParsed)) {
-          rewrittenItems = rewrittenParsed;
-        } else if (rewrittenParsed && typeof rewrittenParsed === 'object') {
-          if (Array.isArray((rewrittenParsed as any).chapters)) rewrittenItems = (rewrittenParsed as any).chapters;
-          if (Array.isArray((rewrittenParsed as any).items) && !rewrittenItems.length) rewrittenItems = (rewrittenParsed as any).items;
-        }
+        rewrittenItems = extractChapterDraftItems(rewrittenParsed).map((item) => ({
+          title: item.title,
+          content: item.content || item.outline,
+        }));
         if (!rewrittenItems.length) {
           rewrittenItems = buildFallbackChapters(rewritten || '', chapterCount);
         }
@@ -12691,9 +13326,9 @@ CHỈ trả JSON thuần, không bọc markdown.
           chapterDrafts = sanitizeChapterDrafts(rewrittenItems);
         }
       }
-      const unresolvedOutlineCount = chapterDrafts.filter((item) => looksLikeOutlineChapter(item.title, item.content)).length;
-      if (chapterDrafts.length > 0 && unresolvedOutlineCount >= Math.max(1, Math.ceil(chapterDrafts.length * 0.5))) {
-        throw new Error('AI vẫn đang trả kết quả dạng dàn ý. Hãy thử lại với model mạnh hơn hoặc giảm số chương mỗi lượt.');
+      const finalValidation = validateNarrativeBatch(chapterDrafts, minimumChapterChars);
+      if (chapterDrafts.length > 0 && finalValidation.invalidCount >= Math.max(1, Math.ceil(chapterDrafts.length * 0.5))) {
+        throw new Error(`AI trả nội dung chưa đạt chuẩn chương truyện (${finalValidation.reasons[0] || 'đầu ra dạng dàn ý'}). Hãy thử lại với model mạnh hơn hoặc giảm số chương mỗi lượt.`);
       }
 
       const collectForbiddenHits = (items: Array<{ title: string; content: string }>) =>
@@ -12791,8 +13426,7 @@ ${JSON.stringify(violatingPayload)}
         updatedAt: new Date().toISOString(),
       };
       const newList = stories.map(s => s.id === latestStory.id ? updatedStory : s);
-      storage.saveStories(newList);
-      bumpStoriesVersion();
+      saveStoriesAndRefresh(newList);
 
       setSelectedStory(updatedStory);
 
@@ -12826,8 +13460,7 @@ ${JSON.stringify(violatingPayload)}
       };
       newList = stories.map(s => s.id === editingStory.id ? updatedStory : s);
     } else {
-      const usedSlugs = new Set(stories.map((item) => resolveStorySlug(item)));
-      const newStorySlug = data.slug || createStoryRouteSlug(usedSlugs);
+      const newStorySlug = data.slug || createStorySlugFromStories(stories);
       const newStory: Story = {
         id: createClientId('story'),
         authorId: user.uid,
@@ -12848,8 +13481,7 @@ ${JSON.stringify(violatingPayload)}
 
     setEditingStory(null);
     setIsCreating(false);
-    storage.saveStories(newList);
-    bumpStoriesVersion();
+    saveStoriesAndRefresh(newList);
   };
 
   const handleAIStoryCreation = async (options: {
@@ -12941,23 +13573,20 @@ ${JSON.stringify(violatingPayload)}
           maxOutputTokens: 8192,
           minOutputChars: Math.min(12000, Math.max(900, Math.round(content.length * 0.35))),
           maxRetries: 2,
-          safetySettings: [
-            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          ],
+          safetySettings: GEMINI_UNRESTRICTED_SAFETY_SETTINGS,
           signal: abortSignal,
         },
       );
 
       const textResponse = aiStoryText || '';
-      const parsed = tryParseJson<any>(textResponse, 'object');
-      if (parsed && typeof parsed === 'object' && (parsed as any).error?.message) {
-        throw new Error(`AI lỗi: ${(parsed as any).error.message}`);
+      const parsed = tryParseJson<unknown>(textResponse, 'object');
+      const parsedRecord = asRecord(parsed);
+      const payloadError = readErrorMessageFromPayload(parsedRecord);
+      if (payloadError) {
+        throw new Error(`AI lỗi: ${payloadError}`);
       }
-      let resolvedTitle = parsed && typeof parsed === 'object' ? String(parsed.title || '').trim() : '';
-      let resolvedContent = parsed && typeof parsed === 'object' ? String(parsed.content || '').trim() : '';
+      let resolvedTitle = parsedRecord ? String(parsedRecord.title || '').trim() : '';
+      let resolvedContent = parsedRecord ? String(parsedRecord.content || '').trim() : '';
 
       if (!resolvedContent) {
         const cleaned = stripJsonFence(textResponse);
@@ -12997,12 +13626,7 @@ ${JSON.stringify(violatingPayload)}
             maxOutputTokens: 8192,
             minOutputChars: Math.min(14000, Math.max(1200, Math.round(content.length * 0.4))),
             maxRetries: 2,
-            safetySettings: [
-              { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-              { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-              { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-              { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            ],
+            safetySettings: GEMINI_UNRESTRICTED_SAFETY_SETTINGS,
             signal: abortSignal,
           },
         );
@@ -13016,14 +13640,10 @@ ${JSON.stringify(violatingPayload)}
       if (!resolvedTitle) resolvedTitle = 'Truyện mới';
 
       if (resolvedTitle && resolvedContent) {
-        const storyId = createClientId('story');
-        const stories = storage.getStories();
-        const usedSlugs = new Set(stories.map((item) => resolveStorySlug(item)));
-
         // Save to local storage
-        const newStory = {
+        createAndStoreStory(({ storyId, storySlug, now }) => ({
           id: storyId,
-          slug: createStoryRouteSlug(usedSlugs),
+          slug: storySlug,
           authorId: user.uid,
           title: resolvedTitle.substring(0, 480),
           content: resolvedContent.replace(/\]\s*\[/g, ']\n\n[').substring(0, 1999900),
@@ -13031,12 +13651,10 @@ ${JSON.stringify(violatingPayload)}
           isAdult: Boolean(isAdult),
           isPublic: false,
           isAI: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          chapters: []
-        };
-        storage.saveStories([newStory, ...stories]);
-        bumpStoriesVersion();
+          createdAt: now,
+          updatedAt: now,
+          chapters: [],
+        }));
 
         notifyApp({ tone: 'success', message: 'AI đã tạo truyện thành công từ file của bạn!', timeoutMs: 5200 });
       } else {
@@ -13059,7 +13677,6 @@ ${JSON.stringify(violatingPayload)}
   const latestBackupAt = backupSettings.lastSuccessfulBackupAt || latestBackup?.createdAt || '';
   const backupWarningMessage = buildBackupWarningMessage(latestBackupAt, backupSettings.staleAfterHours);
   const driveConfigured = hasGoogleDriveBackupConfig();
-  const driveConnected = hasUsableDriveToken(driveAuth);
 
   const routeTransitionClass = navigationType === 'POP' ? 'tf-route-pop' : 'tf-route-push';
   const oauthConsentRedirectTarget = `/${location.search}${location.hash}`;
@@ -13552,7 +14169,7 @@ ${JSON.stringify(violatingPayload)}
               <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Sao lưu & khôi phục</p>
               <h3 className="text-2xl font-bold">Sao lưu và khôi phục dữ liệu</h3>
               <p className="text-sm text-slate-400 max-w-3xl">
-                Bản tối giản: chỉ giữ thao tác quan trọng để tránh rối. Hệ thống tự gom thay đổi và đồng bộ theo nhịp 5 phút/lần, bạn vẫn có thể đẩy thêm một bản lên Drive để an toàn hơn.
+                Bản tối giản: chỉ giữ thao tác quan trọng để tránh rối. Khi đã liên kết Drive, liên kết đó sẽ được khóa cố định cho tài khoản và app tự dùng lại ở các lần đăng nhập sau.
               </p>
             </div>
 
@@ -13637,23 +14254,14 @@ ${JSON.stringify(violatingPayload)}
                 <button
                   className="tf-btn tf-btn-ghost"
                   onClick={handleConnectDrive}
-                  disabled={!user || !driveConfigured || backupBusyAction === 'connect-drive'}
+                  disabled={!user || !driveConfigured || Boolean(driveBinding) || backupBusyAction === 'connect-drive'}
                 >
                   {backupBusyAction === 'connect-drive'
                     ? 'Đang kết nối...'
                     : driveBinding
-                      ? (driveConnected ? 'Xác nhận lại Gmail' : 'Kết nối lại Drive')
-                      : 'Kết nối Drive'}
+                      ? `Đã khóa với ${driveBinding.email}`
+                      : 'Liên kết Drive (một lần)'}
                 </button>
-                {driveConnected ? (
-                  <button
-                    className="tf-btn tf-btn-ghost"
-                    onClick={handleDisconnectDrive}
-                    disabled={backupBusyAction === 'disconnect-drive'}
-                  >
-                    {backupBusyAction === 'disconnect-drive' ? 'Đang ngắt...' : 'Ngắt kết nối'}
-                  </button>
-                ) : null}
               </div>
             </div>
 
