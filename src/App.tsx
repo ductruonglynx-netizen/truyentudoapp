@@ -320,11 +320,28 @@ ${includeToc ? navItems.join('\n') : ''}
 
 
 type ApiMode = 'manual' | 'relay';
+const APP_ENV = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
+
+function readEnvString(key: string, fallback = ''): string {
+  const raw = APP_ENV[key];
+  if (typeof raw !== 'string') return fallback;
+  const normalized = raw.trim();
+  return normalized || fallback;
+}
+
+function readEnvFlag(key: string, fallback = false): boolean {
+  const raw = readEnvString(key, fallback ? '1' : '0').toLowerCase();
+  if (!raw) return fallback;
+  if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
+  if (['0', 'false', 'no', 'off'].includes(raw)) return false;
+  return fallback;
+}
+
 const DEFAULT_RELAY_WS_BASE = 'wss://your-relay.workers.dev/';
 const DEFAULT_RELAY_WEB_BASE = 'https://your-relay.workers.dev/';
 const LEGACY_RELAY_HOST_RE = /(relay2026\.up\.railway\.app|relay2026\.vercel\.app|proxymid\.your-subdomain\.workers\.dev)/i;
-const RELAY_SOCKET_BASE = normalizeRelaySocketBase(import.meta.env.VITE_RELAY_WS_BASE || DEFAULT_RELAY_WS_BASE);
-const RELAY_WEB_BASE = ((import.meta.env.VITE_RELAY_WEB_BASE || DEFAULT_RELAY_WEB_BASE).trim().replace(/\/+$/, '') + '/');
+const RELAY_SOCKET_BASE = normalizeRelaySocketBase(readEnvString('VITE_RELAY_WS_BASE', DEFAULT_RELAY_WS_BASE));
+const RELAY_WEB_BASE = (readEnvString('VITE_RELAY_WEB_BASE', DEFAULT_RELAY_WEB_BASE).replace(/\/+$/, '') + '/');
 const RAPHAEL_API_BASE = 'https://api.evolink.ai/v1';
 const DEFAULT_RAPHAEL_MODEL = 'z-image-turbo';
 const DEFAULT_RAPHAEL_SIZE = '2:3';
@@ -374,9 +391,17 @@ const APP_MODE_KEY = 'app_mode_v1';
 const READER_PREFS_KEY = 'reader_prefs_v1';
 const STORIES_UPDATED_EVENT = 'stories:updated';
 const WORKSPACE_RECOVERY_KEY = 'truyenforge:workspace-recovery-v1';
-const ACCOUNT_CLOUD_AUTOSYNC_ENABLED = String(import.meta.env.VITE_ACCOUNT_AUTOSYNC ?? '1').trim() !== '0';
+const ACCOUNT_CLOUD_AUTOSYNC_ENABLED = readEnvFlag('VITE_ACCOUNT_AUTOSYNC', true);
 const ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS = 5 * 60 * 1000;
 const ACCOUNT_SYNC_QUEUE_STATS_DEBOUNCE_MS = 1200;
+const MAINTENANCE_GLOBAL_ENABLED = readEnvFlag('VITE_MAINTENANCE_MODE_GLOBAL', false) || readEnvFlag('VITE_MAINTENANCE_MODE', false);
+const MAINTENANCE_READER_ENABLED = readEnvFlag('VITE_MAINTENANCE_MODE_READER', false);
+const MAINTENANCE_STUDIO_ENABLED = readEnvFlag('VITE_MAINTENANCE_MODE_STUDIO', false);
+const MAINTENANCE_ETA = readEnvString('VITE_MAINTENANCE_ETA', '');
+const MAINTENANCE_NOTICE_GLOBAL = readEnvString('VITE_MAINTENANCE_NOTICE_GLOBAL', readEnvString('VITE_MAINTENANCE_NOTICE', 'Hệ thống đang bảo trì để nâng cấp và sửa lỗi.'));
+const MAINTENANCE_NOTICE_READER = readEnvString('VITE_MAINTENANCE_NOTICE_READER', MAINTENANCE_NOTICE_GLOBAL);
+const MAINTENANCE_NOTICE_STUDIO = readEnvString('VITE_MAINTENANCE_NOTICE_STUDIO', MAINTENANCE_NOTICE_GLOBAL);
+const MAINTENANCE_RUNTIME_STATE_KEY = 'truyenforge:maintenance-runtime-v1';
 const ACCOUNT_AUTOSYNC_TRIGGER_SECTIONS: ReadonlySet<LocalWorkspaceSection> = new Set([
   'stories',
   'characters',
@@ -394,6 +419,93 @@ const STORY_IMPORT_MAX_CHAPTERS_PER_STORY = 1200;
 const STORY_IMPORT_MAX_CHARACTERS = 6000;
 const IMAGE_PROVIDER_WARNING_COOLDOWN_MS = 2 * 60 * 1000;
 const PUBLIC_STORY_FEED_LIMIT = 48;
+
+interface MaintenanceRuntimeState {
+  signature: string;
+  startedAt: number;
+}
+
+function parseMaintenanceEtaToMs(rawValue: string): number | null {
+  const raw = String(rawValue || '').trim();
+  if (!raw) return null;
+
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+
+  const direct = new Date(raw);
+  if (!Number.isNaN(direct.getTime())) return direct.getTime();
+
+  const normalized = raw
+    .replace(/\((UTC|GMT)\s*([+-]\d{1,2})(?::?(\d{2}))?\)/i, '$1$2:$3')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const normalizedDate = new Date(normalized);
+  if (!Number.isNaN(normalizedDate.getTime())) return normalizedDate.getTime();
+
+  const ddmmyyyy = normalized.match(
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?(?:\s*(?:UTC|GMT)\s*([+-]\d{1,2})(?::?(\d{2}))?)?$/i,
+  );
+  if (!ddmmyyyy) return null;
+
+  const day = Number(ddmmyyyy[1]);
+  const month = Number(ddmmyyyy[2]);
+  const year = Number(ddmmyyyy[3]);
+  const hour = Number(ddmmyyyy[4] || '0');
+  const minute = Number(ddmmyyyy[5] || '0');
+  const second = Number(ddmmyyyy[6] || '0');
+  const tzHour = ddmmyyyy[7] ? Number(ddmmyyyy[7]) : null;
+  const tzMinute = ddmmyyyy[8] ? Number(ddmmyyyy[8]) : 0;
+
+  if (tzHour === null) {
+    const localDate = new Date(year, month - 1, day, hour, minute, second);
+    return Number.isNaN(localDate.getTime()) ? null : localDate.getTime();
+  }
+
+  const totalOffsetMinutes = (Math.abs(tzHour) * 60 + Math.abs(tzMinute || 0)) * (tzHour >= 0 ? 1 : -1);
+  return Date.UTC(year, month - 1, day, hour, minute, second) - totalOffsetMinutes * 60 * 1000;
+}
+
+function formatCountdown(ms: number): string {
+  const safeMs = Math.max(0, ms);
+  const totalSeconds = Math.floor(safeMs / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days} ngày`);
+  if (hours > 0) parts.push(`${hours} giờ`);
+  if (minutes > 0) parts.push(`${minutes} phút`);
+  if (!parts.length) parts.push(`${seconds} giây`);
+  return parts.slice(0, 3).join(' ');
+}
+
+function loadMaintenanceRuntimeState(): MaintenanceRuntimeState | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(MAINTENANCE_RUNTIME_STATE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<MaintenanceRuntimeState>;
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (typeof parsed.signature !== 'string') return null;
+    if (!Number.isFinite(parsed.startedAt)) return null;
+    return {
+      signature: parsed.signature,
+      startedAt: Number(parsed.startedAt),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveMaintenanceRuntimeState(next: MaintenanceRuntimeState): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(MAINTENANCE_RUNTIME_STATE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore localStorage write failure
+  }
+}
 
 function readScopedAppStorage(baseKey: string): string | null {
   return getScopedStorageItem(baseKey, {
@@ -10497,6 +10609,49 @@ const AppContent = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const navigationType = useNavigationType();
+  const maintenanceConfigSignature = `${Number(MAINTENANCE_GLOBAL_ENABLED)}:${Number(MAINTENANCE_READER_ENABLED)}:${Number(MAINTENANCE_STUDIO_ENABLED)}:${MAINTENANCE_ETA}`;
+  const [maintenanceNowMs, setMaintenanceNowMs] = useState(() => Date.now());
+  const [maintenanceStartedAt, setMaintenanceStartedAt] = useState<number | null>(null);
+  const maintenanceEtaAtMs = React.useMemo(() => parseMaintenanceEtaToMs(MAINTENANCE_ETA), []);
+  const maintenanceConfigured = MAINTENANCE_GLOBAL_ENABLED || MAINTENANCE_READER_ENABLED || MAINTENANCE_STUDIO_ENABLED;
+  const maintenanceExpiredByEta = maintenanceEtaAtMs !== null && maintenanceNowMs >= maintenanceEtaAtMs;
+  const maintenanceGlobalActive = MAINTENANCE_GLOBAL_ENABLED && !maintenanceExpiredByEta;
+  const maintenanceReaderActive = !maintenanceExpiredByEta && (maintenanceGlobalActive || MAINTENANCE_READER_ENABLED);
+  const maintenanceStudioActive = !maintenanceExpiredByEta && (maintenanceGlobalActive || MAINTENANCE_STUDIO_ENABLED);
+  const maintenanceCountdownMs = maintenanceEtaAtMs !== null ? Math.max(maintenanceEtaAtMs - maintenanceNowMs, 0) : null;
+
+  useEffect(() => {
+    setMaintenanceNowMs(Date.now());
+  }, []);
+
+  useEffect(() => {
+    const cached = loadMaintenanceRuntimeState();
+    if (!cached || cached.signature !== maintenanceConfigSignature) {
+      setMaintenanceStartedAt(null);
+      return;
+    }
+    setMaintenanceStartedAt(cached.startedAt);
+  }, [maintenanceConfigSignature]);
+
+  useEffect(() => {
+    if (!maintenanceConfigured || maintenanceExpiredByEta) return;
+    if (maintenanceStartedAt) return;
+    const now = Date.now();
+    const runtimeState: MaintenanceRuntimeState = {
+      signature: maintenanceConfigSignature,
+      startedAt: now,
+    };
+    saveMaintenanceRuntimeState(runtimeState);
+    setMaintenanceStartedAt(now);
+  }, [maintenanceConfigSignature, maintenanceConfigured, maintenanceExpiredByEta, maintenanceStartedAt]);
+
+  useEffect(() => {
+    if (!maintenanceConfigured || maintenanceEtaAtMs === null) return;
+    const timer = window.setInterval(() => {
+      setMaintenanceNowMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [maintenanceConfigured, maintenanceEtaAtMs]);
 
   const cachePublicStory = useCallback((story: Story) => {
     if (!story?.id) return;
@@ -12578,13 +12733,42 @@ const AppContent = () => {
   };
 
   const handleSwitchAppMode = useCallback((nextMode: AppMode) => {
+    if (maintenanceGlobalActive) {
+      notifyApp({
+        tone: 'warn',
+        message: 'Hệ thống đang bảo trì toàn bộ, tạm thời chưa truy cập được.',
+        groupKey: 'maintenance-global-switch-block',
+      });
+      navigate('/');
+      return;
+    }
+    if (nextMode === 'reader' && maintenanceReaderActive) {
+      notifyApp({
+        tone: 'warn',
+        message: 'Khu đọc đang bảo trì, tạm thời chưa truy cập được.',
+        groupKey: 'maintenance-reader-switch-block',
+      });
+      setAppMode('reader');
+      navigate('/');
+      return;
+    }
+    if (nextMode === 'creator' && maintenanceStudioActive) {
+      notifyApp({
+        tone: 'warn',
+        message: 'Studio đang bảo trì, tạm thời chưa truy cập được.',
+        groupKey: 'maintenance-studio-switch-block',
+      });
+      setAppMode('creator');
+      navigate('/studio');
+      return;
+    }
     setAppMode(nextMode);
     setView('stories');
     setSelectedStory(null);
     setEditingStory(null);
     setIsCreating(false);
     navigate(nextMode === 'creator' ? '/studio' : '/');
-  }, [navigate]);
+  }, [maintenanceGlobalActive, maintenanceReaderActive, maintenanceStudioActive, navigate]);
 
   const applyReaderPrefsToDom = useCallback((prefs: ReaderPrefs) => {
     const root = document.documentElement;
@@ -14273,6 +14457,86 @@ ${JSON.stringify(violatingPayload)}
     );
   };
 
+  const renderMaintenanceWorkspace = (scope: 'global' | 'reader' | 'studio') => {
+    const title =
+      scope === 'global'
+        ? 'Hệ thống đang bảo trì'
+        : scope === 'studio'
+          ? 'Studio đang bảo trì'
+          : 'Khu đọc truyện đang bảo trì';
+
+    const description =
+      scope === 'global'
+        ? MAINTENANCE_NOTICE_GLOBAL
+        : scope === 'studio'
+          ? MAINTENANCE_NOTICE_STUDIO
+          : MAINTENANCE_NOTICE_READER;
+
+    const canOpenReader = !maintenanceReaderActive && scope !== 'reader';
+    const canOpenStudio = !maintenanceStudioActive && scope !== 'studio';
+    const etaLabel = maintenanceEtaAtMs ? new Date(maintenanceEtaAtMs).toLocaleString('vi-VN') : MAINTENANCE_ETA;
+    const startedAtLabel = maintenanceStartedAt ? new Date(maintenanceStartedAt).toLocaleString('vi-VN') : '';
+    const countdownLabel = maintenanceCountdownMs !== null ? formatCountdown(maintenanceCountdownMs) : '';
+
+    return (
+      <motion.div
+        key={`maintenance-${scope}`}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -8 }}
+        className="pt-32 px-6 pb-16"
+      >
+        <div className="mx-auto max-w-3xl rounded-[2rem] border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 p-8 shadow-xl shadow-amber-900/10">
+          <div className="mb-5 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
+            <Clock className="h-6 w-6" />
+          </div>
+          <h2 className="text-3xl font-serif font-bold text-slate-900">{title}</h2>
+          <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-slate-600">{description}</p>
+          {etaLabel ? (
+            <div className="mt-4 space-y-1 rounded-xl border border-amber-200 bg-white/80 px-4 py-3 text-sm">
+              <p className="font-semibold text-amber-700">Dự kiến mở lại: {etaLabel}</p>
+              {countdownLabel ? (
+                <p className="text-slate-600">
+                  Còn lại: <span className="font-semibold text-slate-800">{countdownLabel}</span>
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          {startedAtLabel ? (
+            <p className="mt-3 text-xs font-medium text-slate-500">
+              Bắt đầu bảo trì (tự ghi nhận): {startedAtLabel}
+            </p>
+          ) : null}
+
+          <div className="mt-7 flex flex-wrap gap-3">
+            <button
+              onClick={() => window.location.reload()}
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Tải lại trang
+            </button>
+            {canOpenReader ? (
+              <button
+                onClick={() => handleSwitchAppMode('reader')}
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700"
+              >
+                Chuyển sang khu đọc
+              </button>
+            ) : null}
+            {canOpenStudio ? (
+              <button
+                onClick={() => handleSwitchAppMode('creator')}
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700"
+              >
+                Chuyển sang Studio
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </motion.div>
+    );
+  };
+
   const NotFoundRouteView = ({
     title = '404 - Không tìm thấy',
     message = 'Đường dẫn không hợp lệ hoặc nội dung đã bị xóa.',
@@ -15006,19 +15270,43 @@ ${JSON.stringify(violatingPayload)}
         </div>
       ) : null}
       <Routes>
-        <Route element={<div className={cn('tf-route-scene', routeTransitionClass)}><Outlet /></div>}>
-          <Route path="/" element={appMode === 'creator' ? <Navigate to="/studio" replace /> : renderReaderWorkspace()} />
-          <Route path="/studio" element={renderHomeWorkspace()} />
-          <Route path="/oauth/consent" element={<Navigate to={oauthConsentRedirectTarget} replace />} />
-          <Route path="/oauth/consent/" element={<Navigate to={oauthConsentRedirectTarget} replace />} />
-          <Route path="/story/:id" element={<LegacyStoryRouteRedirect />} />
-          <Route path="/reader/:chapterId" element={<LegacyReaderRouteRedirect />} />
-          <Route path="/:storySlug" element={<StoryRouteLayout />}>
-            <Route index element={<StoryRouteView />} />
-            <Route path=":chapterSlug" element={<ReaderRouteView />} />
+        {maintenanceGlobalActive ? (
+          <Route path="*" element={renderMaintenanceWorkspace('global')} />
+        ) : (
+          <Route element={<div className={cn('tf-route-scene', routeTransitionClass)}><Outlet /></div>}>
+            <Route
+              path="/"
+              element={
+                appMode === 'creator'
+                  ? (maintenanceStudioActive ? renderMaintenanceWorkspace('studio') : <Navigate to="/studio" replace />)
+                  : (maintenanceReaderActive ? renderMaintenanceWorkspace('reader') : renderReaderWorkspace())
+              }
+            />
+            <Route
+              path="/studio"
+              element={maintenanceStudioActive ? renderMaintenanceWorkspace('studio') : renderHomeWorkspace()}
+            />
+            <Route path="/oauth/consent" element={<Navigate to={oauthConsentRedirectTarget} replace />} />
+            <Route path="/oauth/consent/" element={<Navigate to={oauthConsentRedirectTarget} replace />} />
+            <Route
+              path="/story/:id"
+              element={maintenanceReaderActive ? renderMaintenanceWorkspace('reader') : <LegacyStoryRouteRedirect />}
+            />
+            <Route
+              path="/reader/:chapterId"
+              element={maintenanceReaderActive ? renderMaintenanceWorkspace('reader') : <LegacyReaderRouteRedirect />}
+            />
+            {maintenanceReaderActive ? (
+              <Route path="/:storySlug/*" element={renderMaintenanceWorkspace('reader')} />
+            ) : (
+              <Route path="/:storySlug" element={<StoryRouteLayout />}>
+                <Route index element={<StoryRouteView />} />
+                <Route path=":chapterSlug" element={<ReaderRouteView />} />
+              </Route>
+            )}
+            <Route path="*" element={<NotFoundRouteView />} />
           </Route>
-          <Route path="*" element={<NotFoundRouteView />} />
-        </Route>
+        )}
       </Routes>
       </div>
 
