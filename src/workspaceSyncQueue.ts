@@ -57,6 +57,10 @@ function getLastSuccessKey(userId: string): string {
   return `${QUEUE_LAST_SUCCESS_KEY_PREFIX}${userId}`;
 }
 
+function makeLockOwnerId(): string {
+  return `owner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function readLastSuccessAt(userId: string): string | null {
   if (typeof window === 'undefined') return null;
   const raw = localStorage.getItem(getLastSuccessKey(userId));
@@ -68,27 +72,54 @@ function writeLastSuccessAt(userId: string): void {
   localStorage.setItem(getLastSuccessKey(userId), nowIso());
 }
 
-function tryAcquireQueueLock(userId: string): boolean {
-  if (typeof window === 'undefined') return true;
+function tryAcquireQueueLock(userId: string): string | null {
+  if (typeof window === 'undefined') return 'server-lock';
   const key = getLockKey(userId);
   const now = Date.now();
+  const ownerId = makeLockOwnerId();
   try {
     const existingRaw = localStorage.getItem(key);
     if (existingRaw) {
-      const existing = JSON.parse(existingRaw) as { expiresAt?: number };
-      if (Number(existing?.expiresAt) > now) return false;
+      const existing = JSON.parse(existingRaw) as { ownerId?: string; expiresAt?: number };
+      if (Number(existing?.expiresAt) > now && existing.ownerId !== ownerId) return null;
     }
-    localStorage.setItem(key, JSON.stringify({ expiresAt: now + LOCK_TTL_MS }));
-    return true;
+    localStorage.setItem(key, JSON.stringify({ ownerId, expiresAt: now + LOCK_TTL_MS }));
+    const confirmRaw = localStorage.getItem(key);
+    if (!confirmRaw) return null;
+    const confirm = JSON.parse(confirmRaw) as { ownerId?: string; expiresAt?: number };
+    if (confirm.ownerId !== ownerId) return null;
+    return ownerId;
   } catch {
-    return true;
+    return ownerId;
   }
 }
 
-function releaseQueueLock(userId: string): void {
+function renewQueueLock(userId: string, ownerId: string): void {
+  if (typeof window === 'undefined') return;
+  const key = getLockKey(userId);
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as { ownerId?: string; expiresAt?: number };
+    if (parsed.ownerId !== ownerId) return;
+    localStorage.setItem(key, JSON.stringify({
+      ownerId,
+      expiresAt: Date.now() + LOCK_TTL_MS,
+    }));
+  } catch {
+    // no-op
+  }
+}
+
+function releaseQueueLock(userId: string, ownerId: string): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.removeItem(getLockKey(userId));
+    const key = getLockKey(userId);
+    const raw = localStorage.getItem(key);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as { ownerId?: string; expiresAt?: number };
+    if (parsed.ownerId !== ownerId) return;
+    localStorage.removeItem(key);
   } catch {
     // no-op
   }
@@ -241,8 +272,12 @@ export async function clearWorkspaceSyncQueue(userId: string): Promise<void> {
 export async function processWorkspaceSyncQueue(
   userId: string,
   runner: (job: WorkspaceSyncJob) => Promise<void>,
+  options?: {
+    shouldPause?: () => boolean;
+  },
 ): Promise<WorkspaceSyncQueueStats> {
-  if (!tryAcquireQueueLock(userId)) {
+  const lockOwnerId = tryAcquireQueueLock(userId);
+  if (!lockOwnerId) {
     return await getWorkspaceSyncQueueStats(userId);
   }
 
@@ -252,7 +287,11 @@ export async function processWorkspaceSyncQueue(
     const now = Date.now();
 
     for (const job of jobs) {
+      if (options?.shouldPause?.()) {
+        break;
+      }
       if (job.nextRunAt > now) continue;
+      renewQueueLock(userId, lockOwnerId);
 
       const runningJob: WorkspaceSyncJob = {
         ...job,
@@ -294,7 +333,7 @@ export async function processWorkspaceSyncQueue(
 
     return await getWorkspaceSyncQueueStats(userId);
   } finally {
-    releaseQueueLock(userId);
+    releaseQueueLock(userId, lockOwnerId);
   }
 }
 

@@ -1,5 +1,23 @@
-const CACHE_NAME = 'truyenforge-phase4-cache-v1';
+const CACHE_NAME = 'truyenforge-phase4-cache-v2';
 const CORE_ASSETS = ['/', '/index.html'];
+
+function isSameOrigin(url) {
+  try {
+    return new URL(url).origin === self.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+function shouldCacheRequest(req) {
+  if (req.method !== 'GET') return false;
+  if (!isSameOrigin(req.url)) return false;
+  if (req.headers.get('authorization')) return false;
+  if (req.url.includes('/api/')) return false;
+
+  if (req.mode === 'navigate') return true;
+  return ['script', 'style', 'font', 'image', 'worker'].includes(req.destination);
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -21,7 +39,7 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  if (req.method !== 'GET') return;
+  if (!shouldCacheRequest(req)) return;
 
   if (req.mode === 'navigate') {
     event.respondWith(
@@ -48,4 +66,3 @@ self.addEventListener('fetch', (event) => {
     }),
   );
 });
-

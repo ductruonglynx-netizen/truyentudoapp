@@ -131,6 +131,8 @@ export async function syncNormalizedWorkspaceRecords(userId: string, payload: {
   aiRules: any[];
   translationNames: any[];
   styleReferences: any[];
+}, options?: {
+  pruneMissing?: boolean;
 }): Promise<NormalizedSyncResult> {
   if (!hasSupabase || !supabase) {
     return { storiesSynced: 0, chaptersSynced: 0, conflicts: 0 };
@@ -158,6 +160,9 @@ export async function syncNormalizedWorkspaceRecords(userId: string, payload: {
       coverImageUrl: normalizeString(rawStory?.coverImageUrl),
       expectedChapters: normalizeNumber(rawStory?.expectedChapters, 0),
       expectedWordCount: normalizeNumber(rawStory?.expectedWordCount, 0),
+      deletedChapterIds: rawStory?.deletedChapterIds && typeof rawStory.deletedChapterIds === 'object'
+        ? rawStory.deletedChapterIds
+        : {},
       chapters: Array.isArray(rawStory?.chapters) ? rawStory.chapters.map((chapter: any) => ({
         id: normalizeString(chapter?.id),
         title: normalizeString(chapter?.title),
@@ -203,6 +208,7 @@ export async function syncNormalizedWorkspaceRecords(userId: string, payload: {
     for (const chapter of chapters) {
       const chapterId = normalizeString(chapter?.id);
       if (!chapterId) continue;
+      const chapterUpdatedAt = toIso(chapter?.updatedAt || chapter?.createdAt || updatedAt);
       chapterRows.push({
         user_id: userId,
         story_id: storyId,
@@ -213,8 +219,8 @@ export async function syncNormalizedWorkspaceRecords(userId: string, payload: {
         ai_instructions: normalizeString(chapter?.aiInstructions),
         script: normalizeString(chapter?.script),
         revision: Math.max(1, normalizeNumber(chapter?.revision, 1)),
-        created_at: toIso(chapter?.createdAt),
-        updated_at: updatedAt,
+        created_at: toIso(chapter?.createdAt || chapterUpdatedAt),
+        updated_at: chapterUpdatedAt,
       });
     }
   }
@@ -257,8 +263,11 @@ export async function syncNormalizedWorkspaceRecords(userId: string, payload: {
     if (error) throw error;
   }
 
-  await deleteMissingRows(STORIES_TABLE, 'story_id', userId, storyIds);
-  await deleteMissingRows(CHAPTERS_TABLE, 'chapter_id', userId, chapterRows.map((row) => row.chapter_id));
+  const shouldPruneMissing = options?.pruneMissing === true;
+  if (shouldPruneMissing) {
+    await deleteMissingRows(STORIES_TABLE, 'story_id', userId, storyIds);
+    await deleteMissingRows(CHAPTERS_TABLE, 'chapter_id', userId, chapterRows.map((row) => row.chapter_id));
+  }
 
   const characters = (Array.isArray(payload.characters) ? payload.characters : []).map((item) => ({
     user_id: userId,
@@ -298,10 +307,12 @@ export async function syncNormalizedWorkspaceRecords(userId: string, payload: {
     updated_at: toIso(item?.updatedAt || item?.createdAt),
   })).filter((item) => item.reference_id);
 
-  await deleteMissingRows(CHARACTERS_TABLE, 'character_id', userId, characters.map((item) => item.character_id));
-  await deleteMissingRows(AI_RULES_TABLE, 'rule_id', userId, aiRules.map((item) => item.rule_id));
-  await deleteMissingRows(TRANSLATION_NAMES_TABLE, 'translation_id', userId, translationNames.map((item) => item.translation_id));
-  await deleteMissingRows(STYLE_REFERENCES_TABLE, 'reference_id', userId, styleReferences.map((item) => item.reference_id));
+  if (shouldPruneMissing) {
+    await deleteMissingRows(CHARACTERS_TABLE, 'character_id', userId, characters.map((item) => item.character_id));
+    await deleteMissingRows(AI_RULES_TABLE, 'rule_id', userId, aiRules.map((item) => item.rule_id));
+    await deleteMissingRows(TRANSLATION_NAMES_TABLE, 'translation_id', userId, translationNames.map((item) => item.translation_id));
+    await deleteMissingRows(STYLE_REFERENCES_TABLE, 'reference_id', userId, styleReferences.map((item) => item.reference_id));
+  }
 
   if (characters.length) {
     const { error } = await client.from(CHARACTERS_TABLE).upsert(characters, { onConflict: 'user_id,character_id' });
@@ -335,4 +346,3 @@ export const SUPABASE_NORMALIZED_TABLES = {
   translationNames: TRANSLATION_NAMES_TABLE,
   styleReferences: STYLE_REFERENCES_TABLE,
 };
-

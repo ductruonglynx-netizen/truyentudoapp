@@ -4,7 +4,6 @@
 - Không mất dữ liệu khi đổi thiết bị hoặc mạng chập chờn.
 - Sync có hàng đợi, retry/backoff, tránh spam request.
 - Có theo dõi lỗi runtime để xử lý theo dữ liệu thực.
-- Có pipeline CI bắt lỗi trước khi merge/deploy.
 
 ## 2) Checklist hạ tầng Supabase
 1. Mở SQL Editor và chạy toàn bộ file [`supabase/schema.sql`](../supabase/schema.sql).
@@ -31,20 +30,10 @@
   - Nếu có lỗi, app sẽ hiện `Queue sẽ tự thử lại`.
 5. Tạo thêm 1 chương mới, chờ sync, kiểm tra lại trên thiết bị còn lại.
 
-## 4) Checklist CI
-Pipeline chuẩn:
-1. `npm ci`
-2. `npm run lint`
-3. `npm run build`
-4. `npm run test:e2e`
-
-Nếu 1 bước fail thì không merge.
-
-## 5) Vận hành khi lỗi
+## 4) Vận hành khi lỗi
 1. Kiểm tra `Queue sync` trong app.
 2. Kiểm tra bảng `client_error_events` trên Supabase.
 3. Nếu queue fail liên tục:
   - Bấm `Đồng bộ ngay với Supabase`.
   - Nếu vẫn lỗi, export JSON thủ công ngay để tránh rủi ro.
 4. Sau khi fix, kiểm tra lại 2 thiết bị cùng tài khoản.
-

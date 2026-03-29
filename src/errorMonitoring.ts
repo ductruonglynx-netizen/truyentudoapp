@@ -4,6 +4,7 @@ const ENABLE_MONITORING = String(import.meta.env.VITE_ENABLE_ERROR_MONITORING ??
 const ERROR_TABLE = (import.meta.env.VITE_SUPABASE_CLIENT_ERRORS_TABLE || 'client_error_events').trim();
 const LOCAL_RING_KEY = 'truyenforge:client-errors:v1';
 const LOCAL_RING_LIMIT = 40;
+const UPLOAD_COOLDOWN_MS = 5000;
 
 interface ClientErrorPayload {
   level: 'error' | 'warn';
@@ -18,6 +19,15 @@ interface ClientErrorPayload {
 let initialized = false;
 let lastSentAt = 0;
 
+function redactSecrets(text: string): string {
+  return String(text || '')
+    .replace(/\bsk-(proj-)?[A-Za-z0-9_-]{20,}\b/g, '[REDACTED_API_KEY]')
+    .replace(/\bsk-ant-[A-Za-z0-9_-]{20,}\b/g, '[REDACTED_API_KEY]')
+    .replace(/\bsk-or-v1-[A-Za-z0-9_-]{20,}\b/g, '[REDACTED_API_KEY]')
+    .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/g, '[REDACTED_API_KEY]')
+    .replace(/\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b/g, '[REDACTED_JWT]');
+}
+
 function buildPayload(input: {
   level?: 'error' | 'warn';
   source: ClientErrorPayload['source'];
@@ -27,9 +37,9 @@ function buildPayload(input: {
   return {
     level: input.level || 'error',
     source: input.source,
-    message: String(input.message || 'Unknown client error').slice(0, 1200),
-    stack: typeof input.stack === 'string' ? input.stack.slice(0, 6000) : undefined,
-    href: typeof window !== 'undefined' ? window.location.href : '',
+    message: redactSecrets(String(input.message || 'Unknown client error')).slice(0, 1200),
+    stack: typeof input.stack === 'string' ? redactSecrets(input.stack).slice(0, 6000) : undefined,
+    href: typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}` : '',
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
     createdAt: new Date().toISOString(),
   };
@@ -51,7 +61,7 @@ function writeLocalRing(payload: ClientErrorPayload): void {
 async function uploadToSupabase(payload: ClientErrorPayload): Promise<void> {
   if (!hasSupabase || !supabase) return;
   const now = Date.now();
-  if (now - lastSentAt < 1000) return;
+  if (now - lastSentAt < UPLOAD_COOLDOWN_MS) return;
   lastSentAt = now;
 
   let userId: string | null = null;
@@ -61,6 +71,7 @@ async function uploadToSupabase(payload: ClientErrorPayload): Promise<void> {
   } catch {
     userId = null;
   }
+  if (!userId) return;
 
   const { error } = await supabase
     .from(ERROR_TABLE)
@@ -121,4 +132,3 @@ export function initClientErrorMonitoring(): void {
     });
   });
 }
-

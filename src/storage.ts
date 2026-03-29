@@ -9,6 +9,7 @@ const STORIES_BACKUP_HISTORY_KEY = 'stories_backup_history_v1';
 const STORIES_BACKUP_LIMIT = 12;
 const STORIES_STORAGE_CODEC_PREFIX = 'lzutf16:';
 const STORIES_STORAGE_COMPRESSION_THRESHOLD = 260_000;
+const STORIES_PAYLOAD_SOFT_LIMIT_BYTES = 14 * 1024 * 1024;
 const STORIES_KEY = 'stories';
 const STORIES_INDEX_KEY = 'stories_index_v2';
 const STORIES_ITEM_KEY_PREFIX = 'stories_item_v2:';
@@ -20,6 +21,26 @@ const UI_PROFILE_KEY = 'ui_profile_v1';
 const UI_THEME_KEY = 'ui_theme_v1';
 const UI_VIEWPORT_MODE_KEY = 'ui_viewport_mode_v1';
 const READER_PREFS_KEY = 'reader_prefs_v1';
+const API_KEYS_KEY = 'api_keys';
+export const STORAGE_SAVE_FAILED_EVENT = 'truyenforge:storage-save-failed';
+
+const IMPORT_MAX_STORIES = 240;
+const IMPORT_MAX_CHAPTERS_PER_STORY = 1600;
+const IMPORT_MAX_CHARACTERS = 12_000;
+const IMPORT_MAX_AI_RULES = 2_000;
+const IMPORT_MAX_STYLE_REFERENCES = 2_000;
+const IMPORT_MAX_TRANSLATION_NAMES = 12_000;
+const IMPORT_MAX_STORY_CONTENT_CHARS = 2_000_000;
+const IMPORT_MAX_CHAPTER_CONTENT_CHARS = 550_000;
+const IMPORT_MAX_PROMPT_ITEMS = 400;
+
+export interface StorageSaveFailedDetail {
+  section: 'stories' | 'characters' | 'ai_rules' | 'style_references' | 'translation_names';
+  reason: 'quota' | 'unknown';
+  message: string;
+  estimatedBytes?: number;
+  timestamp: string;
+}
 
 export interface StoryListItem {
   id: string;
@@ -63,6 +84,7 @@ const normalizeChapters = (chapters: any[]) =>
     content: String(chapter?.content || ''),
     order: Number.isFinite(Number(chapter?.order)) ? Number(chapter.order) : 0,
     createdAt: normalizeDate(chapter?.createdAt),
+    updatedAt: normalizeDate(chapter?.updatedAt || chapter?.createdAt),
     revision: normalizeRevision(chapter?.revision, 1),
   }));
 
@@ -103,7 +125,22 @@ const normalizeStory = (story: any) => ({
   translationMemory: normalizeTranslationMemory(story?.translationMemory),
   storyPromptNotes: String(story?.storyPromptNotes || '').trim(),
   characterRoster: normalizeCharacterRoster(story?.characterRoster),
+  deletedChapterIds: normalizeDeletedChapterIds(story?.deletedChapterIds),
 });
+
+function normalizeDeletedChapterIds(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const next: Record<string, string> = {};
+  Object.entries(value as Record<string, unknown>).forEach(([chapterId, deletedAt]) => {
+    const id = String(chapterId || '').trim();
+    const raw = String(deletedAt || '').trim();
+    if (!id || !raw) return;
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return;
+    next[id] = raw;
+  });
+  return next;
+}
 
 function areChapterContentsEqual(a: any, b: any): boolean {
   return String(a?.title || '') === String(b?.title || '')
@@ -133,7 +170,8 @@ function areStoriesEquivalent(a: any, b: any): boolean {
     && Number(a?.expectedChapters || 0) === Number(b?.expectedChapters || 0)
     && Number(a?.expectedWordCount || 0) === Number(b?.expectedWordCount || 0)
     && JSON.stringify(Array.isArray(a?.translationMemory) ? a.translationMemory : []) === JSON.stringify(Array.isArray(b?.translationMemory) ? b.translationMemory : [])
-    && JSON.stringify(Array.isArray(a?.characterRoster) ? a.characterRoster : []) === JSON.stringify(Array.isArray(b?.characterRoster) ? b.characterRoster : []);
+    && JSON.stringify(Array.isArray(a?.characterRoster) ? a.characterRoster : []) === JSON.stringify(Array.isArray(b?.characterRoster) ? b.characterRoster : [])
+    && JSON.stringify(normalizeDeletedChapterIds(a?.deletedChapterIds)) === JSON.stringify(normalizeDeletedChapterIds(b?.deletedChapterIds));
 }
 
 function withRevisionBumps(nextStories: any[], previousStories: any[]): any[] {
@@ -387,6 +425,94 @@ function backupStoriesSnapshot(stories: any[]): void {
   }
 }
 
+function estimateUtf16Bytes(value: unknown): number {
+  try {
+    return JSON.stringify(value).length * 2;
+  } catch {
+    return 0;
+  }
+}
+
+function isQuotaError(error: unknown): boolean {
+  if (!error) return false;
+  if (error instanceof DOMException) {
+    return error.name === 'QuotaExceededError' || error.code === 22;
+  }
+  const text = String((error as { message?: unknown })?.message || error || '').toLowerCase();
+  return text.includes('quota') || text.includes('exceeded');
+}
+
+function emitStorageSaveFailed(detail: StorageSaveFailedDetail): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent<StorageSaveFailedDetail>(STORAGE_SAVE_FAILED_EVENT, {
+    detail,
+  }));
+}
+
+function failSaveWithNotice(input: {
+  section: StorageSaveFailedDetail['section'];
+  error: unknown;
+  estimatedBytes?: number;
+}): never {
+  const quota = isQuotaError(input.error);
+  const message = quota
+    ? 'Không thể lưu vì bộ nhớ trình duyệt đã đầy.'
+    : 'Không thể lưu dữ liệu do lỗi bộ nhớ cục bộ.';
+  emitStorageSaveFailed({
+    section: input.section,
+    reason: quota ? 'quota' : 'unknown',
+    message,
+    estimatedBytes: input.estimatedBytes,
+    timestamp: new Date().toISOString(),
+  });
+  throw new Error(`${message} Hãy mở Sao lưu để tải JSON ra máy hoặc dọn dữ liệu cũ trước khi lưu lại.`);
+}
+
+function setScopedRawGuarded(
+  baseKey: string,
+  value: string,
+  section: StorageSaveFailedDetail['section'],
+): void {
+  try {
+    setScopedRaw(baseKey, value);
+  } catch (error) {
+    failSaveWithNotice({
+      section,
+      error,
+      estimatedBytes: Math.max(0, value.length * 2),
+    });
+  }
+}
+
+function sanitizeImportStories(rows: any[]): any[] {
+  return (Array.isArray(rows) ? rows : [])
+    .slice(0, IMPORT_MAX_STORIES)
+    .map((story) => {
+      const normalized = normalizeStory(story);
+      const chapters = normalizeChapters(normalized.chapters)
+        .slice(0, IMPORT_MAX_CHAPTERS_PER_STORY)
+        .map((chapter) => ({
+          ...chapter,
+          title: String(chapter?.title || '').slice(0, 320),
+          content: String(chapter?.content || '').slice(0, IMPORT_MAX_CHAPTER_CONTENT_CHARS),
+        }));
+      return {
+        ...normalized,
+        title: String(normalized.title || '').slice(0, 480),
+        content: String(normalized.content || '').slice(0, IMPORT_MAX_STORY_CONTENT_CHARS),
+        chapters,
+        deletedChapterIds: normalizeDeletedChapterIds(normalized.deletedChapterIds),
+      };
+    });
+}
+
+function sanitizeImportObjectArray(rows: unknown, maxItems: number): Record<string, unknown>[] {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .slice(0, maxItems)
+    .filter((item): item is Record<string, unknown> => isPlainObject(item));
+}
+
 export interface StorageExportReport {
   filename: string;
   excludedSecrets: string[];
@@ -507,17 +633,29 @@ export const storage = {
       Array.isArray(stories) ? stories.map(normalizeStory) : [],
       previousStories,
     );
+    const estimatedBytes = estimateUtf16Bytes(normalizedStories);
+    if (estimatedBytes > STORIES_PAYLOAD_SOFT_LIMIT_BYTES) {
+      failSaveWithNotice({
+        section: 'stories',
+        error: new Error('Estimated storage payload exceeds soft quota.'),
+        estimatedBytes,
+      });
+    }
     try {
       writeStoriesToSegmentedStorage(normalizedStories);
-    } catch {
+    } catch (firstError) {
       try {
-        setScopedRaw(STORIES_BACKUP_HISTORY_KEY, JSON.stringify({
+        setScopedRawGuarded(STORIES_BACKUP_HISTORY_KEY, JSON.stringify({
           schemaVersion: 2,
           entries: [],
-        }));
+        }), 'stories');
         writeStoriesToSegmentedStorage(normalizedStories);
-      } catch {
-        throw new Error('Không thể lưu vì dung lượng trình duyệt đã đầy. Hãy mở Sao lưu để tải JSON ra máy hoặc xóa bớt dữ liệu cũ.');
+      } catch (secondError) {
+        failSaveWithNotice({
+          section: 'stories',
+          error: secondError || firstError,
+          estimatedBytes,
+        });
       }
     }
     backupStoriesSnapshot(normalizedStories);
@@ -525,27 +663,31 @@ export const storage = {
   },
   getCharacters: () => safeParseArray(getScopedRaw(CHARACTERS_KEY)),
   saveCharacters: (characters: any[]) => {
-    setScopedRaw(CHARACTERS_KEY, JSON.stringify(characters));
+    const payload = JSON.stringify(characters);
+    setScopedRawGuarded(CHARACTERS_KEY, payload, 'characters');
     emitLocalWorkspaceChanged('characters');
   },
   getAIRules: () => safeParseArray(getScopedRaw(AI_RULES_KEY)),
   saveAIRules: (rules: any[]) => {
-    setScopedRaw(AI_RULES_KEY, JSON.stringify(rules));
+    const payload = JSON.stringify(rules);
+    setScopedRawGuarded(AI_RULES_KEY, payload, 'ai_rules');
     emitLocalWorkspaceChanged('ai_rules');
   },
   getStyleReferences: () => safeParseArray(getScopedRaw(STYLE_REFERENCES_KEY)),
   saveStyleReferences: (refs: any[]) => {
-    setScopedRaw(STYLE_REFERENCES_KEY, JSON.stringify(refs));
+    const payload = JSON.stringify(refs);
+    setScopedRawGuarded(STYLE_REFERENCES_KEY, payload, 'style_references');
     emitLocalWorkspaceChanged('style_references');
   },
   getTranslationNames: () => safeParseArray(getScopedRaw(TRANSLATION_NAMES_KEY)),
   saveTranslationNames: (names: any[]) => {
-    setScopedRaw(TRANSLATION_NAMES_KEY, JSON.stringify(names));
+    const payload = JSON.stringify(names);
+    setScopedRawGuarded(TRANSLATION_NAMES_KEY, payload, 'translation_names');
     emitLocalWorkspaceChanged('translation_names');
   },
-  getApiKeys: () => safeParseArray(localStorage.getItem('api_keys')),
+  getApiKeys: () => safeParseArray(getScopedRaw(API_KEYS_KEY)),
   saveApiKeys: (keys: any[]) => {
-    localStorage.setItem('api_keys', JSON.stringify(keys));
+    setScopedRaw(API_KEYS_KEY, JSON.stringify(keys));
   },
 
   exportData: (): StorageExportReport => {
@@ -584,30 +726,35 @@ export const storage = {
     const skippedSections: string[] = [];
 
     if (Array.isArray(jsonData.stories)) {
-      storage.saveStories(jsonData.stories.map(normalizeStory));
+      const nextStories = sanitizeImportStories(jsonData.stories);
+      storage.saveStories(nextStories);
       restoredSections.push('stories');
     }
     if (Array.isArray(jsonData.characters)) {
-      storage.saveCharacters(jsonData.characters);
+      const nextCharacters = sanitizeImportObjectArray(jsonData.characters, IMPORT_MAX_CHARACTERS);
+      storage.saveCharacters(nextCharacters);
       restoredSections.push('characters');
     }
     if (Array.isArray(jsonData.ai_rules)) {
-      storage.saveAIRules(jsonData.ai_rules);
+      const nextRules = sanitizeImportObjectArray(jsonData.ai_rules, IMPORT_MAX_AI_RULES);
+      storage.saveAIRules(nextRules);
       restoredSections.push('ai_rules');
     }
     if (Array.isArray(jsonData.style_references)) {
-      storage.saveStyleReferences(jsonData.style_references);
+      const nextRefs = sanitizeImportObjectArray(jsonData.style_references, IMPORT_MAX_STYLE_REFERENCES);
+      storage.saveStyleReferences(nextRefs);
       restoredSections.push('style_references');
     }
     if (Array.isArray(jsonData.translation_names)) {
-      storage.saveTranslationNames(jsonData.translation_names);
+      const nextNames = sanitizeImportObjectArray(jsonData.translation_names, IMPORT_MAX_TRANSLATION_NAMES);
+      storage.saveTranslationNames(nextNames);
       restoredSections.push('translation_names');
     }
     if (isPlainObject(jsonData.prompt_library)) {
       savePromptLibraryState({
-        core: Array.isArray(jsonData.prompt_library.core) ? jsonData.prompt_library.core : [],
-        genre: Array.isArray(jsonData.prompt_library.genre) ? jsonData.prompt_library.genre : [],
-        adult: Array.isArray(jsonData.prompt_library.adult) ? jsonData.prompt_library.adult : [],
+        core: Array.isArray(jsonData.prompt_library.core) ? jsonData.prompt_library.core.slice(0, IMPORT_MAX_PROMPT_ITEMS) : [],
+        genre: Array.isArray(jsonData.prompt_library.genre) ? jsonData.prompt_library.genre.slice(0, IMPORT_MAX_PROMPT_ITEMS) : [],
+        adult: Array.isArray(jsonData.prompt_library.adult) ? jsonData.prompt_library.adult.slice(0, IMPORT_MAX_PROMPT_ITEMS) : [],
       });
       restoredSections.push('prompt_library');
     }

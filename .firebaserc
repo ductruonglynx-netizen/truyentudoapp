@@ -1,5 +1,5 @@
 {
   "projects": {
-    "default": "basic-cabinet-315113"
+    "default": "YOUR_FIREBASE_PROJECT_ID"
   }
 }
