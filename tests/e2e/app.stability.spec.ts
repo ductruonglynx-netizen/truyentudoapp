@@ -5,7 +5,15 @@ test.describe('TruyenForge stability smoke', () => {
     await page.goto('/');
     await expect(page.getByText('TruyenForge').first()).toBeVisible();
     await expect(page.getByRole('button', { name: /Trang chủ/i })).toBeVisible();
-    await expect(page.getByRole('button', { name: /API/i })).toBeVisible();
+
+    // App có 2 mode: Đọc / Studio.
+    // Nếu đang ở Đọc thì chưa có API/Công cụ trong navbar -> chuyển qua Studio rồi mới assert.
+    const apiButton = page.getByRole('button', { name: /^API$/i });
+    if ((await apiButton.count()) === 0) {
+      await page.getByRole('button', { name: /^Studio$/i }).first().click();
+    }
+
+    await expect(page.getByRole('button', { name: /^API$/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /Công cụ/i })).toBeVisible();
   });
 
@@ -19,4 +27,3 @@ test.describe('TruyenForge stability smoke', () => {
     await expect(page.getByRole('button', { name: /Sao lưu ngay/i })).toBeVisible();
   });
 });
-
