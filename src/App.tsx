@@ -57,6 +57,7 @@ import { Navbar } from './components/Navbar';
 import { loadBudgetState, saveBudgetState } from './finops';
 import { CURRENT_WRITER_VERSION, WRITER_RELEASE_NOTES } from './phase3/releaseHistory';
 import { APP_NOTICE_EVENT, notifyApp, type AppNoticePayload, type AppNoticeTone } from './notifications';
+import { trackApiRequestTelemetry } from './apiKeyTelemetry';
 import { loadPromptLibraryState, savePromptLibraryState, type PromptLibraryState } from './promptLibraryStore';
 import { LOCAL_WORKSPACE_CHANGED_EVENT, emitLocalWorkspaceChanged, loadLocalWorkspaceMeta, markLocalWorkspaceHydrated, type LocalWorkspaceMeta, type LocalWorkspaceSection } from './localWorkspaceSync';
 import { WorkspaceConflictError, loadServerWorkspace, saveQaReport, saveServerWorkspace, SUPABASE_STORAGE_TABLES } from './supabaseWorkspace';
@@ -83,6 +84,12 @@ import {
   getProviderBaseUrl,
   normalizeStoredApiKeys,
 } from './apiVault';
+import type { AiTaskType } from './ai/types';
+import { getPromptBlueprint } from './ai/promptCatalog';
+import { prependPromptContract, buildTraceMetadata } from './ai/promptBuilder';
+import { routeAiExecutionLane } from './ai/modelRouter';
+import { validateChapterDraftArray, validateStoryAnalysis, validateStoryPlan } from './ai/schemas';
+import { startAiTaskRun } from './ai/orchestrator';
 
 const MarkdownRenderer = React.lazy(() => import('./components/MarkdownRenderer'));
 const ApiSectionPanel = React.lazy(async () => {
@@ -3380,6 +3387,11 @@ function splitGenConfig(config?: Record<string, unknown>): {
   providerConfig: Record<string, unknown>;
   maxRetries: number;
   minOutputChars: number;
+  taskType?: AiTaskType;
+  promptVersion?: string;
+  traceRunId?: string;
+  traceStage?: string;
+  traceMeta?: Record<string, unknown>;
   signal?: AbortSignal;
 } {
   const raw = { ...(config || {}) } as Record<string, unknown>;
@@ -3392,15 +3404,33 @@ function splitGenConfig(config?: Record<string, unknown>): {
       ? Math.max(0, Math.round(raw.minOutputChars))
       : undefined;
   const signal = raw.signal instanceof AbortSignal ? raw.signal : undefined;
+  const taskType = typeof raw.taskType === 'string' ? raw.taskType : undefined;
+  const promptVersion = typeof raw.promptVersion === 'string' ? raw.promptVersion : undefined;
+  const traceRunId = typeof raw.traceRunId === 'string' ? raw.traceRunId : undefined;
+  const traceStage = typeof raw.traceStage === 'string' ? raw.traceStage : undefined;
+  const traceMeta =
+    raw.traceMeta && typeof raw.traceMeta === 'object' && !Array.isArray(raw.traceMeta)
+      ? raw.traceMeta as Record<string, unknown>
+      : undefined;
 
   delete raw.maxRetries;
   delete raw.minOutputChars;
   delete raw.signal;
+  delete raw.taskType;
+  delete raw.promptVersion;
+  delete raw.traceRunId;
+  delete raw.traceStage;
+  delete raw.traceMeta;
 
   return {
     providerConfig: raw,
     maxRetries: maxRetries ?? 1,
     minOutputChars: minOutputChars ?? 0,
+    taskType: taskType as AiTaskType | undefined,
+    promptVersion,
+    traceRunId,
+    traceStage,
+    traceMeta,
     signal,
   };
 }
@@ -3596,13 +3626,16 @@ async function generateGeminiText(
   contents: string,
   config?: Record<string, unknown>,
 ): Promise<string> {
+  const taskStartedAt = Date.now();
   const runtime = getApiRuntimeConfig();
   const initialModel = auth.model || getProfileModel(kind, auth.provider);
   const modelCandidates = auth.provider === 'gemini' || auth.provider === 'gcli'
     ? getGeminiFallbackModels(initialModel, kind)
     : [initialModel];
   const splitConfig = splitGenConfig(config);
+  const traceTask = splitConfig.taskType || (kind === 'quality' ? 'story_generate' : 'story_translate');
   const initialConfig = buildDefaultGenConfig(kind, splitConfig.providerConfig);
+  let lastModelUsed = initialModel;
   const reqFingerprint = quickHash(
     JSON.stringify({
       provider: auth.provider,
@@ -3642,6 +3675,7 @@ async function generateGeminiText(
 
     for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
       throwIfAborted(splitConfig.signal);
+      lastModelUsed = currentModel;
       const timeoutMs = calculateAdaptiveTimeoutMs(
         kind,
         Number(attemptConfig.maxOutputTokens || 0) || (kind === 'fast' ? 1800 : 4200),
@@ -3902,8 +3936,46 @@ async function generateGeminiText(
 
   inFlightAiRequests.set(cacheKey, task);
   try {
-    return await task;
+    const output = await task;
+    trackApiRequestTelemetry({
+      provider: auth.provider,
+      model: lastModelUsed,
+      apiKey: auth.apiKey,
+      keyId: auth.keyId,
+      task: traceTask,
+      success: true,
+      latencyMs: Date.now() - taskStartedAt,
+      promptChars: String(contents || '').length,
+      responseChars: String(output || '').length,
+      metadata: {
+        promptVersion: splitConfig.promptVersion || '',
+        runId: splitConfig.traceRunId || '',
+        stage: splitConfig.traceStage || '',
+        lane: kind,
+        ...(splitConfig.traceMeta || {}),
+      },
+    });
+    return output;
   } catch (error) {
+    trackApiRequestTelemetry({
+      provider: auth.provider,
+      model: lastModelUsed,
+      apiKey: auth.apiKey,
+      keyId: auth.keyId,
+      task: traceTask,
+      success: false,
+      latencyMs: Date.now() - taskStartedAt,
+      promptChars: String(contents || '').length,
+      responseChars: 0,
+      errorMessage: stringifyError(error),
+      metadata: {
+        promptVersion: splitConfig.promptVersion || '',
+        runId: splitConfig.traceRunId || '',
+        stage: splitConfig.traceStage || '',
+        lane: kind,
+        ...(splitConfig.traceMeta || {}),
+      },
+    });
     throw error;
   } finally {
     inFlightAiRequests.delete(cacheKey);
@@ -12823,10 +12895,28 @@ const AppContent = () => {
       detail: 'Đang đọc cấu hình, từ điển và chuẩn bị chia truyện thành các lô dịch ổn định hơn.',
     });
     const abortSignal = aiRun.controller.signal;
+    let translateTaskRun: ReturnType<typeof startAiTaskRun> | null = null;
 
     try {
       const ai = createGeminiClient();
       const translateStartedAt = Date.now();
+      const translateBlueprint = getPromptBlueprint('story_translate');
+      const runtimeProfileMode = getApiRuntimeConfig().aiProfile;
+      translateTaskRun = startAiTaskRun('story_translate', translateBlueprint.version, {
+        provider: ai.provider,
+        model: ai.model,
+        fileName: String(translateFileName || ''),
+      });
+      const buildTranslateTraceConfig = (
+        stage: 'analysis' | 'draft' | 'quality_gate',
+        extra?: Record<string, unknown>,
+      ) => ({
+        taskType: 'story_translate' as AiTaskType,
+        promptVersion: translateBlueprint.version,
+        traceRunId: translateTaskRun.runId,
+        traceStage: stage,
+        traceMeta: buildTraceMetadata(translateTaskRun.traceFor(stage), extra),
+      });
       
       let dictionaryEntries: TranslationDictionaryEntry[] = [];
       if (options.useDictionary) {
@@ -12859,6 +12949,24 @@ const AppContent = () => {
       }
       const translationKind: 'fast' | 'quality' = turboMode ? 'fast' : 'quality';
       const analysisKind: 'fast' | 'quality' = turboMode ? 'fast' : 'quality';
+      const analysisRouteDecision = routeAiExecutionLane({
+        task: 'story_translate',
+        stage: 'analysis',
+        provider: ai.provider,
+        profile: runtimeProfileMode,
+        inputChars: sourceCharCount,
+        preferredLane: analysisKind,
+      });
+      const translationRouteDecision = routeAiExecutionLane({
+        task: 'story_translate',
+        stage: 'draft',
+        provider: ai.provider,
+        profile: runtimeProfileMode,
+        inputChars: sourceCharCount,
+        preferredLane: translationKind,
+      });
+      const analysisLane = analysisRouteDecision.lane;
+      const translationLane = translationRouteDecision.lane;
       const translationConcurrency = hugeFileMode ? 1 : (turboMode ? 2 : 1);
       const detectedSections = detectChapterSections(translateFileContent);
       const translationUnits = buildChapterTranslationUnits(translateFileContent, segmentCharLimit);
@@ -12916,7 +13024,12 @@ const AppContent = () => {
       };
       if (shouldRunAnalysis) {
         const analysisExcerpt = buildAnalysisExcerpt(translateFileContent, effectiveUnits);
-        const analysisPrompt = `
+        translateTaskRun.markStage('analysis', {
+          lane: analysisLane,
+          routeReason: analysisRouteDecision.reason,
+          units: effectiveUnits.length,
+        });
+        const analysisPrompt = prependPromptContract(`
           Hãy phân tích nội dung truyện (tiếng Trung hoặc ngôn ngữ khác) sau đây:
           "${analysisExcerpt}"
           
@@ -12931,11 +13044,17 @@ const AppContent = () => {
             "genre": "...",
             "characters": ["..."]
           }
-        `;
+        `.trim(), {
+          task: 'story_translate',
+          stage: 'analysis',
+          promptVersion: translateBlueprint.version,
+          outputSchema: 'story_analysis_v1',
+          strictJson: true,
+        });
 
         const analysisTextRaw = await generateGeminiText(
           ai,
-          analysisKind,
+          analysisLane,
           analysisPrompt,
           {
             responseMimeType: "application/json",
@@ -12943,6 +13062,10 @@ const AppContent = () => {
             minOutputChars: turboMode ? 120 : 200,
             maxRetries: 1,
             signal: abortSignal,
+            ...buildTranslateTraceConfig('analysis', {
+              lane: analysisLane,
+              routeReason: analysisRouteDecision.reason,
+            }),
           },
         );
 
@@ -12950,10 +13073,17 @@ const AppContent = () => {
         const analysisCharacters = Array.isArray(analysisParsed?.characters)
           ? analysisParsed.characters.map((item) => String(item || '').trim()).filter(Boolean)
           : [];
-        analysis = {
+        const normalizedAnalysis = validateStoryAnalysis({
           summary: String(analysisParsed?.summary || '').trim() || stripJsonFence(analysisTextRaw || '').trim(),
+          writingStyle: '',
+          currentContext: '',
           genre: String(analysisParsed?.genre || '').trim() || 'Dịch thuật',
-          characters: analysisCharacters,
+          characters: analysisCharacters.map((name) => ({ name, personality: '' })),
+        });
+        analysis = {
+          summary: normalizedAnalysis.data.summary || String(analysisParsed?.summary || '').trim() || stripJsonFence(analysisTextRaw || '').trim(),
+          genre: normalizedAnalysis.data.genre || String(analysisParsed?.genre || '').trim() || 'Dịch thuật',
+          characters: normalizedAnalysis.data.characters.map((item) => item.name).filter(Boolean),
         };
       }
       
@@ -12974,7 +13104,15 @@ const AppContent = () => {
         includeTitleField: boolean;
       }): Promise<{ title: string; content: string }> => {
         const scopedDictionaryContext = buildScopedDictionaryContext(params.segmentText, dictionaryEntries, 18);
-        const translatePrompt = `
+        const segmentRouteDecision = routeAiExecutionLane({
+          task: 'story_translate',
+          stage: 'draft',
+          provider: ai.provider,
+          profile: runtimeProfileMode,
+          inputChars: params.segmentText.length,
+          preferredLane: translationLane,
+        });
+        const translatePrompt = prependPromptContract(`
             Bạn là một dịch giả văn học cao cấp, chuyên dịch truyện từ tiếng Trung sang tiếng Việt.
             Hãy dịch toàn bộ đoạn sau sang tiếng Việt mượt mà, tự nhiên, giữ đúng nghĩa, đúng xưng hô và đúng sắc thái bản gốc.
             ĐÂY LÀ PHẦN ${params.segmentPosition}/${params.totalSegmentsInUnit} CỦA "${params.unitTitle}".
@@ -12993,7 +13131,13 @@ const AppContent = () => {
               ${params.includeTitleField ? '"title": "Tiêu đề chương (dịch sang tiếng Việt)",' : '"title": "",'}
               "content": "Nội dung phần đã dịch (Markdown)"
             }
-          `;
+          `.trim(), {
+            task: 'story_translate',
+            stage: 'draft',
+            promptVersion: translateBlueprint.version,
+            outputSchema: 'translated_segment_json_v1',
+            strictJson: true,
+          });
 
         const dynamicMaxTokens = turboMode
           ? Math.min(12288, Math.max(2600, Math.round(params.segmentText.length * 1.18)))
@@ -13003,7 +13147,7 @@ const AppContent = () => {
           : Math.max(240, Math.round(params.segmentText.length * 0.2));
         const translateTextRaw = await generateGeminiText(
           ai,
-          translationKind,
+          segmentRouteDecision.lane,
           translatePrompt,
           {
             responseMimeType: "application/json",
@@ -13012,6 +13156,11 @@ const AppContent = () => {
             maxRetries: translationRequestRetries,
             safetySettings: sharedSafetySettings,
             signal: abortSignal,
+            ...buildTranslateTraceConfig('draft', {
+              lane: segmentRouteDecision.lane,
+              routeReason: segmentRouteDecision.reason,
+              segmentPosition: params.segmentPosition,
+            }),
           },
         );
 
@@ -13024,14 +13173,36 @@ const AppContent = () => {
           ? Math.max(120, Math.round(dynamicMinChars * 0.55))
           : Math.max(180, Math.round(dynamicMinChars * 0.7));
         if (translationRequestRetries > 0 && translated.content.length < shortThreshold) {
-          const retryPrompt = `${translatePrompt}\n\nYÊU CẦU BẮT BUỘC: Bản dịch trước quá ngắn. Hãy dịch đầy đủ toàn bộ đoạn nguồn, không tóm tắt, không rút gọn.`;
-          const retryRaw = await generateGeminiText(ai, turboMode ? 'quality' : translationKind, retryPrompt, {
+          const retryRouteDecision = routeAiExecutionLane({
+            task: 'story_translate',
+            stage: 'quality_gate',
+            provider: ai.provider,
+            profile: runtimeProfileMode,
+            inputChars: params.segmentText.length,
+            preferredLane: turboMode ? 'quality' : segmentRouteDecision.lane,
+          });
+          const retryPrompt = prependPromptContract(
+            `${translatePrompt}\n\nYÊU CẦU BẮT BUỘC: Bản dịch trước quá ngắn. Hãy dịch đầy đủ toàn bộ đoạn nguồn, không tóm tắt, không rút gọn.`,
+            {
+              task: 'story_translate',
+              stage: 'quality_gate',
+              promptVersion: translateBlueprint.version,
+              outputSchema: 'translated_segment_json_v1',
+              strictJson: true,
+            },
+          );
+          const retryRaw = await generateGeminiText(ai, retryRouteDecision.lane, retryPrompt, {
             responseMimeType: "application/json",
             maxOutputTokens: Math.min(16384, Math.round(dynamicMaxTokens * 1.25)),
             minOutputChars: Math.round(dynamicMinChars * 1.08),
             maxRetries: 1,
             safetySettings: sharedSafetySettings,
             signal: abortSignal,
+            ...buildTranslateTraceConfig('quality_gate', {
+              lane: retryRouteDecision.lane,
+              routeReason: retryRouteDecision.reason,
+              segmentPosition: params.segmentPosition,
+            }),
           });
           const retried = normalizeAiJsonContent(retryRaw || '', params.fallbackTitle);
           const normalizedRetried = {
@@ -13058,7 +13229,15 @@ const AppContent = () => {
       }): Promise<{ title: string; segments: string[] }> => {
         const scopedDictionaryContext = buildScopedDictionaryContext(params.batch.sourceText, dictionaryEntries, 24);
         const includeTitleField = params.batchIndex === 0;
-        const translatePrompt = `
+        const batchRouteDecision = routeAiExecutionLane({
+          task: 'story_translate',
+          stage: 'draft',
+          provider: ai.provider,
+          profile: runtimeProfileMode,
+          inputChars: params.batch.sourceText.length,
+          preferredLane: translationLane,
+        });
+        const translatePrompt = prependPromptContract(`
             Bạn là một dịch giả văn học cao cấp, chuyên dịch truyện từ tiếng Trung sang tiếng Việt.
             Hãy dịch đồng thời ${params.batch.entries.length} đoạn sau sang tiếng Việt mượt mà, thuần Việt, đúng nghĩa và đúng không khí bản gốc.
             ĐÂY LÀ LÔ ${params.batchIndex + 1}/${params.totalBatches} CỦA "${params.unitTitle}".
@@ -13084,7 +13263,13 @@ const AppContent = () => {
 
             NỘI DUNG CẦN DỊCH:
             ${params.batch.sourceText}
-          `;
+          `.trim(), {
+            task: 'story_translate',
+            stage: 'draft',
+            promptVersion: translateBlueprint.version,
+            outputSchema: 'translated_segment_batch_json_v1',
+            strictJson: true,
+          });
 
         const sourceLength = params.batch.sourceText.length;
         const dynamicMaxTokens = turboMode
@@ -13097,7 +13282,7 @@ const AppContent = () => {
 
         const batchRaw = await generateGeminiText(
           ai,
-          translationKind,
+          batchRouteDecision.lane,
           translatePrompt,
           {
             responseMimeType: "application/json",
@@ -13106,6 +13291,11 @@ const AppContent = () => {
             maxRetries: translationRequestRetries,
             safetySettings: sharedSafetySettings,
             signal: abortSignal,
+            ...buildTranslateTraceConfig('draft', {
+              lane: batchRouteDecision.lane,
+              routeReason: batchRouteDecision.reason,
+              batchIndex: params.batchIndex,
+            }),
           },
         );
 
@@ -13235,6 +13425,11 @@ const AppContent = () => {
       }));
 
       const elapsedSeconds = Math.max(1, Math.round((Date.now() - translateStartedAt) / 1000));
+      translateTaskRun.complete({
+        chapters: translatedChapters.length,
+        processedSegments,
+        elapsedSeconds,
+      });
       notifyApp({
         tone: 'success',
         message: `Đã dịch thành công ${translatedChapters.length} chương (${processedSegments} phân đoạn) trong ${elapsedSeconds}s${turboMode ? ' [Turbo]' : ''}.`,
@@ -13242,6 +13437,9 @@ const AppContent = () => {
       });
       setView('stories');
     } catch (error) {
+      translateTaskRun?.fail(error, {
+        at: 'handleTranslateStory',
+      });
       console.error("Lỗi khi dịch truyện:", error);
       const rawMessage = error instanceof Error ? error.message : String(error || '');
       if (/cancelled by user/i.test(rawMessage)) {
@@ -13273,6 +13471,7 @@ const AppContent = () => {
       progress: { completed: 1, total: 3 },
     });
     const abortSignal = aiRun.controller.signal;
+    let continueTaskRun: ReturnType<typeof startAiTaskRun> | null = null;
 
     try {
       let finalInstructions = options.additionalInstructions;
@@ -13286,6 +13485,23 @@ const AppContent = () => {
       }
 
       const ai = createGeminiClient();
+      const continueBlueprint = getPromptBlueprint('story_continue');
+      const runtimeProfileMode = getApiRuntimeConfig().aiProfile;
+      continueTaskRun = startAiTaskRun('story_continue', continueBlueprint.version, {
+        provider: ai.provider,
+        model: ai.model,
+        fileName: String(continueFileName || ''),
+      });
+      const buildContinueTraceConfig = (
+        stage: 'analysis' | 'plan' | 'draft' | 'quality_gate',
+        extra?: Record<string, unknown>,
+      ) => ({
+        taskType: 'story_continue' as AiTaskType,
+        promptVersion: continueBlueprint.version,
+        traceRunId: continueTaskRun.runId,
+        traceStage: stage,
+        traceMeta: buildTraceMetadata(continueTaskRun.traceFor(stage), extra),
+      });
       const continueWordCount = countWords(continueFileContent);
       const continueCharCount = String(continueFileContent || '').length;
       const continueTokenEstimate = estimateTextTokens(continueFileContent);
@@ -13301,7 +13517,20 @@ const AppContent = () => {
         .slice(-(extremeContinueMode ? 2600 : largeContinueMode ? 3800 : 5200));
       
       // 1. Analyze the story
-      const analysisPrompt = `
+      const continueAnalysisRoute = routeAiExecutionLane({
+        task: 'story_continue',
+        stage: 'analysis',
+        provider: ai.provider,
+        profile: runtimeProfileMode,
+        inputChars: analysisExcerpt.length,
+        preferredLane: largeContinueMode ? 'fast' : 'quality',
+      });
+      continueTaskRun.markStage('analysis', {
+        lane: continueAnalysisRoute.lane,
+        routeReason: continueAnalysisRoute.reason,
+        sourceChars: continueCharCount,
+      });
+      const analysisPrompt = prependPromptContract(`
         Hãy phân tích nội dung truyện sau đây.
         Lưu ý: đây có thể là bản trích cân bằng giữa phần đầu và phần gần cuối của file lớn, nên hãy ưu tiên nhận diện phong cách, nhân vật và tình tiết đang diễn ra.
         "${analysisExcerpt}"
@@ -13320,11 +13549,17 @@ const AppContent = () => {
           "currentContext": "..."
         }
         CHỈ TRẢ VỀ JSON thuần, KHÔNG bọc bằng dấu 3 backtick và KHÔNG thêm giải thích.
-      `;
+      `.trim(), {
+        task: 'story_continue',
+        stage: 'analysis',
+        promptVersion: continueBlueprint.version,
+        outputSchema: 'story_analysis_v1',
+        strictJson: true,
+      });
 
       const analysisText = await generateGeminiText(
         ai,
-        largeContinueMode ? 'fast' : 'quality',
+        continueAnalysisRoute.lane,
         analysisPrompt,
         {
           responseMimeType: "application/json",
@@ -13332,14 +13567,25 @@ const AppContent = () => {
           minOutputChars: 260,
           maxRetries: extremeContinueMode ? 1 : 2,
           signal: abortSignal,
+          ...buildContinueTraceConfig('analysis', {
+            lane: continueAnalysisRoute.lane,
+            routeReason: continueAnalysisRoute.reason,
+          }),
         },
       ) || '{}';
-      const analysisParsed = tryParseJson<any>(analysisText, 'object') || {};
-      const analysis = {
+      const analysisParsed = tryParseJson<Record<string, unknown>>(analysisText, 'object') || {};
+      const analysisValidation = validateStoryAnalysis({
         summary: String(analysisParsed.summary || '').trim() || String(analysisText || '').trim(),
         writingStyle: String(analysisParsed.writingStyle || '').trim(),
-        characters: Array.isArray(analysisParsed.characters) ? analysisParsed.characters : [],
         currentContext: String(analysisParsed.currentContext || '').trim(),
+        genre: 'Viết tiếp',
+        characters: Array.isArray(analysisParsed.characters) ? analysisParsed.characters : [],
+      });
+      const analysis = {
+        summary: analysisValidation.data.summary || String(analysisText || '').trim(),
+        writingStyle: analysisValidation.data.writingStyle,
+        characters: analysisValidation.data.characters,
+        currentContext: analysisValidation.data.currentContext,
       };
       updateAiRun(aiRun, {
         message: 'Đang lập kế hoạch các chương tiếp theo...',
@@ -13360,7 +13606,20 @@ const AppContent = () => {
             .map((item) => `- ${item.name || 'Nhân vật'}: ${item.personality || 'chưa rõ tính cách'}`)
             .join('\n')
         : 'Chưa có dữ liệu nhân vật rõ ràng.';
-      const planPrompt = `
+      const continuePlanRoute = routeAiExecutionLane({
+        task: 'story_continue',
+        stage: 'plan',
+        provider: ai.provider,
+        profile: runtimeProfileMode,
+        inputChars: `${analysis.summary}\n${analysis.currentContext}\n${finalInstructions}`.length,
+        preferredLane: largeContinueMode ? 'fast' : 'quality',
+      });
+      continueTaskRun.markStage('plan', {
+        lane: continuePlanRoute.lane,
+        routeReason: continuePlanRoute.reason,
+        chapterCount: options.chapterCount,
+      });
+      const planPrompt = prependPromptContract(`
         Dựa trên phân tích sau:
         Tóm tắt: ${analysis.summary}
         Văn phong: ${analysis.writingStyle}
@@ -13376,11 +13635,17 @@ const AppContent = () => {
           "chapters": [{"title": "...", "outline": "..."}]
         }
         CHỈ TRẢ VỀ JSON thuần, KHÔNG bọc bằng dấu 3 backtick và KHÔNG thêm giải thích.
-      `;
+      `.trim(), {
+        task: 'story_continue',
+        stage: 'plan',
+        promptVersion: continueBlueprint.version,
+        outputSchema: 'story_plan_v1',
+        strictJson: true,
+      });
 
       const planText = await generateGeminiText(
         ai,
-        largeContinueMode ? 'fast' : 'quality',
+        continuePlanRoute.lane,
         planPrompt,
         {
           responseMimeType: "application/json",
@@ -13388,10 +13653,17 @@ const AppContent = () => {
           minOutputChars: Math.max(200, options.chapterCount * 70),
           maxRetries: extremeContinueMode ? 1 : 2,
           signal: abortSignal,
+          ...buildContinueTraceConfig('plan', {
+            lane: continuePlanRoute.lane,
+            routeReason: continuePlanRoute.reason,
+          }),
         },
       ) || '{}';
-      const planParsed = tryParseJson<any>(planText, 'object');
-      let plannedChapters = Array.isArray(planParsed?.chapters) ? planParsed.chapters : (Array.isArray(planParsed) ? planParsed : []);
+      const planParsed = tryParseJson<unknown>(planText, 'any');
+      const planValidation = validateStoryPlan(planParsed, Math.max(1, options.chapterCount));
+      let plannedChapters: Array<{ title: string; outline: string }> = planValidation.ok
+        ? planValidation.data.chapters
+        : [];
       if (!plannedChapters.length) {
         plannedChapters = buildFallbackChapters(planText, options.chapterCount).map((c) => ({
           title: c.title,
@@ -13418,7 +13690,7 @@ const AppContent = () => {
           progress: { completed: i + 1, total: Math.max(plannedChapters.length, 1) },
         });
         
-        const chapterPrompt = `
+        const chapterPrompt = prependPromptContract(`
           Hãy viết chương "${ch.title}" cho truyện dựa trên các thông tin sau:
           
           Tóm tắt truyện: ${analysis.summary}
@@ -13436,11 +13708,31 @@ const AppContent = () => {
           - Viết ít nhất 2000 từ.
           - Sử dụng đúng văn phong đã phân tích.
           - Không tóm tắt, hãy viết chi tiết các hành động và lời thoại.
-        `;
+        `.trim(), {
+          task: 'story_continue',
+          stage: 'draft',
+          promptVersion: continueBlueprint.version,
+          outputSchema: 'chapter_markdown_text_v1',
+          strictJson: false,
+        });
+        const chapterDraftRoute = routeAiExecutionLane({
+          task: 'story_continue',
+          stage: 'draft',
+          provider: ai.provider,
+          profile: runtimeProfileMode,
+          inputChars: chapterPrompt.length,
+          preferredLane: largeContinueMode ? 'fast' : 'quality',
+        });
+        continueTaskRun.markStage('draft', {
+          chapterIndex: i + 1,
+          total: plannedChapters.length,
+          lane: chapterDraftRoute.lane,
+          routeReason: chapterDraftRoute.reason,
+        });
 
         let chapterText = await generateGeminiText(
           ai,
-          largeContinueMode ? 'fast' : 'quality',
+          chapterDraftRoute.lane,
           chapterPrompt,
           {
             maxOutputTokens: chapterMaxTokens,
@@ -13448,40 +13740,88 @@ const AppContent = () => {
             maxRetries: extremeContinueMode ? 1 : 2,
             safetySettings: GEMINI_UNRESTRICTED_SAFETY_SETTINGS,
             signal: abortSignal,
+            ...buildContinueTraceConfig('draft', {
+              chapterIndex: i + 1,
+              lane: chapterDraftRoute.lane,
+              routeReason: chapterDraftRoute.reason,
+            }),
           },
         );
 
         if (countWords(chapterText || '') < Math.max(220, Math.round(minChapterWords * 0.55))) {
+          const retryRoute = routeAiExecutionLane({
+            task: 'story_continue',
+            stage: 'quality_gate',
+            provider: ai.provider,
+            profile: runtimeProfileMode,
+            inputChars: chapterPrompt.length,
+            preferredLane: 'quality',
+          });
           chapterText = await generateGeminiText(
             ai,
-            'quality',
-            `${chapterPrompt}\n\nYÊU CẦU BẮT BUỘC: Bản trước quá ngắn. Hãy viết lại đầy đủ, chi tiết, đúng độ dài yêu cầu.`,
+            retryRoute.lane,
+            prependPromptContract(
+              `${chapterPrompt}\n\nYÊU CẦU BẮT BUỘC: Bản trước quá ngắn. Hãy viết lại đầy đủ, chi tiết, đúng độ dài yêu cầu.`,
+              {
+                task: 'story_continue',
+                stage: 'quality_gate',
+                promptVersion: continueBlueprint.version,
+                outputSchema: 'chapter_markdown_text_v1',
+                strictJson: false,
+              },
+            ),
             {
               maxOutputTokens: Math.min(16384, Math.round(chapterMaxTokens * 1.35)),
               minOutputChars: Math.round(minChapterChars * 1.15),
               maxRetries: 1,
               safetySettings: GEMINI_UNRESTRICTED_SAFETY_SETTINGS,
               signal: abortSignal,
+              ...buildContinueTraceConfig('quality_gate', {
+                chapterIndex: i + 1,
+                lane: retryRoute.lane,
+                routeReason: retryRoute.reason,
+                reason: 'too_short',
+              }),
             },
           );
         }
 
         const chapterQualityIssue = getNarrativeQualityIssue(ch.title, chapterText || '', Math.max(850, Math.round(minChapterChars * 0.7)));
         if (chapterQualityIssue) {
+          const qualityGateRoute = routeAiExecutionLane({
+            task: 'story_continue',
+            stage: 'quality_gate',
+            provider: ai.provider,
+            profile: runtimeProfileMode,
+            inputChars: chapterPrompt.length,
+            preferredLane: 'quality',
+          });
           chapterText = await generateGeminiText(
             ai,
-            'quality',
-            `${chapterPrompt}
+            qualityGateRoute.lane,
+            prependPromptContract(`${chapterPrompt}
 
 YÊU CẦU SỬA LỖI:
 - Bản trước bị lỗi: ${chapterQualityIssue}
 - Tuyệt đối không trả dàn ý, không checklist, không gạch đầu dòng.
-- Chỉ trả một chương truyện hoàn chỉnh, văn xuôi liền mạch, có hành động và đối thoại.`,
+- Chỉ trả một chương truyện hoàn chỉnh, văn xuôi liền mạch, có hành động và đối thoại.`, {
+              task: 'story_continue',
+              stage: 'quality_gate',
+              promptVersion: continueBlueprint.version,
+              outputSchema: 'chapter_markdown_text_v1',
+              strictJson: false,
+            }),
             {
               maxOutputTokens: Math.min(16384, Math.round(chapterMaxTokens * 1.2)),
               minOutputChars: Math.round(minChapterChars * 1.1),
               maxRetries: 1,
               signal: abortSignal,
+              ...buildContinueTraceConfig('quality_gate', {
+                chapterIndex: i + 1,
+                lane: qualityGateRoute.lane,
+                routeReason: qualityGateRoute.reason,
+                reason: chapterQualityIssue,
+              }),
             },
           );
         }
@@ -13518,9 +13858,16 @@ YÊU CẦU SỬA LỖI:
         chapters: localChapters,
       }));
 
+      continueTaskRun.complete({
+        chapters: generatedChapters.length,
+        sourceChars: continueCharCount,
+      });
       notifyApp({ tone: 'success', message: `Đã viết tiếp thành công ${options.chapterCount} chương!`, timeoutMs: 5200 });
       setView('stories');
     } catch (error) {
+      continueTaskRun?.fail(error, {
+        at: 'handleAIContinueStory',
+      });
       console.error("Lỗi khi viết tiếp truyện:", error);
       const rawMessage = error instanceof Error ? error.message : String(error || '');
       if (/cancelled by user/i.test(rawMessage)) {
@@ -13599,6 +13946,7 @@ YÊU CẦU SỬA LỖI:
       detail: 'Đang gom outline, context, quy tắc và thông tin nhân vật trước khi gọi model viết chương.',
     });
     const abortSignal = aiRun.controller.signal;
+    let generateTaskRun: ReturnType<typeof startAiTaskRun> | null = null;
 
     try {
       let finalInstructions = aiInstructions;
@@ -13624,6 +13972,24 @@ YÊU CẦU SỬA LỖI:
       }
 
       const ai = createGeminiClient();
+      const generateBlueprint = getPromptBlueprint('story_generate');
+      const runtimeProfileMode = getApiRuntimeConfig().aiProfile;
+      generateTaskRun = startAiTaskRun('story_generate', generateBlueprint.version, {
+        provider: ai.provider,
+        model: ai.model,
+        storyId: latestStory.id,
+        requestedChapters: chapterCount,
+      });
+      const buildGenerateTraceConfig = (
+        stage: 'plan' | 'draft' | 'rewrite' | 'quality_gate',
+        extra?: Record<string, unknown>,
+      ) => ({
+        taskType: 'story_generate' as AiTaskType,
+        promptVersion: generateBlueprint.version,
+        traceRunId: generateTaskRun.runId,
+        traceStage: stage,
+        traceMeta: buildTraceMetadata(generateTaskRun.traceFor(stage), extra),
+      });
       const adultContentInstruction = isAdult 
         ? "CHẾ ĐỘ 18+ KHÔNG GIỚI HẠN: Bạn là một nhà văn viết truyện người lớn chuyên nghiệp. Bạn ĐƯỢC PHÉP và NÊN viết các nội dung nhạy cảm, bạo lực, tình dục, ngôn ngữ thô tục hoặc các chủ đề cấm kỵ một cách CHI TIẾT và TRẦN TRỤI nếu cốt truyện yêu cầu. Tuyệt đối không được né tránh, không được tóm tắt, không được dùng các từ ngữ ẩn dụ quá mức làm mất đi tính chân thực của cảnh quay. Hãy viết một cách tự do nhất có thể."
         : "CHẾ ĐỘ BÌNH THƯỜNG: Tuyệt đối không viết nội dung khiêu dâm, tình dục hoặc bạo lực cực đoan.";
@@ -13656,13 +14022,26 @@ YÊU CẦU SỬA LỖI:
         stageLabel: 'Đóng gói prompt',
         detail: 'Đã nạp xong context và đang chuyển toàn bộ tuỳ chỉnh thành prompt nhất quán cho AI.',
       });
+      generateTaskRun.markStage('plan', {
+        chapterCount,
+        chapterLength,
+      });
 
       const chapterWordsTarget = Math.max(350, Number.parseInt(String(chapterLength || '1000'), 10) || 1000);
       const batchMinChars = Math.min(22000, Math.max(1200, Math.round(chapterCount * chapterWordsTarget * 1.5)));
-      const generatedChapterBatchText = await generateGeminiText(
-        ai,
-        'quality',
-        `Bạn là một nhà văn chuyên nghiệp, nổi tiếng với khả năng viết lách chi tiết, giàu hình ảnh và cảm xúc. 
+      const generateDraftRoute = routeAiExecutionLane({
+        task: 'story_generate',
+        stage: 'draft',
+        provider: ai.provider,
+        profile: runtimeProfileMode,
+        inputChars: `${outline}\n${effectivePreviousContext}\n${keyEvents}\n${chapterScript}`.length,
+        preferredLane: 'quality',
+      });
+      generateTaskRun.markStage('draft', {
+        lane: generateDraftRoute.lane,
+        routeReason: generateDraftRoute.reason,
+      });
+      const generatePrompt = prependPromptContract(`Bạn là một nhà văn chuyên nghiệp, nổi tiếng với khả năng viết lách chi tiết, giàu hình ảnh và cảm xúc. 
         Dựa trên dàn ý và bối cảnh được cung cấp, hãy viết tiếp ${chapterCount} chương MỚI cho câu chuyện. 
         
         ${adultContentInstruction}
@@ -13713,7 +14092,17 @@ YÊU CẦU SỬA LỖI:
         
         Trả về kết quả dưới dạng JSON array các chương: [ { "title": "Chương x: ...", "content": "..." }, ... ]
         CHỈ TRẢ VỀ JSON thuần, KHÔNG bọc bằng dấu 3 backtick và KHÔNG thêm giải thích.
-        Nội dung nên được định dạng Markdown.`,
+        Nội dung nên được định dạng Markdown.`.trim(), {
+        task: 'story_generate',
+        stage: 'draft',
+        promptVersion: generateBlueprint.version,
+        outputSchema: generateBlueprint.outputSchema,
+        strictJson: true,
+      });
+      const generatedChapterBatchText = await generateGeminiText(
+        ai,
+        generateDraftRoute.lane,
+        generatePrompt,
         {
           responseMimeType: "application/json",
           maxOutputTokens: 8192,
@@ -13721,16 +14110,29 @@ YÊU CẦU SỬA LỖI:
           maxRetries: 2,
           safetySettings: GEMINI_UNRESTRICTED_SAFETY_SETTINGS,
           signal: abortSignal,
+          ...buildGenerateTraceConfig('draft', {
+            lane: generateDraftRoute.lane,
+            routeReason: generateDraftRoute.reason,
+            chapterCount,
+          }),
         },
       );
 
       const textResponse = generatedChapterBatchText || '[]';
       const parsed = tryParseJson<unknown>(textResponse, 'any');
       let newChaptersData: Array<{ title?: string; content?: string }> = [];
-      newChaptersData = extractChapterDraftItems(parsed).map((item) => ({
-        title: item.title,
-        content: item.content || item.outline,
-      }));
+      const chapterArrayValidation = validateChapterDraftArray(parsed, Math.max(1, chapterCount));
+      if (chapterArrayValidation.ok) {
+        newChaptersData = chapterArrayValidation.data.map((item) => ({
+          title: item.title,
+          content: item.content,
+        }));
+      } else {
+        newChaptersData = extractChapterDraftItems(parsed).map((item) => ({
+          title: item.title,
+          content: item.content || item.outline,
+        }));
+      }
 
       if (!newChaptersData.length) {
         newChaptersData = buildFallbackChapters(textResponse, chapterCount);
@@ -13773,16 +14175,39 @@ ${JSON.stringify(chapterDrafts)}
 Trả về JSON array: [{"title":"Chương ...","content":"..."}]
 CHỈ trả JSON thuần, không bọc markdown.
 `.trim();
+        const rewriteRoute = routeAiExecutionLane({
+          task: 'story_generate',
+          stage: 'rewrite',
+          provider: ai.provider,
+          profile: runtimeProfileMode,
+          inputChars: rewritePrompt.length,
+          preferredLane: 'quality',
+        });
+        generateTaskRun.markStage('rewrite', {
+          lane: rewriteRoute.lane,
+          routeReason: rewriteRoute.reason,
+          reason: 'outline_like_output',
+        });
         const rewritten = await generateGeminiText(
           ai,
-          'quality',
-          rewritePrompt,
+          rewriteRoute.lane,
+          prependPromptContract(rewritePrompt, {
+            task: 'story_generate',
+            stage: 'rewrite',
+            promptVersion: generateBlueprint.version,
+            outputSchema: 'chapter_draft_array_v1',
+            strictJson: true,
+          }),
           {
             responseMimeType: "application/json",
             maxOutputTokens: 8192,
             minOutputChars: batchMinChars,
             maxRetries: 1,
             signal: abortSignal,
+            ...buildGenerateTraceConfig('rewrite', {
+              lane: rewriteRoute.lane,
+              routeReason: rewriteRoute.reason,
+            }),
           },
         );
         const rewrittenParsed = tryParseJson<unknown>(rewritten || '[]', 'any');
@@ -13840,17 +14265,42 @@ ${forbiddenPhrases.map((phrase, index) => `${index + 1}. "${phrase}"`).join('\n'
 Các đoạn cần viết lại:
 ${JSON.stringify(violatingPayload)}
 `.trim();
+          const antiClicheRoute = routeAiExecutionLane({
+            task: 'story_generate',
+            stage: 'quality_gate',
+            provider: ai.provider,
+            profile: runtimeProfileMode,
+            inputChars: antiClicheRewritePrompt.length,
+            preferredLane: 'quality',
+          });
+          generateTaskRun.markStage('quality_gate', {
+            lane: antiClicheRoute.lane,
+            routeReason: antiClicheRoute.reason,
+            reason: 'forbidden_phrase',
+            violatingCount: violatingPayload.length,
+          });
 
           const antiClicheRewriteRaw = await generateGeminiText(
             ai,
-            'quality',
-            antiClicheRewritePrompt,
+            antiClicheRoute.lane,
+            prependPromptContract(antiClicheRewritePrompt, {
+              task: 'story_generate',
+              stage: 'quality_gate',
+              promptVersion: generateBlueprint.version,
+              outputSchema: 'chapter_draft_array_v1',
+              strictJson: true,
+            }),
             {
               responseMimeType: "application/json",
               maxOutputTokens: 8192,
               minOutputChars: Math.max(1200, Math.round(violatingPayload.length * 1200)),
               maxRetries: 1,
               signal: abortSignal,
+              ...buildGenerateTraceConfig('quality_gate', {
+                lane: antiClicheRoute.lane,
+                routeReason: antiClicheRoute.reason,
+                violatingCount: violatingPayload.length,
+              }),
             },
           );
           const antiClicheParsed = tryParseJson<any>(antiClicheRewriteRaw || '[]', 'array');
@@ -13902,8 +14352,15 @@ ${JSON.stringify(violatingPayload)}
 
       setSelectedStory(updatedStory);
 
+      generateTaskRun.complete({
+        generatedChapters: newChapters.length,
+        totalChapters: updatedStory.chapters.length,
+      });
       notifyApp({ tone: 'success', message: `Đã tạo thành công ${newChapters.length} chương mới!`, timeoutMs: 5200 });
     } catch (error) {
+      generateTaskRun?.fail(error, {
+        at: 'handleAIGenerateChapters',
+      });
       console.error("AI Generation Error:", error);
       const rawMessage = error instanceof Error ? error.message : String(error || '');
       if (/cancelled by user/i.test(rawMessage)) {

@@ -1,0 +1,47 @@
+{
+  "story_generate": {
+    "task": "story_generate",
+    "version": "1.0.0",
+    "outputSchema": "chapter_draft_array_v1",
+    "title": "Sinh chương truyện mới",
+    "owner": "truyenforge-core",
+    "updatedAt": "2026-03-30",
+    "notes": "Plan + draft + anti-cliche + quality gate. Đầu ra bắt buộc JSON array chương."
+  },
+  "story_translate": {
+    "task": "story_translate",
+    "version": "1.0.0",
+    "outputSchema": "translated_segment_json_v1",
+    "title": "Dịch truyện từ file",
+    "owner": "truyenforge-core",
+    "updatedAt": "2026-03-30",
+    "notes": "Dịch theo lô/đoạn, giữ xưng hô nhất quán theo từ điển truyện."
+  },
+  "story_continue": {
+    "task": "story_continue",
+    "version": "1.0.0",
+    "outputSchema": "analysis_plan_chapter_v1",
+    "title": "Viết tiếp truyện từ file",
+    "owner": "truyenforge-core",
+    "updatedAt": "2026-03-30",
+    "notes": "3 bước: phân tích -> lập kế hoạch -> viết chương theo continuity."
+  },
+  "story_cover": {
+    "task": "story_cover",
+    "version": "1.0.0",
+    "outputSchema": "image_url_or_dataurl_v1",
+    "title": "Sinh ảnh bìa",
+    "owner": "truyenforge-core",
+    "updatedAt": "2026-03-30",
+    "notes": "AI sinh ảnh có fallback ảnh dự phòng nếu provider lỗi."
+  },
+  "quality_review": {
+    "task": "quality_review",
+    "version": "1.0.0",
+    "outputSchema": "qa_issue_list_v1",
+    "title": "Rà chất lượng nội dung",
+    "owner": "truyenforge-core",
+    "updatedAt": "2026-03-30",
+    "notes": "Rà lỗi logic/chính tả/tone consistency trước khi xuất bản."
+  }
+}
