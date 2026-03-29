@@ -1,4 +1,4 @@
-import { hasSupabase, supabase } from './supabaseClient';
+import { getSupabaseClient, hasSupabase } from './supabaseClient';
 
 const STORIES_TABLE = (import.meta.env.VITE_SUPABASE_STORIES_TABLE || 'stories').trim();
 const CHAPTERS_TABLE = (import.meta.env.VITE_SUPABASE_CHAPTERS_TABLE || 'story_chapters').trim();
@@ -7,11 +7,15 @@ const AI_RULES_TABLE = (import.meta.env.VITE_SUPABASE_AI_RULES_TABLE || 'workspa
 const TRANSLATION_NAMES_TABLE = (import.meta.env.VITE_SUPABASE_TRANSLATION_NAMES_TABLE || 'workspace_translation_names').trim();
 const STYLE_REFERENCES_TABLE = (import.meta.env.VITE_SUPABASE_STYLE_REFERENCES_TABLE || 'workspace_style_references').trim();
 
-function requireSupabase() {
-  if (!hasSupabase || !supabase) {
+async function requireSupabase() {
+  if (!hasSupabase) {
     throw new Error('Supabase chưa được cấu hình đầy đủ.');
   }
-  return supabase;
+  const client = await getSupabaseClient();
+  if (!client) {
+    throw new Error('Không khởi tạo được kết nối Supabase.');
+  }
+  return client;
 }
 
 function toIso(value: unknown): string {
@@ -55,7 +59,7 @@ interface ExistingRevisionRow {
 
 async function loadExistingStoryRows(userId: string, storyIds: string[]): Promise<Map<string, ExistingRevisionRow>> {
   if (!storyIds.length) return new Map();
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const { data, error } = await client
     .from(STORIES_TABLE)
     .select('story_id, revision, updated_at, sync_hash')
@@ -76,7 +80,7 @@ async function loadExistingStoryRows(userId: string, storyIds: string[]): Promis
 
 async function loadExistingChapterRows(userId: string, chapterIds: string[]): Promise<Map<string, ExistingRevisionRow>> {
   if (!chapterIds.length) return new Map();
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const { data, error } = await client
     .from(CHAPTERS_TABLE)
     .select('chapter_id, revision, updated_at, sync_hash')
@@ -101,7 +105,7 @@ async function deleteMissingRows(
   userId: string,
   ids: string[],
 ): Promise<void> {
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const { data, error } = await client
     .from(table)
     .select(idField)
@@ -134,11 +138,11 @@ export async function syncNormalizedWorkspaceRecords(userId: string, payload: {
 }, options?: {
   pruneMissing?: boolean;
 }): Promise<NormalizedSyncResult> {
-  if (!hasSupabase || !supabase) {
+  if (!hasSupabase) {
     return { storiesSynced: 0, chaptersSynced: 0, conflicts: 0 };
   }
 
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const stories = Array.isArray(payload.stories) ? payload.stories : [];
   const storyIds = stories.map((story) => normalizeString(story?.id)).filter(Boolean);
   const existingStories = await loadExistingStoryRows(userId, storyIds);

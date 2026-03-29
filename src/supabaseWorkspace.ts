@@ -1,4 +1,4 @@
-import { hasSupabase, supabase } from './supabaseClient';
+import { getSupabaseClient, hasSupabase } from './supabaseClient';
 
 const WORKSPACES_TABLE = (import.meta.env.VITE_SUPABASE_WORKSPACES_TABLE || 'user_workspaces').trim();
 const QA_REPORTS_TABLE = (import.meta.env.VITE_SUPABASE_QA_REPORTS_TABLE || 'qa_reports').trim();
@@ -11,15 +11,19 @@ function toIsoString(value: unknown): string {
   return new Date().toISOString();
 }
 
-function requireSupabase() {
-  if (!hasSupabase || !supabase) {
+async function requireSupabase() {
+  if (!hasSupabase) {
     throw new Error('Supabase chưa được cấu hình đầy đủ.');
   }
-  return supabase;
+  const client = await getSupabaseClient();
+  if (!client) {
+    throw new Error('Không khởi tạo được kết nối Supabase.');
+  }
+  return client;
 }
 
 export function hasServerWorkspaceStorage(): boolean {
-  return hasSupabase && Boolean(supabase);
+  return hasSupabase;
 }
 
 export class WorkspaceConflictError<T = unknown> extends Error {
@@ -34,7 +38,7 @@ export class WorkspaceConflictError<T = unknown> extends Error {
 }
 
 export async function loadServerWorkspace<T>(userId: string): Promise<{ payload: T | null; updatedAt: string | null }> {
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const { data, error } = await client
     .from(WORKSPACES_TABLE)
     .select('payload, updated_at')
@@ -56,7 +60,7 @@ export async function saveServerWorkspace<T extends { updatedAt?: string }>(
     expectedUpdatedAt?: string | null;
   },
 ): Promise<void> {
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const updatedAt = toIsoString(payload?.updatedAt);
   const expectedUpdatedAt = typeof options?.expectedUpdatedAt === 'string' && options.expectedUpdatedAt.trim()
     ? options.expectedUpdatedAt
@@ -106,7 +110,7 @@ export async function saveQaReport(userId: string, report: {
   createdAt?: string;
 }): Promise<void> {
   if (!hasServerWorkspaceStorage()) return;
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const createdAt = toIsoString(report.createdAt);
   const { error } = await client
     .from(QA_REPORTS_TABLE)

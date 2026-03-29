@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
-import { supabase, hasSupabase } from './supabaseClient';
+import { getSupabaseClient, hasSupabase } from './supabaseClient';
 
 interface LocalUser {
   uid: string;
@@ -41,7 +41,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!hasSupabase || !supabase) {
+    if (!hasSupabase) {
       const savedUser = localStorage.getItem('story_app_user');
       if (savedUser) {
         setUser(JSON.parse(savedUser));
@@ -53,42 +53,72 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
-    supabase.auth.getSession().then(({ data }) => {
-      const sess = data.session;
-      if (sess?.user) {
-        setUser({
-          uid: sess.user.id,
-          displayName: sess.user.email || 'Supabase user',
-          email: sess.user.email || 'unknown',
-          photoURL: sess.user.user_metadata?.avatar_url || GUEST_USER.photoURL,
-        });
-      } else {
-        setUser(null);
-      }
-      setLoading(false);
-    });
+    let disposed = false;
+    let unsubscribe: (() => void) | undefined;
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        setUser({
-          uid: session.user.id,
-          displayName: session.user.email || 'Supabase user',
-          email: session.user.email || 'unknown',
-          photoURL: session.user.user_metadata?.avatar_url || GUEST_USER.photoURL,
+    void (async () => {
+      try {
+        const supabase = await getSupabaseClient();
+        if (!supabase) {
+          if (!disposed) {
+            setUser(null);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data } = await supabase.auth.getSession();
+        if (!disposed) {
+          const sess = data.session;
+          if (sess?.user) {
+            setUser({
+              uid: sess.user.id,
+              displayName: sess.user.email || 'Supabase user',
+              email: sess.user.email || 'unknown',
+              photoURL: sess.user.user_metadata?.avatar_url || GUEST_USER.photoURL,
+            });
+          } else {
+            setUser(null);
+          }
+          setLoading(false);
+        }
+
+        const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+          if (disposed) return;
+          if (session?.user) {
+            setUser({
+              uid: session.user.id,
+              displayName: session.user.email || 'Supabase user',
+              email: session.user.email || 'unknown',
+              photoURL: session.user.user_metadata?.avatar_url || GUEST_USER.photoURL,
+            });
+          } else {
+            setUser(null);
+          }
         });
-      } else {
-        setUser(null);
+        unsubscribe = () => listener?.subscription?.unsubscribe();
+      } catch {
+        if (!disposed) {
+          setUser(null);
+          setLoading(false);
+        }
       }
-    });
-    return () => listener?.subscription?.unsubscribe();
+    })();
+
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
   }, []);
 
   const login = async ({ email, password }: { email: string; password: string }) => {
-    if (!hasSupabase || !supabase) {
+    if (!hasSupabase) {
       setUser(GUEST_USER);
       localStorage.setItem('story_app_user', JSON.stringify(GUEST_USER));
       return { ok: true, message: 'local-login' };
     }
+    const supabase = await getSupabaseClient();
+    if (!supabase) return { ok: false, message: 'Supabase init failed' };
     const { error, data } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { ok: false, message: error.message };
     if (data.user) {
@@ -103,9 +133,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const loginWithProvider = async (provider: 'google' | 'discord') => {
-    if (!hasSupabase || !supabase) {
+    if (!hasSupabase) {
       return { ok: false, message: 'Supabase credentials missing' };
     }
+    const supabase = await getSupabaseClient();
+    if (!supabase) return { ok: false, message: 'Supabase init failed' };
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
@@ -117,9 +149,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const register = async ({ email, password }: { email: string; password: string }) => {
-    if (!hasSupabase || !supabase) {
+    if (!hasSupabase) {
       return { ok: false, message: 'Supabase credentials missing' };
     }
+    const supabase = await getSupabaseClient();
+    if (!supabase) return { ok: false, message: 'Supabase init failed' };
     const { error, data } = await supabase.auth.signUp({ email, password });
     if (error) return { ok: false, message: error.message };
     if (data.user) {
@@ -134,8 +168,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
-    if (hasSupabase && supabase) {
-      await supabase.auth.signOut();
+    if (hasSupabase) {
+      const supabase = await getSupabaseClient();
+      if (supabase) await supabase.auth.signOut();
     }
     setUser(null);
     localStorage.removeItem('story_app_user');

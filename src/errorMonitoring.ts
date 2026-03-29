@@ -1,4 +1,4 @@
-import { hasSupabase, supabase } from './supabaseClient';
+import { getSupabaseClient, hasSupabase } from './supabaseClient';
 
 const ENABLE_MONITORING = String(import.meta.env.VITE_ENABLE_ERROR_MONITORING ?? '1').trim() !== '0';
 const ERROR_TABLE = (import.meta.env.VITE_SUPABASE_CLIENT_ERRORS_TABLE || 'client_error_events').trim();
@@ -59,21 +59,24 @@ function writeLocalRing(payload: ClientErrorPayload): void {
 }
 
 async function uploadToSupabase(payload: ClientErrorPayload): Promise<void> {
-  if (!hasSupabase || !supabase) return;
+  if (!hasSupabase) return;
   const now = Date.now();
   if (now - lastSentAt < UPLOAD_COOLDOWN_MS) return;
   lastSentAt = now;
 
+  const client = await getSupabaseClient();
+  if (!client) return;
+
   let userId: string | null = null;
   try {
-    const session = await supabase.auth.getSession();
+    const session = await client.auth.getSession();
     userId = session.data.session?.user?.id || null;
   } catch {
     userId = null;
   }
   if (!userId) return;
 
-  const { error } = await supabase
+  const { error } = await client
     .from(ERROR_TABLE)
     .insert({
       user_id: userId,

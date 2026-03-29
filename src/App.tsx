@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import { useAuth, AuthProvider } from './AuthContext';
-import { supabase, hasSupabase } from './supabaseClient';
+import { getSupabaseClient, hasSupabase } from './supabaseClient';
 import {
   storage,
   STORAGE_SAVE_FAILED_EVENT,
@@ -11624,8 +11624,13 @@ const AppContent = () => {
       setAuthError('Nhập email để gửi link đặt lại mật khẩu.');
       return;
     }
-    if (!hasSupabase || !supabase) {
+    if (!hasSupabase) {
       setAuthError('Supabase chưa được cấu hình, không thể gửi email reset.');
+      return;
+    }
+    const supabase = await getSupabaseClient();
+    if (!supabase) {
+      setAuthError('Không thể khởi tạo kết nối Supabase để gửi email reset.');
       return;
     }
     const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });

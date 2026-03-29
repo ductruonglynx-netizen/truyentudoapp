@@ -1,4 +1,4 @@
-import { hasSupabase, supabase } from './supabaseClient';
+import { getSupabaseClient, hasSupabase } from './supabaseClient';
 import type { StoredApiKeyRecord } from './apiVault';
 
 type ApiTelemetryEventType = 'key_registered' | 'request_success' | 'request_error';
@@ -186,9 +186,11 @@ function scheduleFlush(delayMs = API_TELEMETRY_FLUSH_COOLDOWN_MS): void {
 }
 
 async function resolveActiveUserId(): Promise<string | null> {
-  if (!hasSupabase || !supabase) return null;
+  if (!hasSupabase) return null;
   try {
-    const { data } = await supabase.auth.getSession();
+    const client = await getSupabaseClient();
+    if (!client) return null;
+    const { data } = await client.auth.getSession();
     const userId = data.session?.user?.id;
     return readText(userId) || null;
   } catch {
@@ -222,19 +224,21 @@ function buildInsertRows(userId: string, events: ApiTelemetryQueueEvent[]): ApiT
 
 export async function flushApiKeyTelemetryQueue(): Promise<void> {
   if (!ENABLE_API_TELEMETRY) return;
-  if (!hasSupabase || !supabase) return;
+  if (!hasSupabase) return;
   if (flushInFlight) return;
   const queue = readQueue();
   if (!queue.length) return;
 
   flushInFlight = true;
   try {
+    const client = await getSupabaseClient();
+    if (!client) return;
     const userId = await resolveActiveUserId();
     if (!userId) return;
 
     const chunk = queue.slice(0, API_TELEMETRY_FLUSH_BATCH_SIZE);
     const rows = buildInsertRows(userId, chunk);
-    const { error } = await supabase
+    const { error } = await client
       .from(API_TELEMETRY_TABLE)
       .insert(rows.map((row) => ({
         user_id: row.user_id,
