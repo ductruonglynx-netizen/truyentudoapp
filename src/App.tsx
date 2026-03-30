@@ -4455,6 +4455,7 @@ async function generateGeminiText(
     const expectedMinChars = calculateAdaptiveMinOutputChars(contents, kind, splitConfig.minOutputChars);
     let currentModelIndex = 0;
     let currentModel = modelCandidates[currentModelIndex] || initialModel;
+    const triedOllamaModels = new Set<string>();
     const extraRecoveryRetries =
       auth.provider === 'gemini' || auth.provider === 'gcli'
         ? 2
@@ -4466,6 +4467,9 @@ async function generateGeminiText(
     for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
       throwIfAborted(splitConfig.signal);
       lastModelUsed = currentModel;
+      if (auth.provider === 'ollama') {
+        triedOllamaModels.add(String(currentModel || '').trim().toLowerCase());
+      }
       const timeoutMs = calculateAdaptiveTimeoutMs(
         kind,
         Number(attemptConfig.maxOutputTokens || 0) || (kind === 'fast' ? 1800 : 4200),
@@ -4719,6 +4723,22 @@ async function generateGeminiText(
         const isTransientError = isTransientAiServiceError(err);
         const isMissingModelError = auth.provider === 'ollama' && isModelNotFoundError(err);
         if (isMissingModelError) {
+          if (ollamaInstalledModels.length) {
+            const nextInstalled = ollamaInstalledModels.find((model) => {
+              const normalized = String(model || '').trim().toLowerCase();
+              return Boolean(normalized) && !triedOllamaModels.has(normalized);
+            });
+            if (nextInstalled) {
+              const normalizedNext = String(nextInstalled || '').trim();
+              modelCandidates = [...modelCandidates, normalizedNext]
+                .map((item) => String(item || '').trim())
+                .filter(Boolean)
+                .filter((value, index, list) => list.indexOf(value) === index);
+              currentModelIndex = modelCandidates.indexOf(normalizedNext);
+              currentModel = normalizedNext;
+              continue;
+            }
+          }
           if (currentModelIndex < modelCandidates.length - 1) {
             currentModelIndex += 1;
             currentModel = modelCandidates[currentModelIndex];
@@ -4801,6 +4821,29 @@ async function generateGeminiText(
   inFlightAiRequests.set(cacheKey, task);
   try {
     const output = await task;
+    if (auth.provider === 'ollama' && String(lastModelUsed || '').trim()) {
+      const normalizedModel = String(lastModelUsed || '').trim();
+      const runtimeNext = getApiRuntimeConfig();
+      let runtimeChanged = false;
+      if (runtimeNext.selectedProvider === 'ollama' && runtimeNext.selectedModel !== normalizedModel) {
+        runtimeNext.selectedModel = normalizedModel;
+        runtimeChanged = true;
+      }
+      if (auth.keyId) {
+        const vault = loadApiVault(runtimeNext.aiProfile);
+        const targetIndex = vault.findIndex((entry) => entry.id === auth.keyId);
+        if (targetIndex >= 0 && vault[targetIndex].provider === 'ollama' && vault[targetIndex].model !== normalizedModel) {
+          vault[targetIndex] = {
+            ...vault[targetIndex],
+            model: normalizedModel,
+          };
+          saveApiVault(vault);
+        }
+      }
+      if (runtimeChanged) {
+        saveApiRuntimeConfig(runtimeNext);
+      }
+    }
     trackApiRequestTelemetry({
       provider: auth.provider,
       model: lastModelUsed,
