@@ -13165,7 +13165,10 @@ const AppContent = () => {
       });
       const analysisLane = analysisRouteDecision.lane;
       const translationLane = translationRouteDecision.lane;
-      const translationConcurrency = hugeFileMode ? 1 : (turboMode ? 2 : 1);
+      const overloadSafeMode = ai.provider === 'ollama' || ai.provider === 'openrouter';
+      const translationConcurrency = overloadSafeMode ? 1 : (hugeFileMode ? 1 : (turboMode ? 2 : 1));
+      const requestSpacingMs = ai.provider === 'ollama' ? 700 : (ai.provider === 'openrouter' ? 280 : 0);
+      const overloadFallbackRetries = ai.provider === 'ollama' ? 3 : 2;
       const detectedSections = detectChapterSections(translateFileContent);
       const hasClearChapterStructure = detectedSections.length >= 2;
       const useManualChapterSplit = !hasClearChapterStructure && options.chapteringMode === 'chars';
@@ -13185,12 +13188,15 @@ const AppContent = () => {
         effectiveUnits.length;
       const lowQuotaMode = (ai.provider === 'gemini' || ai.provider === 'gcli') && totalSegments >= 14;
       const shouldRunAnalysis = !turboMode && !lowQuotaMode && !hugeFileMode && effectiveUnits.length <= 6 && sourceTokenEstimate <= 9000;
-      const batchCharLimit =
+      let batchCharLimit =
         ai.provider === 'gemini' || ai.provider === 'gcli'
           ? (extremeFileMode ? 5200 : hugeFileMode ? 6800 : (turboMode ? 12000 : 9000))
           : (extremeFileMode ? 4200 : hugeFileMode ? 5600 : (turboMode ? 9000 : 7200));
-      const batchItemLimit = extremeFileMode ? 1 : lowQuotaMode ? 1 : hugeFileMode ? 2 : (turboMode ? 3 : 2);
-      const translationRequestRetries = lowQuotaMode && !hugeFileMode ? 0 : 1;
+      if (overloadSafeMode) {
+        batchCharLimit = Math.min(batchCharLimit, ai.provider === 'ollama' ? 3200 : 4800);
+      }
+      const batchItemLimit = overloadSafeMode ? 1 : (extremeFileMode ? 1 : lowQuotaMode ? 1 : hugeFileMode ? 2 : (turboMode ? 3 : 2));
+      const translationRequestRetries = overloadSafeMode ? 0 : (lowQuotaMode && !hugeFileMode ? 0 : 1);
       const sharedSafetySettings = GEMINI_UNRESTRICTED_SAFETY_SETTINGS;
       const preparationLabel = shouldRunAnalysis ? 'Đang phân tích nội dung gốc...' : 'Đang chuẩn bị dịch theo lô...';
 
@@ -13570,15 +13576,88 @@ const AppContent = () => {
               total: Math.max(totalSegments, 1),
             },
           });
-          const batchResult = await translateStoryBatch({
-            unitTitle: unit.title || translatedTitle,
-            fallbackTitle: translatedTitle || `Chương ${chapterIndex + 1}`,
-            batch,
-            batchIndex,
-            totalBatches: batches.length,
-            totalSegmentsInUnit: meaningfulEntries.length,
-            previousTranslatedTail,
-          });
+          if (requestSpacingMs > 0 && (chapterIndex > 0 || batchIndex > 0)) {
+            await sleepMs(requestSpacingMs);
+          }
+          let batchResult: { title: string; segments: string[] };
+          try {
+            batchResult = await translateStoryBatch({
+              unitTitle: unit.title || translatedTitle,
+              fallbackTitle: translatedTitle || `Chương ${chapterIndex + 1}`,
+              batch,
+              batchIndex,
+              totalBatches: batches.length,
+              totalSegmentsInUnit: meaningfulEntries.length,
+              previousTranslatedTail,
+            });
+          } catch (batchError) {
+            if (!isTransientAiServiceError(batchError)) throw batchError;
+            updateAiRun(aiRun, {
+              message: 'Model đang quá tải, tự chuyển chế độ an toàn...',
+              stageLabel: `Dịch chương ${chapterIndex + 1}/${maxTranslateChunks}`,
+              detail: `Lô ${batchIndex + 1}/${batches.length} bị quá tải, hệ thống sẽ đổi sang dịch từng đoạn để tránh fail cả chương.`,
+              progress: {
+                completed: Math.min(processedSegments, totalSegments),
+                total: Math.max(totalSegments, 1),
+              },
+            });
+            const recoveredSegments: string[] = [];
+            let recoveredTitle = translatedTitle || `Chương ${chapterIndex + 1}`;
+            for (let localIndex = 0; localIndex < batch.entries.length; localIndex++) {
+              const entry = batch.entries[localIndex];
+              let translatedSingle = '';
+              let resolved = false;
+              for (let retryIndex = 0; retryIndex <= overloadFallbackRetries; retryIndex++) {
+                try {
+                  if (requestSpacingMs > 0) {
+                    await sleepMs(requestSpacingMs + retryIndex * 220);
+                  }
+                  const single = await translateSingleStorySegment({
+                    unitTitle: unit.title || recoveredTitle,
+                    fallbackTitle: recoveredTitle || `Chương ${chapterIndex + 1}`,
+                    segmentText: entry.text,
+                    segmentPosition: entry.index + 1,
+                    totalSegmentsInUnit: meaningfulEntries.length,
+                    previousTranslatedTail,
+                    includeTitleField: batchIndex === 0 && localIndex === 0,
+                  });
+                  translatedSingle = single.content;
+                  if (single.title.trim() && (localIndex === 0 || /^chương\s*\d+$/i.test(recoveredTitle))) {
+                    recoveredTitle = single.title.trim();
+                  }
+                  resolved = true;
+                  break;
+                } catch (singleError) {
+                  if (!isTransientAiServiceError(singleError)) throw singleError;
+                  if (retryIndex >= overloadFallbackRetries) {
+                    throw new Error(
+                      `Model quá tải liên tục khi dịch fallback đoạn ${entry.index + 1}. Vui lòng đổi model rồi thử lại.`,
+                    );
+                  }
+                  const waitMs = Math.min(15000, 1800 * (retryIndex + 1));
+                  updateAiRun(aiRun, {
+                    message: 'Đang tự hồi phục do model quá tải...',
+                    stageLabel: `Dịch chương ${chapterIndex + 1}/${maxTranslateChunks}`,
+                    detail: `Đoạn ${entry.index + 1}/${meaningfulEntries.length} tạm quá tải, thử lại sau ${Math.round(waitMs / 1000)}s.`,
+                    progress: {
+                      completed: Math.min(processedSegments + recoveredSegments.length, totalSegments),
+                      total: Math.max(totalSegments, 1),
+                    },
+                  });
+                  await sleepMs(waitMs);
+                }
+              }
+              if (!resolved) {
+                throw new Error(`Không thể dịch đoạn ${entry.index + 1} do model quá tải kéo dài.`);
+              }
+              recoveredSegments.push(translatedSingle.trim());
+              previousTranslatedTail = extractTranslationContextTail(translatedSingle, turboMode ? 680 : 920);
+            }
+            batchResult = {
+              title: recoveredTitle,
+              segments: recoveredSegments,
+            };
+          }
           processedSegments += batch.entries.length;
 
           const parsedTitle = String(batchResult.title || '').trim();
