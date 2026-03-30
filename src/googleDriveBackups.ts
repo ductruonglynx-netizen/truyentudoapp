@@ -159,7 +159,7 @@ async function fetchGoogleDriveAccountProfile(accessToken: string): Promise<Goog
   };
 }
 
-async function requestAccessToken(prompt: '' | 'consent'): Promise<GoogleDriveAuthState> {
+async function requestAccessToken(prompt: 'none' | 'consent'): Promise<GoogleDriveAuthState> {
   const clientId = getClientId();
   if (!clientId) {
     throw new Error('Thiếu VITE_GOOGLE_DRIVE_CLIENT_ID để dùng sao lưu lên Google Drive.');
@@ -211,7 +211,7 @@ export async function ensureGoogleDriveAccessToken(interactive = false): Promise
   }
 
   try {
-    const nextState = await requestAccessToken(interactive ? 'consent' : '');
+    const nextState = await requestAccessToken(interactive ? 'consent' : 'none');
     return nextState.accessToken;
   } catch (error) {
     if (interactive) {
