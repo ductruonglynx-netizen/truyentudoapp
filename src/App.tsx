@@ -2287,6 +2287,43 @@ function detectChapterSections(text: string): DetectedChapterSection[] {
   return sections;
 }
 
+function splitTextIntoParagraphBoundChapters(sourceText: string, targetCharsPerChapter: number): DetectedChapterSection[] {
+  const normalized = String(sourceText || '').replace(/\r\n/g, '\n').trim();
+  if (!normalized) return [];
+
+  const paragraphs = normalized
+    .split(/\n{2,}/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (!paragraphs.length) return [{ title: 'Chương 1', content: normalized }];
+
+  const target = Math.max(1200, Math.min(22000, Math.round(Number(targetCharsPerChapter || 3000))));
+  const sections: DetectedChapterSection[] = [];
+  let buffer = '';
+
+  const pushBuffer = () => {
+    const clean = buffer.trim();
+    if (!clean) return;
+    sections.push({
+      title: `Chương ${sections.length + 1}`,
+      content: clean,
+    });
+    buffer = '';
+  };
+
+  for (const paragraph of paragraphs) {
+    const next = buffer ? `${buffer}\n\n${paragraph}` : paragraph;
+    buffer = next;
+    if (buffer.length >= target) {
+      // Chỉ cắt ở ranh giới đoạn văn để không vỡ mạch câu.
+      pushBuffer();
+    }
+  }
+
+  pushBuffer();
+  return sections.length ? sections : [{ title: 'Chương 1', content: normalized }];
+}
+
 function buildChapterTranslationUnits(sourceText: string, maxCharsPerSegment: number): ChapterTranslationUnit[] {
   const normalizedSource = String(sourceText || '').replace(/\r\n/g, '\n').trim();
   if (!normalizedSource) return [];
@@ -2297,6 +2334,28 @@ function buildChapterTranslationUnits(sourceText: string, maxCharsPerSegment: nu
     : [{ title: 'Chương 1', content: normalizedSource }];
 
   return baseSections
+    .map((section, index) => {
+      const source = String(section.content || '').trim();
+      if (!source) return null;
+      const segments = splitLargeTextByParagraphs(source, maxCharsPerSegment);
+      return {
+        title: String(section.title || `Chương ${index + 1}`).trim() || `Chương ${index + 1}`,
+        source,
+        segments: (segments.length ? segments : [source]).filter((segment) => segment.trim().length >= 20),
+      };
+    })
+    .filter((unit): unit is ChapterTranslationUnit => Boolean(unit));
+}
+
+function buildChapterTranslationUnitsByChars(
+  sourceText: string,
+  maxCharsPerSegment: number,
+  targetCharsPerChapter: number,
+): ChapterTranslationUnit[] {
+  const normalizedSource = String(sourceText || '').replace(/\r\n/g, '\n').trim();
+  if (!normalizedSource) return [];
+  const sections = splitTextIntoParagraphBoundChapters(normalizedSource, targetCharsPerChapter);
+  return sections
     .map((section, index) => {
       const source = String(section.content || '').trim();
       if (!source) return null;
@@ -9233,9 +9292,12 @@ interface TranslateStoryModalProps {
   onConfirm: (options: { 
     isAdult: boolean, 
     additionalInstructions: string,
-    useDictionary: boolean
+    useDictionary: boolean,
+    chapteringMode: 'auto' | 'chars',
+    charsPerChapter: number,
   }) => void;
   fileName: string;
+  fileContent: string;
 }
 
 const AiFileActionModal = ({
@@ -9334,11 +9396,44 @@ const AiFileActionModal = ({
   );
 };
 
-const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClose, onConfirm, fileName }) => {
+const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClose, onConfirm, fileName, fileContent }) => {
   const [isAdult, setIsAdult] = useState(false);
   const [additionalInstructions, setAdditionalInstructions] = useState('');
   const [useDictionary, setUseDictionary] = useState(true);
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
+  const [chapteringMode, setChapteringMode] = useState<'auto' | 'chars'>('auto');
+  const [charsPerChapter, setCharsPerChapter] = useState(3000);
+
+  const sourceAnalysis = React.useMemo(() => {
+    const normalized = String(fileContent || '').replace(/\r\n/g, '\n').trim();
+    const charCount = normalized.length;
+    const paragraphCount = normalized ? normalized.split(/\n{2,}/).map((item) => item.trim()).filter(Boolean).length : 0;
+    const detectedChapters = detectChapterSections(normalized);
+    const hasClearChapterStructure = detectedChapters.length >= 2;
+    return {
+      charCount,
+      paragraphCount,
+      detectedChapterCount: detectedChapters.length,
+      hasClearChapterStructure,
+    };
+  }, [fileContent]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setChapteringMode(sourceAnalysis.hasClearChapterStructure ? 'auto' : 'chars');
+  }, [isOpen, sourceAnalysis.hasClearChapterStructure]);
+
+  const estimatedChapterCount = React.useMemo(() => {
+    if (!sourceAnalysis.charCount) return 0;
+    if (sourceAnalysis.hasClearChapterStructure) {
+      return sourceAnalysis.detectedChapterCount;
+    }
+    if (chapteringMode === 'chars') {
+      const sections = splitTextIntoParagraphBoundChapters(fileContent, charsPerChapter);
+      return sections.length;
+    }
+    return 1;
+  }, [chapteringMode, charsPerChapter, fileContent, sourceAnalysis.charCount, sourceAnalysis.detectedChapterCount, sourceAnalysis.hasClearChapterStructure]);
 
   if (!isOpen) return null;
 
@@ -9368,6 +9463,66 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
 
         <div className="tf-modal-content p-6 md:p-8 overflow-y-auto space-y-8">
           <div className="space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Phân tích file trước khi dịch</p>
+              <p className="mt-2 text-sm text-slate-700">
+                Hệ thống nhận diện được <span className="font-bold">{sourceAnalysis.detectedChapterCount}</span> mốc chương
+                {sourceAnalysis.hasClearChapterStructure ? ' rõ ràng' : ' (chưa rõ ràng)'} ·{' '}
+                <span className="font-bold">{sourceAnalysis.paragraphCount}</span> đoạn ·{' '}
+                <span className="font-bold">{sourceAnalysis.charCount.toLocaleString('vi-VN')}</span> ký tự.
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Dự kiến sẽ tạo khoảng <span className="font-semibold">{estimatedChapterCount}</span> chương để dịch.
+              </p>
+            </div>
+
+            {!sourceAnalysis.hasClearChapterStructure ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 space-y-3">
+                <p className="text-sm font-bold text-amber-900">File chưa có mốc chương rõ ràng</p>
+                <p className="text-xs text-amber-800">
+                  Bạn có thể tách chương theo số ký tự. Hệ thống sẽ giữ trọn đoạn văn: vượt mốc mới chỉ cắt ở đầu đoạn kế tiếp.
+                </p>
+                <div className="flex flex-col gap-2">
+                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="radio"
+                      name="translate-chaptering-mode"
+                      checked={chapteringMode === 'chars'}
+                      onChange={() => setChapteringMode('chars')}
+                    />
+                    Tách theo số ký tự/chương
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="radio"
+                      name="translate-chaptering-mode"
+                      checked={chapteringMode === 'auto'}
+                      onChange={() => setChapteringMode('auto')}
+                    />
+                    Không tách thủ công (dịch dạng 1 chương lớn)
+                  </label>
+                </div>
+                {chapteringMode === 'chars' ? (
+                  <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                    Số ký tự mục tiêu cho mỗi chương
+                    <input
+                      type="number"
+                      min={1200}
+                      max={22000}
+                      step={100}
+                      value={charsPerChapter}
+                      onChange={(e) => setCharsPerChapter(Math.max(1200, Math.min(22000, Number(e.target.value) || 3000)))}
+                      className="w-full rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800"
+                    />
+                  </label>
+                ) : null}
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                File đã có cấu trúc chương rõ, hệ thống sẽ ưu tiên giữ nguyên chương gốc.
+              </div>
+            )}
+
             <label className="flex items-center gap-3 p-4 rounded-2xl border-2 border-slate-100 hover:border-indigo-100 transition-all cursor-pointer group">
               <div className={cn(
                 "w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all",
@@ -9437,7 +9592,7 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
             Hủy bỏ
           </button>
           <button 
-            onClick={() => onConfirm({ isAdult, additionalInstructions, useDictionary })}
+            onClick={() => onConfirm({ isAdult, additionalInstructions, useDictionary, chapteringMode, charsPerChapter })}
             className="flex-1 px-8 py-4 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-900/20"
           >
             Bắt đầu dịch
@@ -12885,7 +13040,9 @@ const AppContent = () => {
   const handleTranslateStory = async (options: {
     isAdult: boolean,
     additionalInstructions: string,
-    useDictionary: boolean
+    useDictionary: boolean,
+    chapteringMode: 'auto' | 'chars',
+    charsPerChapter: number,
   }) => {
     if (!user || !translateFileContent) return;
     
@@ -12969,7 +13126,12 @@ const AppContent = () => {
       const translationLane = translationRouteDecision.lane;
       const translationConcurrency = hugeFileMode ? 1 : (turboMode ? 2 : 1);
       const detectedSections = detectChapterSections(translateFileContent);
-      const translationUnits = buildChapterTranslationUnits(translateFileContent, segmentCharLimit);
+      const hasClearChapterStructure = detectedSections.length >= 2;
+      const useManualChapterSplit = !hasClearChapterStructure && options.chapteringMode === 'chars';
+      const manualCharsPerChapter = Math.max(1200, Math.min(22000, Math.round(Number(options.charsPerChapter || 3000))));
+      const translationUnits = useManualChapterSplit
+        ? buildChapterTranslationUnitsByChars(translateFileContent, segmentCharLimit, manualCharsPerChapter)
+        : buildChapterTranslationUnits(translateFileContent, segmentCharLimit);
       const effectiveUnits = translationUnits.length
         ? translationUnits
         : [{
@@ -12991,7 +13153,9 @@ const AppContent = () => {
       const sharedSafetySettings = GEMINI_UNRESTRICTED_SAFETY_SETTINGS;
       const preparationLabel = shouldRunAnalysis ? 'Đang phân tích nội dung gốc...' : 'Đang chuẩn bị dịch theo lô...';
 
-      const translationPreparationMessage = detectedSections.length >= 2 && turboMode && lowQuotaMode
+      const translationPreparationMessage = useManualChapterSplit
+        ? `File chưa có mốc chương rõ ràng. Đang tách theo khoảng ${manualCharsPerChapter.toLocaleString('vi-VN')} ký tự/chương và giữ trọn đoạn văn.`
+        : detectedSections.length >= 2 && turboMode && lowQuotaMode
         ? `Đã nhận diện ${effectiveUnits.length} chương. Bật chế độ tiết kiệm quota + dịch nhanh.`
         : detectedSections.length >= 2 && turboMode
           ? `Đã nhận diện ${effectiveUnits.length} chương. Bật chế độ dịch nhanh.`
@@ -13359,7 +13523,7 @@ const AppContent = () => {
           updateAiRun(aiRun, {
             message: 'Đang dịch truyện...',
             stageLabel: `Dịch chương ${chapterIndex + 1}/${maxTranslateChunks}`,
-            detail: `Lô ${batchIndex + 1}/${batches.length} với ${batch.entries.length} đoạn${turboMode ? ' · Turbo' : ''}${lowQuotaMode ? ' · Quota-safe' : ''}.`,
+            detail: `Đã dịch ${processedSegments}/${totalSegments} đoạn · Lô ${batchIndex + 1}/${batches.length} với ${batch.entries.length} đoạn${turboMode ? ' · Turbo' : ''}${lowQuotaMode ? ' · Quota-safe' : ''}.`,
             progress: {
               completed: Math.min(processedSegments + batch.entries.length, totalSegments),
               total: Math.max(totalSegments, 1),
@@ -15790,6 +15954,7 @@ ${JSON.stringify(violatingPayload)}
         onClose={() => setShowTranslateModal(false)}
         onConfirm={handleTranslateStory}
         fileName={translateFileName}
+        fileContent={translateFileContent}
       />
 
       <AppToastStack toasts={appToasts} onDismiss={dismissToast} />
