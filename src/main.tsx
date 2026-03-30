@@ -18,6 +18,23 @@ if (typeof window !== 'undefined' && /^\/{2,}/.test(window.location.pathname)) {
   window.history.replaceState(window.history.state, '', normalizedUrl);
 }
 
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  void navigator.serviceWorker.getRegistrations().then((registrations) => {
+    registrations.forEach((registration) => {
+      void registration.unregister();
+    });
+  });
+  if ('caches' in window) {
+    void caches.keys().then((keys) => {
+      keys
+        .filter((key) => key.startsWith('truyenforge-phase4-cache-'))
+        .forEach((key) => {
+          void caches.delete(key);
+        });
+    });
+  }
+}
+
 initClientErrorMonitoring();
 
 createRoot(document.getElementById('root')!).render(
