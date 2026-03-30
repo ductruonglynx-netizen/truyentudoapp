@@ -3989,6 +3989,12 @@ function bumpMainAiUsage(inputText: string, outputText: string): { requests: num
 }
 
 const inFlightAiRequests = new Map<string, Promise<string>>();
+const OLLAMA_LOCAL_SAFE_TOKENS = {
+  fast: 900,
+  quality: 1400,
+  retryFast: 1100,
+  retryQuality: 1600,
+};
 
 const buildDefaultGenConfig = (kind: 'fast' | 'quality', config?: Record<string, unknown>) => {
   const base = kind === 'fast'
@@ -4122,6 +4128,16 @@ function calculateAdaptiveTimeoutMs(kind: 'fast' | 'quality', maxOutputTokens: n
   return Math.min(180000, 35000 + Math.round(tokens * 14));
 }
 
+function applyOllamaLocalGenTuning(kind: 'fast' | 'quality', config: Record<string, unknown>): Record<string, unknown> {
+  const tuned = { ...config };
+  const safeMax = kind === 'fast' ? OLLAMA_LOCAL_SAFE_TOKENS.fast : OLLAMA_LOCAL_SAFE_TOKENS.quality;
+  const rawTokens = Number(tuned.maxOutputTokens || safeMax);
+  tuned.maxOutputTokens = Math.max(320, Math.min(safeMax, Math.round(rawTokens)));
+  const rawTemperature = typeof tuned.temperature === 'number' ? Number(tuned.temperature) : (kind === 'fast' ? 0.45 : 0.55);
+  tuned.temperature = Math.min(0.7, Math.max(0.2, rawTemperature));
+  return tuned;
+}
+
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -4136,7 +4152,7 @@ interface RequestTokenBucketState {
 const REQUEST_TOKEN_BUCKETS = new Map<string, RequestTokenBucketState>();
 
 function getRateLimitProfile(provider: ApiProvider): { capacity: number; refillPerSecond: number } {
-  if (provider === 'ollama') return { capacity: 2, refillPerSecond: 0.9 };
+  if (provider === 'ollama') return { capacity: 1, refillPerSecond: 0.45 };
   if (provider === 'openrouter') return { capacity: 3, refillPerSecond: 1.2 };
   if (provider === 'gemini' || provider === 'gcli') return { capacity: 4, refillPerSecond: 1.5 };
   return { capacity: 4, refillPerSecond: 1.6 };
@@ -4501,6 +4517,7 @@ async function generateGeminiText(
       lastModelUsed = currentModel;
       if (auth.provider === 'ollama') {
         triedOllamaModels.add(String(currentModel || '').trim().toLowerCase());
+        attemptConfig = applyOllamaLocalGenTuning(kind, attemptConfig);
       }
       const timeoutMs = calculateAdaptiveTimeoutMs(
         kind,
@@ -4870,7 +4887,7 @@ async function generateGeminiText(
             const attemptedModels = modelCandidates.slice(0, currentModelIndex + 1).join(' -> ');
             if (auth.provider === 'ollama') {
               throw new Error(
-                `Model ${currentModel} đang quá tải (high demand/503). Đã thử: ${attemptedModels}. Kiểm tra Ollama local (ollama ps), giảm concurrency hoặc đổi model nhẹ hơn.`,
+                `Model ${currentModel} đang quá tải hoặc lỗi runtime (5xx). Đã thử: ${attemptedModels}. Kiểm tra Ollama local (ollama ps), giảm kích thước lô/tokens hoặc đổi model nhẹ hơn.`,
               );
             }
             throw new Error(
@@ -4900,7 +4917,12 @@ async function generateGeminiText(
       const currentMax = Number(attemptConfig.maxOutputTokens || 0) || (kind === 'fast' ? 1800 : 4200);
       attemptConfig = {
         ...attemptConfig,
-        maxOutputTokens: Math.min(16384, Math.round(currentMax * 1.8)),
+        maxOutputTokens: auth.provider === 'ollama'
+          ? Math.min(
+              kind === 'fast' ? OLLAMA_LOCAL_SAFE_TOKENS.retryFast : OLLAMA_LOCAL_SAFE_TOKENS.retryQuality,
+              Math.max(320, Math.round(currentMax * 1.18)),
+            )
+          : Math.min(16384, Math.round(currentMax * 1.8)),
       };
       promptForAttempt = `${contents}\n\nYÊU CẦU BỔ SUNG BẮT BUỘC: phản hồi trước quá ngắn hoặc chưa đúng định dạng. Hãy trả lại đầy đủ, chi tiết hơn và tuân thủ đúng format đã yêu cầu.`;
     }
@@ -14081,7 +14103,7 @@ const AppContent = () => {
         1,
         Math.min(2, overloadSafeMode ? 1 : (hugeFileMode ? 1 : (turboMode ? 2 : 1))),
       );
-      const requestSpacingMs = ai.provider === 'ollama' ? 700 : (ai.provider === 'openrouter' ? 280 : 0);
+      const requestSpacingMs = ai.provider === 'ollama' ? 1400 : (ai.provider === 'openrouter' ? 280 : 0);
       const overloadFallbackRetries = ai.provider === 'ollama' ? 3 : 2;
       const hasClearChapterStructure = detectedSections.length >= 2;
       const useManualChapterSplit = !hasClearChapterStructure && options.chapteringMode === 'chars';
@@ -14106,7 +14128,7 @@ const AppContent = () => {
           ? (extremeFileMode ? 5200 : hugeFileMode ? 6800 : (turboMode ? 12000 : 9000))
           : (extremeFileMode ? 4200 : hugeFileMode ? 5600 : (turboMode ? 9000 : 7200));
       if (overloadSafeMode) {
-        batchCharLimit = Math.min(batchCharLimit, ai.provider === 'ollama' ? 3200 : 4800);
+        batchCharLimit = Math.min(batchCharLimit, ai.provider === 'ollama' ? 2200 : 4800);
       }
       const batchItemLimit = overloadSafeMode ? 1 : (extremeFileMode ? 1 : lowQuotaMode ? 1 : hugeFileMode ? 2 : (turboMode ? 3 : 2));
       const translationRequestRetries = overloadSafeMode ? 0 : (lowQuotaMode && !hugeFileMode ? 0 : 1);
@@ -14352,12 +14374,21 @@ const AppContent = () => {
             strictJson: true,
           });
 
-        const dynamicMaxTokens = turboMode
-          ? Math.min(12288, Math.max(2600, Math.round(params.segmentText.length * 1.18)))
-          : Math.min(16384, Math.max(3400, Math.round(params.segmentText.length * 1.55)));
-        const dynamicMinChars = turboMode
-          ? Math.max(160, Math.round(params.segmentText.length * 0.14))
-          : Math.max(240, Math.round(params.segmentText.length * 0.2));
+        const isOllamaLocal = ai.provider === 'ollama';
+        const dynamicMaxTokens = isOllamaLocal
+          ? (turboMode
+            ? Math.min(1200, Math.max(700, Math.round(params.segmentText.length * 0.58)))
+            : Math.min(1600, Math.max(900, Math.round(params.segmentText.length * 0.7))))
+          : (turboMode
+            ? Math.min(12288, Math.max(2600, Math.round(params.segmentText.length * 1.18)))
+            : Math.min(16384, Math.max(3400, Math.round(params.segmentText.length * 1.55))));
+        const dynamicMinChars = isOllamaLocal
+          ? (turboMode
+            ? Math.max(120, Math.round(params.segmentText.length * 0.1))
+            : Math.max(170, Math.round(params.segmentText.length * 0.14)))
+          : (turboMode
+            ? Math.max(160, Math.round(params.segmentText.length * 0.14))
+            : Math.max(240, Math.round(params.segmentText.length * 0.2)));
         const translateTextRaw = await generateGeminiText(
           ai,
           segmentRouteDecision.lane,
@@ -14406,7 +14437,9 @@ const AppContent = () => {
           );
           const retryRaw = await generateGeminiText(ai, retryRouteDecision.lane, retryPrompt, {
             responseMimeType: "application/json",
-            maxOutputTokens: Math.min(16384, Math.round(dynamicMaxTokens * 1.25)),
+            maxOutputTokens: isOllamaLocal
+              ? Math.min(1700, Math.round(dynamicMaxTokens * 1.15))
+              : Math.min(16384, Math.round(dynamicMaxTokens * 1.25)),
             minOutputChars: Math.round(dynamicMinChars * 1.08),
             maxRetries: 1,
             safetySettings: sharedSafetySettings,
@@ -14493,13 +14526,23 @@ const AppContent = () => {
           });
 
         const sourceLength = params.batch.sourceText.length;
-        const dynamicMaxTokens = turboMode
-          ? Math.min(14336, Math.max(3600, Math.round(sourceLength * 1.08)))
-          : Math.min(16384, Math.max(4600, Math.round(sourceLength * 1.35)));
-        const dynamicMinChars = Math.max(
-          180 * params.batch.entries.length,
-          Math.round(sourceLength * (turboMode ? 0.13 : 0.19)),
-        );
+        const isOllamaLocal = ai.provider === 'ollama';
+        const dynamicMaxTokens = isOllamaLocal
+          ? (turboMode
+            ? Math.min(1300, Math.max(800, Math.round(sourceLength * 0.52)))
+            : Math.min(1800, Math.max(1000, Math.round(sourceLength * 0.65))))
+          : (turboMode
+            ? Math.min(14336, Math.max(3600, Math.round(sourceLength * 1.08)))
+            : Math.min(16384, Math.max(4600, Math.round(sourceLength * 1.35))));
+        const dynamicMinChars = isOllamaLocal
+          ? Math.max(
+              130 * params.batch.entries.length,
+              Math.round(sourceLength * (turboMode ? 0.09 : 0.13)),
+            )
+          : Math.max(
+              180 * params.batch.entries.length,
+              Math.round(sourceLength * (turboMode ? 0.13 : 0.19)),
+            );
 
         const batchRaw = await generateGeminiText(
           ai,
@@ -14634,8 +14677,8 @@ const AppContent = () => {
             overloadStreak += 1;
             runtimeConcurrency = Math.max(1, runtimeConcurrency - 1);
             runtimeBatchItemLimit = Math.max(1, runtimeBatchItemLimit - 1);
-            runtimeBatchCharLimit = Math.max(1400, Math.round(runtimeBatchCharLimit * 0.82));
-            runtimeRequestSpacingMs = Math.min(2400, runtimeRequestSpacingMs + 240);
+            runtimeBatchCharLimit = Math.max(ai.provider === 'ollama' ? 900 : 1400, Math.round(runtimeBatchCharLimit * 0.82));
+            runtimeRequestSpacingMs = Math.min(ai.provider === 'ollama' ? 4200 : 2400, runtimeRequestSpacingMs + (ai.provider === 'ollama' ? 340 : 240));
             if (overloadStreak >= 2) degradeModeActive = true;
             updateAiRun(aiRun, {
               message: 'Model đang quá tải, tự chuyển chế độ an toàn...',
