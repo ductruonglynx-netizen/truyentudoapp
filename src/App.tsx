@@ -3666,6 +3666,34 @@ function getGeminiFallbackModels(baseModel: string, kind: 'fast' | 'quality'): s
   return Array.from(new Set(merged));
 }
 
+const NON_FALLBACK_MODEL_VALUES = new Set(['ollama-custom', 'custom-model']);
+
+function getProviderFallbackModels(
+  provider: ApiProvider,
+  baseModel: string,
+  kind: 'fast' | 'quality',
+): string[] {
+  const normalizedBase = String(baseModel || '').trim();
+  if (!normalizedBase) return [];
+  if (provider === 'unknown') return [normalizedBase];
+
+  const listed = (PROVIDER_MODEL_OPTIONS[provider as Exclude<ApiProvider, 'unknown'>] || [])
+    .map((option) => String(option?.value || '').trim())
+    .filter((value) => value && !NON_FALLBACK_MODEL_VALUES.has(value.toLowerCase()));
+
+  let preferred = listed;
+  if (provider === 'openrouter') {
+    preferred = ['openrouter/auto', ...listed.filter((value) => value !== 'openrouter/auto')];
+  } else if (provider === 'ollama') {
+    preferred = kind === 'quality'
+      ? ['qwen2.5:7b', 'llama3.1:8b', 'gemma2:9b', 'mistral:7b', ...listed]
+      : ['llama3.1:8b', 'gemma2:9b', 'mistral:7b', 'qwen2.5:7b', ...listed];
+  }
+
+  const merged = [normalizedBase, ...preferred].map((item) => String(item || '').trim()).filter(Boolean);
+  return Array.from(new Set(merged));
+}
+
 const fetchWithTimeout = async (
   input: RequestInfo | URL,
   init: RequestInit,
@@ -3732,7 +3760,7 @@ async function generateGeminiText(
   const initialModel = auth.model || getProfileModel(kind, auth.provider);
   const modelCandidates = auth.provider === 'gemini' || auth.provider === 'gcli'
     ? getGeminiFallbackModels(initialModel, kind)
-    : [initialModel];
+    : getProviderFallbackModels(auth.provider, initialModel, kind);
   const splitConfig = splitGenConfig(config);
   const traceTask = splitConfig.taskType || (kind === 'quality' ? 'story_generate' : 'story_translate');
   const initialConfig = buildDefaultGenConfig(kind, splitConfig.providerConfig);
@@ -3771,7 +3799,12 @@ async function generateGeminiText(
     const expectedMinChars = calculateAdaptiveMinOutputChars(contents, kind, splitConfig.minOutputChars);
     let currentModelIndex = 0;
     let currentModel = modelCandidates[currentModelIndex] || initialModel;
-    const extraRecoveryRetries = (auth.provider === 'gemini' || auth.provider === 'gcli') ? 2 : 1;
+    const extraRecoveryRetries =
+      auth.provider === 'gemini' || auth.provider === 'gcli'
+        ? 2
+        : (auth.provider === 'openrouter' || auth.provider === 'ollama')
+          ? 3
+          : 2;
     const maxAttempts = splitConfig.maxRetries + Math.max(0, modelCandidates.length - 1) + extraRecoveryRetries;
 
     for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
@@ -4005,7 +4038,15 @@ async function generateGeminiText(
             throw new Error(`Đã chạm quota của model ${currentModel}. Hãy đổi model/API key hoặc chờ quota reset rồi thử lại.`);
           }
           if (isTransientError) {
-            throw new Error(`Model ${currentModel} đang quá tải (high demand/503). Hãy thử lại sau 1-2 phút hoặc đổi model.`);
+            const attemptedModels = modelCandidates.slice(0, currentModelIndex + 1).join(' -> ');
+            if (auth.provider === 'ollama') {
+              throw new Error(
+                `Model ${currentModel} đang quá tải (high demand/503). Đã thử: ${attemptedModels}. Kiểm tra Ollama local (ollama ps), giảm concurrency hoặc đổi model nhẹ hơn.`,
+              );
+            }
+            throw new Error(
+              `Model ${currentModel} đang quá tải (high demand/503). Đã thử: ${attemptedModels}. Hãy thử lại sau 1-2 phút hoặc đổi model.`,
+            );
           }
         }
         throw err;

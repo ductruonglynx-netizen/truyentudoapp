@@ -121,11 +121,15 @@ export function initClientErrorMonitoring(): void {
 
   window.addEventListener('unhandledrejection', (event) => {
     const reason = event.reason;
+    if (reason === undefined || reason === null) {
+      // Một số thư viện reject rỗng gây spam "Uncaught (in promise) undefined" trên console.
+      event.preventDefault();
+    }
     const message = reason instanceof Error
       ? reason.message
       : typeof reason === 'string'
         ? reason
-        : JSON.stringify(reason);
+        : (JSON.stringify(reason) || 'Unhandled promise rejection (empty reason)');
     const stack = reason instanceof Error ? reason.stack : undefined;
     void reportClientError({
       source: 'unhandledrejection',
