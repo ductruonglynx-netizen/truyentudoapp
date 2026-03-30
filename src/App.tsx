@@ -4259,9 +4259,14 @@ function saveTranslationSafetyProfileSettings(settings: TranslationSafetyProfile
 
 function isModelNotFoundError(err: unknown): boolean {
   const message = stringifyError(err).toLowerCase();
+  const hasModelToken = message.includes('model') || message.includes('models/');
+  const hasMissingPattern =
+    /model\s+["'`]?[\w./:-]+["'`]?\s+(is\s+)?not found/i.test(message) ||
+    /models\/[\w./:-]+\s+is not found/i.test(message) ||
+    /model.+does not exist/i.test(message);
   return (
-    message.includes('model') &&
-    (message.includes('not found') || message.includes('does not exist'))
+    hasModelToken &&
+    hasMissingPattern
   );
 }
 
@@ -4660,6 +4665,7 @@ async function generateGeminiText(
           if (!resp.ok) {
             const body = await resp.text();
             if (auth.provider === 'ollama' && resp.status === 404) {
+              const ollamaErrorBodies = [body];
               const ollamaLegacyEndpoint = `${normalizeOllamaApiBaseUrl(openAiBase)}/api/chat`;
               const legacyResp = await fetchWithTimeout(ollamaLegacyEndpoint, {
                 method: 'POST',
@@ -4687,6 +4693,7 @@ async function generateGeminiText(
                 }
               } else {
                 const legacyBody = await legacyResp.text();
+                ollamaErrorBodies.push(legacyBody);
                 if (legacyResp.status === 404) {
                   const ollamaGenerateEndpoint = `${normalizeOllamaApiBaseUrl(openAiBase)}/api/generate`;
                   const generateResp = await fetchWithTimeout(ollamaGenerateEndpoint, {
@@ -4713,6 +4720,15 @@ async function generateGeminiText(
                     }
                   } else {
                     const generateBody = await generateResp.text();
+                    ollamaErrorBodies.push(generateBody);
+                    const allOllamaErrorText = ollamaErrorBodies.join(' | ');
+                    if (generateResp.status === 404 && !isModelNotFoundError(allOllamaErrorText)) {
+                      throw new Error(
+                        `Không gọi được Ollama local ở ${normalizeOllamaApiBaseUrl(openAiBase)} ` +
+                        `(404 trên /v1/chat/completions, /api/chat, /api/generate). ` +
+                        `Hãy kiểm tra lại Base URL hoặc tiến trình ollama serve.`,
+                      );
+                    }
                     throw new Error(
                       `Ollama Local error ${generateResp.status}: ${generateBody.slice(0, 260)} ` +
                       `(đã thử /v1/chat/completions, /api/chat, /api/generate).`,
@@ -4791,6 +4807,20 @@ async function generateGeminiText(
                 .filter((value, index, list) => list.indexOf(value) === index);
               currentModelIndex = modelCandidates.indexOf(normalizedNext);
               currentModel = normalizedNext;
+              continue;
+            }
+          } else {
+            const emergencyFallback = ['qwen2.5:7b', 'llama3.1:8b', 'gemma2:9b'].find((model) => {
+              const normalized = model.toLowerCase();
+              return !triedOllamaModels.has(normalized) && modelCandidates.some((candidate) => candidate.toLowerCase() === normalized);
+            });
+            if (emergencyFallback) {
+              currentModelIndex = modelCandidates.findIndex((candidate) => candidate.toLowerCase() === emergencyFallback.toLowerCase());
+              if (currentModelIndex < 0) {
+                modelCandidates = [...modelCandidates, emergencyFallback];
+                currentModelIndex = modelCandidates.length - 1;
+              }
+              currentModel = modelCandidates[currentModelIndex];
               continue;
             }
           }
