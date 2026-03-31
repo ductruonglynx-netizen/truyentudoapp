@@ -5,6 +5,7 @@ import { twMerge } from 'tailwind-merge';
 import type { AiProfileMode, ApiModelOption, ApiProvider, StoredApiKeyRecord } from '../../apiVault';
 import { API_PROVIDER_META, PROVIDER_LABELS, PROVIDER_MODEL_OPTIONS } from '../../apiVault';
 import { IMAGE_AI_PROVIDER_META, IMAGE_AI_PROVIDER_ORDER, type ImageAiProvider } from '../../imageAiProviders';
+import type { GenerationConfig } from '../../generationConfig';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -94,6 +95,7 @@ interface ApiSectionPanelProps {
   aiUsageTokens?: number;
   quickImportText?: string;
   quickImportResult?: string;
+  generationConfig: GenerationConfig;
   imageAiEnabled: boolean;
   imageAiApiKey: string;
   imageAiStatusLabel: string;
@@ -126,6 +128,8 @@ interface ApiSectionPanelProps {
   onQuickImportTextChange?: (value: string) => void;
   onQuickImportKeys?: () => void;
   onAiProfileChange?: (value: AiProfileMode) => void;
+  onGenerationConfigPatch: (patch: Partial<GenerationConfig>) => void;
+  onGenerationConfigReset: () => void;
 }
 
 export function ApiSectionPanel({
@@ -156,6 +160,7 @@ export function ApiSectionPanel({
   relayWebBase,
   relaySocketBase,
   manualRelayTokenInput,
+  generationConfig,
   imageAiEnabled,
   imageAiApiKey,
   imageAiStatusLabel,
@@ -183,6 +188,8 @@ export function ApiSectionPanel({
   onRelayModelChange,
   onManualRelayTokenInputChange,
   onSaveManualRelayToken,
+  onGenerationConfigPatch,
+  onGenerationConfigReset,
 }: ApiSectionPanelProps) {
   const OPENROUTER_CUSTOM_MODEL_OPTION = '__openrouter_custom_model__';
   const [relayCode, setRelayCode] = useState('');
@@ -555,6 +562,196 @@ export function ApiSectionPanel({
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div className="tf-card p-6 space-y-4 border border-indigo-400/20">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-white">Thông số sinh văn bản (Generation Config)</h3>
+            <p className="text-sm text-slate-300 mt-1">
+              Các thông số này áp dụng mặc định cho mọi yêu cầu AI (dịch, viết, phân tích). Tuỳ theo nhà cung cấp, một số mục nâng cao có thể bị giới hạn.
+            </p>
+          </div>
+          <button onClick={onGenerationConfigReset} className="tf-btn tf-btn-ghost">
+            Khôi phục mặc định
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="space-y-1">
+            <span className="text-sm text-slate-200">Nhiệt độ (Temperature)</span>
+            <input
+              type="number"
+              min={0}
+              max={2}
+              step={0.01}
+              value={generationConfig.temperature}
+              onChange={(e) => onGenerationConfigPatch({ temperature: Number(e.target.value) })}
+              className="tf-input"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-sm text-slate-200">Top P</span>
+            <input
+              type="number"
+              min={0}
+              max={1}
+              step={0.01}
+              value={generationConfig.topP}
+              onChange={(e) => onGenerationConfigPatch({ topP: Number(e.target.value) })}
+              className="tf-input"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-sm text-slate-200">Top K</span>
+            <input
+              type="number"
+              min={1}
+              max={400}
+              step={1}
+              value={generationConfig.topK}
+              onChange={(e) => onGenerationConfigPatch({ topK: Number(e.target.value) })}
+              className="tf-input"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-sm text-slate-200">Kích thước phản hồi tối đa (Max Output Tokens)</span>
+            <input
+              type="number"
+              min={64}
+              max={131072}
+              step={1}
+              value={generationConfig.maxOutputTokens}
+              onChange={(e) => onGenerationConfigPatch({ maxOutputTokens: Number(e.target.value) })}
+              className="tf-input"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-sm text-slate-200">Kích thước Context (token)</span>
+            <input
+              type="number"
+              min={4096}
+              max={262144}
+              step={256}
+              value={generationConfig.contextWindowTokens}
+              onChange={(e) => onGenerationConfigPatch({ contextWindowTokens: Number(e.target.value) })}
+              className="tf-input"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-sm text-slate-200">Hạt giống (Seed)</span>
+            <input
+              type="number"
+              min={-1}
+              max={2147483647}
+              step={1}
+              value={generationConfig.seed}
+              onChange={(e) => onGenerationConfigPatch({ seed: Number(e.target.value) })}
+              className="tf-input"
+            />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="space-y-1">
+            <span className="text-sm text-slate-200">🧠 Suy nghĩ AI (Thinking / Reasoning)</span>
+            <select
+              value={generationConfig.reasoningLevel}
+              onChange={(e) => onGenerationConfigPatch({ reasoningLevel: e.target.value as GenerationConfig['reasoningLevel'] })}
+              className="tf-input"
+            >
+              <option value="low">Thấp (Low)</option>
+              <option value="medium">Trung bình (Medium)</option>
+              <option value="high">Cao (High)</option>
+            </select>
+          </label>
+          <div className="rounded-xl border border-white/10 bg-slate-950/30 p-3 text-xs text-slate-300">
+            Gợi ý: Chọn <span className="font-semibold text-white">High</span> cho viết truyện dài, còn dịch nhanh có thể dùng <span className="font-semibold text-white">Medium</span> để giảm tải.
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+          <label className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/30 px-3 py-2">
+            <input
+              type="checkbox"
+              checked={generationConfig.enableGeminiWebSearch}
+              onChange={(e) => onGenerationConfigPatch({ enableGeminiWebSearch: e.target.checked })}
+            />
+            <span>Bật Google Web Search (Gemini Direct API)</span>
+          </label>
+          <label className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/30 px-3 py-2">
+            <input
+              type="checkbox"
+              checked={generationConfig.showThinking}
+              onChange={(e) => onGenerationConfigPatch({ showThinking: e.target.checked })}
+            />
+            <span>Hiện thinking</span>
+          </label>
+          <label className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/30 px-3 py-2">
+            <input
+              type="checkbox"
+              checked={generationConfig.useReasoningWorker}
+              onChange={(e) => onGenerationConfigPatch({ useReasoningWorker: e.target.checked })}
+            />
+            <span>Giao cho AI Phụ (Worker) tác vụ suy luận</span>
+          </label>
+          <label className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/30 px-3 py-2">
+            <input
+              type="checkbox"
+              checked={generationConfig.inlineImages}
+              onChange={(e) => onGenerationConfigPatch({ inlineImages: e.target.checked })}
+            />
+            <span>Yêu cầu AI tạo ảnh minh hoạ (Inline Images)</span>
+          </label>
+          <label className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/30 px-3 py-2">
+            <input
+              type="checkbox"
+              checked={generationConfig.useImageWorker}
+              onChange={(e) => onGenerationConfigPatch({ useImageWorker: e.target.checked })}
+            />
+            <span>Giao cho AI Phụ chạy tác vụ tạo ảnh</span>
+          </label>
+          <label className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/30 px-3 py-2">
+            <input
+              type="checkbox"
+              checked={generationConfig.enableStreaming}
+              onChange={(e) => onGenerationConfigPatch({ enableStreaming: e.target.checked })}
+            />
+            <span>Phát trực tiếp (Streaming)</span>
+          </label>
+          <label className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/30 px-3 py-2">
+            <input
+              type="checkbox"
+              checked={generationConfig.autoCritique}
+              onChange={(e) => onGenerationConfigPatch({ autoCritique: e.target.checked })}
+            />
+            <span>Tự động phê bình & chỉnh sửa (Auto-Critique)</span>
+          </label>
+          <label className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/30 px-3 py-2">
+            <input
+              type="checkbox"
+              checked={generationConfig.multiDraft}
+              onChange={(e) => onGenerationConfigPatch({ multiDraft: e.target.checked })}
+            />
+            <span>Multi-Draft cho cảnh quan trọng</span>
+          </label>
+          <label className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/30 px-3 py-2">
+            <input
+              type="checkbox"
+              checked={generationConfig.rateLimitDelay}
+              onChange={(e) => onGenerationConfigPatch({ rateLimitDelay: e.target.checked })}
+            />
+            <span>Chống giới hạn tốc độ (Rate Limit Delay)</span>
+          </label>
+          <label className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/30 px-3 py-2">
+            <input
+              type="checkbox"
+              checked={generationConfig.fullThinkingPrompt}
+              onChange={(e) => onGenerationConfigPatch({ fullThinkingPrompt: e.target.checked })}
+            />
+            <span>Thinking Prompt đầy đủ (12 bước)</span>
+          </label>
         </div>
       </div>
 

@@ -67,6 +67,7 @@ import { createBackupSnapshot, getBackupSnapshot, listBackupSnapshots, updateBac
 import { buildDriveBackupFilename, connectGoogleDriveInteractive, ensureGoogleDriveAccessToken, hasGoogleDriveBackupConfig, loadStoredDriveAuth, uploadBackupSnapshotToDrive, type GoogleDriveAuthState, type GoogleDriveAccountProfile } from './googleDriveBackups';
 import { buildScopedStorageKey, getScopedStorageItem, getWorkspaceScopeUser, setScopedStorageItem, setWorkspaceScopeUser, shouldAllowLegacyScopeFallback } from './workspaceScope';
 import { clearWorkspaceSyncQueue, enqueueWorkspaceSyncJob, getWorkspaceSyncQueueStats, processWorkspaceSyncQueue, subscribeWorkspaceSyncQueue, type WorkspaceSyncQueueStats } from './workspaceSyncQueue';
+import { DEFAULT_GENERATION_CONFIG, sanitizeGenerationConfig, type GenerationConfig } from './generationConfig';
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
@@ -373,6 +374,7 @@ interface ApiRuntimeConfig {
   selectedModel: string;
   activeApiKeyId: string;
   enableCache: boolean;
+  generation: GenerationConfig;
 }
 
 interface ImageApiConfig {
@@ -1713,6 +1715,7 @@ function getApiRuntimeConfig(): ApiRuntimeConfig {
       selectedModel: parsed.selectedModel || '',
       activeApiKeyId: parsed.activeApiKeyId || '',
       enableCache: parsed.enableCache !== false,
+      generation: sanitizeGenerationConfig(parsed.generation as Record<string, unknown>),
     };
   } catch {
     return {
@@ -1727,6 +1730,7 @@ function getApiRuntimeConfig(): ApiRuntimeConfig {
       selectedModel: '',
       activeApiKeyId: '',
       enableCache: true,
+      generation: DEFAULT_GENERATION_CONFIG,
     };
   }
 }
@@ -4036,11 +4040,56 @@ const OLLAMA_LOCAL_SAFE_TOKENS = {
 };
 const OLLAMA_LOCAL_SAFE_NUM_CTX = 2048;
 
-const buildDefaultGenConfig = (kind: 'fast' | 'quality', config?: Record<string, unknown>) => {
+const FULL_THINKING_12_STEPS_PROMPT = `
+Khung suy luận nội bộ (12 bước) trước khi trả lời:
+1) Mục tiêu đầu ra và định dạng phải bám đúng yêu cầu.
+2) Xác định ràng buộc bắt buộc, điều cấm và độ dài.
+3) Trích xuất bối cảnh, nhân vật, timeline và mối quan hệ.
+4) Chọn chiến lược triển khai phù hợp với tác vụ.
+5) Lập dàn khung logic ngắn gọn.
+6) Sinh nội dung chi tiết theo dàn khung.
+7) Kiểm tra tính nhất quán tên riêng, xưng hô, thuật ngữ.
+8) Kiểm tra continuity giữa các đoạn/chương.
+9) Loại bỏ câu sáo rỗng và chi tiết lặp.
+10) Soát ngữ pháp, nhịp câu, dấu câu.
+11) Soát lại theo đúng format đầu ra.
+12) Chỉ trả nội dung cuối cùng, không thêm lời xin lỗi hoặc meta.
+`.trim();
+
+function applyContextWindowToPrompt(prompt: string, contextWindowTokens: number): string {
+  const normalized = String(prompt || '').trim();
+  if (!normalized) return '';
+  const budget = Math.max(4096, Math.floor(Number(contextWindowTokens || 0)));
+  const approxChars = budget * 4;
+  if (normalized.length <= approxChars) return normalized;
+  const headRatio = 0.46;
+  return trimTextHeadTailByTokenBudget(normalized, budget, headRatio);
+}
+
+const buildDefaultGenConfig = (
+  kind: 'fast' | 'quality',
+  runtimeConfig: GenerationConfig,
+  config?: Record<string, unknown>,
+) => {
+  const reasoningScale =
+    runtimeConfig.reasoningLevel === 'high'
+      ? 1.18
+      : runtimeConfig.reasoningLevel === 'low'
+        ? 0.88
+        : 1;
   const base = kind === 'fast'
-    ? { temperature: 0.55, topP: 0.92, maxOutputTokens: 1800 }
-    : { temperature: 0.65, topP: 0.95, maxOutputTokens: 4200 };
-  return { ...base, ...(config || {}) };
+    ? { temperature: 0.55, topP: 0.92, maxOutputTokens: Math.round(1800 * reasoningScale) }
+    : { temperature: 0.65, topP: 0.95, maxOutputTokens: Math.round(4200 * reasoningScale) };
+  const runtimeDefaults: Record<string, unknown> = {
+    temperature: runtimeConfig.temperature,
+    topP: runtimeConfig.topP,
+    topK: runtimeConfig.topK,
+    maxOutputTokens: runtimeConfig.maxOutputTokens,
+  };
+  if (runtimeConfig.seed >= 0) {
+    runtimeDefaults.seed = runtimeConfig.seed;
+  }
+  return { ...base, ...runtimeDefaults, ...(config || {}) };
 };
 
 function splitGenConfig(config?: Record<string, unknown>): {
@@ -4175,6 +4224,10 @@ function applyOllamaLocalGenTuning(kind: 'fast' | 'quality', config: Record<stri
   tuned.maxOutputTokens = Math.max(320, Math.min(safeMax, Math.round(rawTokens)));
   const rawTemperature = typeof tuned.temperature === 'number' ? Number(tuned.temperature) : (kind === 'fast' ? 0.45 : 0.55);
   tuned.temperature = Math.min(0.7, Math.max(0.2, rawTemperature));
+  const rawTopP = typeof tuned.topP === 'number' ? Number(tuned.topP) : 0.9;
+  tuned.topP = Math.min(0.98, Math.max(0.6, rawTopP));
+  const rawTopK = typeof tuned.topK === 'number' ? Number(tuned.topK) : 40;
+  tuned.topK = Math.round(Math.min(120, Math.max(10, rawTopK)));
   return tuned;
 }
 
@@ -4475,6 +4528,8 @@ async function callOllamaLocalWithFallback(
   }
 
   const temperature = typeof input.attemptConfig.temperature === 'number' ? input.attemptConfig.temperature : 0.55;
+  const topP = typeof input.attemptConfig.topP === 'number' ? input.attemptConfig.topP : undefined;
+  const topK = typeof input.attemptConfig.topK === 'number' ? Math.round(input.attemptConfig.topK) : undefined;
   const maxOutputTokens = typeof input.attemptConfig.maxOutputTokens === 'number' ? input.attemptConfig.maxOutputTokens : undefined;
 
   const chatResp = await fetchWithTimeout(
@@ -4488,6 +4543,8 @@ async function callOllamaLocalWithFallback(
         stream: false,
         options: {
           temperature,
+          top_p: topP,
+          top_k: topK,
           num_predict: maxOutputTokens,
           num_ctx: OLLAMA_LOCAL_SAFE_NUM_CTX,
         },
@@ -4514,6 +4571,8 @@ async function callOllamaLocalWithFallback(
         stream: false,
         options: {
           temperature,
+          top_p: topP,
+          top_k: topK,
           num_predict: maxOutputTokens,
           num_ctx: OLLAMA_LOCAL_SAFE_NUM_CTX,
         },
@@ -4541,6 +4600,7 @@ async function callOllamaLocalWithFallback(
         model: input.model,
         messages: [{ role: 'user', content: input.prompt }],
         temperature,
+        top_p: topP,
         max_tokens: maxOutputTokens,
       }),
     },
@@ -4583,11 +4643,31 @@ async function generateGeminiText(
 ): Promise<string> {
   const taskStartedAt = Date.now();
   const runtime = getApiRuntimeConfig();
+  const runtimeGeneration = sanitizeGenerationConfig(runtime.generation);
   let initialModel = String(auth.model || getProfileModel(kind, auth.provider) || '').trim();
   let modelCandidates = auth.provider === 'gemini' || auth.provider === 'gcli'
     ? getGeminiFallbackModels(initialModel, kind)
     : getProviderFallbackModels(auth.provider, initialModel, kind);
   const splitConfig = splitGenConfig(config);
+  const wantsJsonResponse = String(splitConfig.providerConfig.responseMimeType || '').toLowerCase().includes('json');
+  const promptWithThinking =
+    runtimeGeneration.fullThinkingPrompt && kind === 'quality' && !wantsJsonResponse
+      ? `${String(contents || '').trim()}\n\n${FULL_THINKING_12_STEPS_PROMPT}`
+      : String(contents || '').trim();
+  const runtimeHints: string[] = [];
+  if (!wantsJsonResponse && runtimeGeneration.showThinking) {
+    runtimeHints.push('Nếu model hỗ trợ thinking, hãy hiển thị phần suy luận ngắn gọn trước khi trả lời chính.');
+  }
+  if (!wantsJsonResponse && runtimeGeneration.enableGeminiWebSearch && (auth.provider === 'gemini' || auth.provider === 'gcli')) {
+    runtimeHints.push('Nếu model hỗ trợ Search Grounding, hãy tra cứu web để tăng độ chính xác ở các thông tin thực tế.');
+  }
+  if (!wantsJsonResponse && runtimeGeneration.inlineImages && auth.provider === 'gemini') {
+    runtimeHints.push('Nếu model hỗ trợ phản hồi kèm ảnh minh hoạ, hãy ưu tiên trả cả ảnh minh hoạ phù hợp.');
+  }
+  const promptBase = applyContextWindowToPrompt(
+    runtimeHints.length ? `${promptWithThinking}\n\n${runtimeHints.join('\n')}` : promptWithThinking,
+    runtimeGeneration.contextWindowTokens,
+  );
   let ollamaInstalledModels: string[] = [];
   if (auth.provider === 'ollama') {
     ollamaInstalledModels = await fetchOllamaInstalledModels(
@@ -4617,13 +4697,13 @@ async function generateGeminiText(
     }
   }
   const traceTask = splitConfig.taskType || (kind === 'quality' ? 'story_generate' : 'story_translate');
-  const initialConfig = buildDefaultGenConfig(kind, splitConfig.providerConfig);
+  const initialConfig = buildDefaultGenConfig(kind, runtimeGeneration, splitConfig.providerConfig);
   let lastModelUsed = initialModel;
   const reqFingerprint = quickHash(
     JSON.stringify({
       provider: auth.provider,
       model: initialModel,
-      contents,
+      contents: promptBase,
       config: initialConfig,
       maxRetries: splitConfig.maxRetries,
       minOutputChars: splitConfig.minOutputChars,
@@ -4650,8 +4730,8 @@ async function generateGeminiText(
 
   const task = (async () => {
     let attemptConfig: Record<string, unknown> = { ...initialConfig };
-    let promptForAttempt = contents;
-    let expectedMinChars = calculateAdaptiveMinOutputChars(contents, kind, splitConfig.minOutputChars);
+    let promptForAttempt = promptBase;
+    let expectedMinChars = calculateAdaptiveMinOutputChars(promptBase, kind, splitConfig.minOutputChars);
     if (auth.provider === 'ollama') {
       expectedMinChars = Math.min(expectedMinChars, kind === 'fast' ? 320 : 560);
     }
@@ -4664,7 +4744,8 @@ async function generateGeminiText(
         : (auth.provider === 'openrouter' || auth.provider === 'ollama')
           ? 3
           : 2;
-    const maxAttempts = splitConfig.maxRetries + Math.max(0, modelCandidates.length - 1) + extraRecoveryRetries;
+    const multiDraftRetries = runtimeGeneration.multiDraft && kind === 'quality' ? 1 : 0;
+    const maxAttempts = splitConfig.maxRetries + Math.max(0, modelCandidates.length - 1) + extraRecoveryRetries + multiDraftRetries;
 
     for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
       throwIfAborted(splitConfig.signal);
@@ -4677,6 +4758,9 @@ async function generateGeminiText(
         kind,
         Number(attemptConfig.maxOutputTokens || 0) || (kind === 'fast' ? 1800 : 4200),
       );
+      if (runtimeGeneration.rateLimitDelay && auth.provider === 'custom' && attempt > 0) {
+        await sleepMs(15000);
+      }
       await acquireRequestToken(auth.provider, currentModel);
       try {
         if (runtime.mode === 'relay') {
@@ -4836,7 +4920,10 @@ async function generateGeminiText(
             model: currentModel,
             messages: [{ role: 'user', content: promptForAttempt }],
             temperature: typeof attemptConfig.temperature === 'number' ? attemptConfig.temperature : 0.7,
+            top_p: typeof attemptConfig.topP === 'number' ? attemptConfig.topP : undefined,
             max_tokens: typeof attemptConfig.maxOutputTokens === 'number' ? attemptConfig.maxOutputTokens : undefined,
+            seed: typeof attemptConfig.seed === 'number' ? Math.round(attemptConfig.seed) : undefined,
+            stream: runtimeGeneration.enableStreaming ? false : false,
           };
           if (auth.provider === 'openai' && wantsJson) {
             bodyPayload.response_format = { type: 'json_object' };
@@ -4867,6 +4954,7 @@ async function generateGeminiText(
               model: currentModel,
               max_tokens: typeof attemptConfig.maxOutputTokens === 'number' ? attemptConfig.maxOutputTokens : 4096,
               temperature: typeof attemptConfig.temperature === 'number' ? attemptConfig.temperature : 0.7,
+              top_p: typeof attemptConfig.topP === 'number' ? attemptConfig.topP : undefined,
               messages: [{ role: 'user', content: promptForAttempt }],
             }),
           }, timeoutMs, splitConfig.signal);
@@ -5002,10 +5090,10 @@ async function generateGeminiText(
             )
           : Math.min(16384, Math.round(currentMax * 1.8)),
       };
-      promptForAttempt = `${contents}\n\nYÊU CẦU BỔ SUNG BẮT BUỘC: phản hồi trước quá ngắn hoặc chưa đúng định dạng. Hãy trả lại đầy đủ, chi tiết hơn và tuân thủ đúng format đã yêu cầu.`;
+      promptForAttempt = `${promptBase}\n\nYÊU CẦU BỔ SUNG BẮT BUỘC: phản hồi trước quá ngắn hoặc chưa đúng định dạng. Hãy trả lại đầy đủ, chi tiết hơn và tuân thủ đúng format đã yêu cầu.`;
     }
 
-    bumpMainAiUsage(contents, text);
+    bumpMainAiUsage(promptBase, text);
     if (runtime.enableCache && text) {
       const cache = readGeminiCache();
       cache[cacheKey] = { text, ts: Date.now() };
@@ -6546,6 +6634,7 @@ const ToolsManager = ({
   const [apiEntryBaseUrl, setApiEntryBaseUrl] = useState('');
   const [testingApiId, setTestingApiId] = useState<string | null>(null);
   const [enablePromptCache, setEnablePromptCache] = useState(true);
+  const [generationConfig, setGenerationConfig] = useState<GenerationConfig>(DEFAULT_GENERATION_CONFIG);
   const [imageAiEnabled, setImageAiEnabled] = useState(false);
   const [imageAiApiKey, setImageAiApiKey] = useState('');
   const [imageAiProvider, setImageAiProvider] = useState<ImageAiProvider>('evolink');
@@ -6604,6 +6693,7 @@ const ToolsManager = ({
     setSelectedModel(active?.model || runtime.selectedModel || getDefaultModelForProvider(active?.provider || runtime.selectedProvider || 'gemini', runtime.aiProfile));
     setActiveApiKeyId(active?.id || runtime.activeApiKeyId || '');
     setEnablePromptCache(runtime.enableCache);
+    setGenerationConfig(runtime.generation);
     const imageApi = getImageApiConfig();
     setImageAiEnabled(imageApi.enabled);
     setImageAiProvider(imageApi.provider);
@@ -6678,13 +6768,33 @@ const ToolsManager = ({
     };
   }, []);
 
-  const persistRuntimeConfig = (next: Partial<ApiRuntimeConfig>) => {
+  const persistRuntimeConfig = (
+    next: Partial<ApiRuntimeConfig> & { generation?: Partial<GenerationConfig> | GenerationConfig },
+  ) => {
     const current = getApiRuntimeConfig();
+    const nextGeneration = next.generation
+      ? sanitizeGenerationConfig({ ...current.generation, ...next.generation })
+      : current.generation;
     const merged: ApiRuntimeConfig = {
       ...current,
       ...next,
+      generation: nextGeneration,
     };
     saveApiRuntimeConfig(merged);
+  };
+
+  const handleGenerationConfigPatch = (patch: Partial<GenerationConfig>) => {
+    setGenerationConfig((prev) => {
+      const nextGeneration = sanitizeGenerationConfig({ ...prev, ...patch });
+      persistRuntimeConfig({ generation: nextGeneration });
+      return nextGeneration;
+    });
+  };
+
+  const handleGenerationConfigReset = () => {
+    setGenerationConfig(DEFAULT_GENERATION_CONFIG);
+    persistRuntimeConfig({ generation: DEFAULT_GENERATION_CONFIG });
+    notifyApp({ tone: 'success', message: 'Đã khôi phục cấu hình sinh văn bản về mặc định.' });
   };
 
   const syncActiveApi = (entry: StoredApiKeyRecord | null, nextMode: ApiMode = apiMode) => {
@@ -7566,6 +7676,7 @@ const ToolsManager = ({
             aiUsageTokens={aiUsageStats.estTokens}
             quickImportText={quickImportText}
             quickImportResult={quickImportResult}
+            generationConfig={generationConfig}
             imageAiEnabled={imageAiEnabled}
             imageAiApiKey={imageAiApiKey}
             imageAiProvider={imageAiProvider}
@@ -7616,6 +7727,8 @@ const ToolsManager = ({
               setAiProfile(next);
               persistRuntimeConfig({ aiProfile: next });
             }}
+            onGenerationConfigPatch={handleGenerationConfigPatch}
+            onGenerationConfigReset={handleGenerationConfigReset}
           />
         </React.Suspense>
       </motion.div>
@@ -15090,6 +15203,8 @@ const AppContent = () => {
       const ai = createGeminiClient();
       const continueBlueprint = getPromptBlueprint('story_continue');
       const runtimeProfileMode = getApiRuntimeConfig().aiProfile;
+      const runtimeGenerationConfig = getApiRuntimeConfig().generation;
+      const autoCritiqueEnabled = runtimeGenerationConfig.autoCritique !== false;
       continueTaskRun = startAiTaskRun('story_continue', continueBlueprint.version, {
         provider: ai.provider,
         model: ai.model,
@@ -15355,7 +15470,7 @@ const AppContent = () => {
           },
         );
 
-        if (countWords(chapterText || '') < Math.max(220, Math.round(minChapterWords * 0.55))) {
+        if (autoCritiqueEnabled && countWords(chapterText || '') < Math.max(220, Math.round(minChapterWords * 0.55))) {
           const retryRoute = routeAiExecutionLane({
             task: 'story_continue',
             stage: 'quality_gate',
@@ -15394,7 +15509,7 @@ const AppContent = () => {
         }
 
         const chapterQualityIssue = getNarrativeQualityIssue(ch.title, chapterText || '', Math.max(850, Math.round(minChapterChars * 0.7)));
-        if (chapterQualityIssue) {
+        if (autoCritiqueEnabled && chapterQualityIssue) {
           const qualityGateRoute = routeAiExecutionLane({
             task: 'story_continue',
             stage: 'quality_gate',
@@ -15581,6 +15696,8 @@ YÊU CẦU SỬA LỖI:
       const ai = createGeminiClient();
       const generateBlueprint = getPromptBlueprint('story_generate');
       const runtimeProfileMode = getApiRuntimeConfig().aiProfile;
+      const runtimeGenerationConfig = getApiRuntimeConfig().generation;
+      const autoCritiqueEnabled = runtimeGenerationConfig.autoCritique !== false;
       generateTaskRun = startAiTaskRun('story_generate', generateBlueprint.version, {
         provider: ai.provider,
         model: ai.model,
@@ -15751,7 +15868,7 @@ YÊU CẦU SỬA LỖI:
       const chapterLengthTarget = Number.parseInt(String(chapterLength || '1000'), 10);
       const minimumChapterChars = Math.max(900, Math.round((Number.isFinite(chapterLengthTarget) ? chapterLengthTarget : 1000) * 1.6));
       const firstPassValidation = validateNarrativeBatch(chapterDrafts, minimumChapterChars);
-      if (chapterDrafts.length > 0 && firstPassValidation.invalidCount >= Math.max(1, Math.ceil(chapterDrafts.length * 0.5))) {
+      if (autoCritiqueEnabled && chapterDrafts.length > 0 && firstPassValidation.invalidCount >= Math.max(1, Math.ceil(chapterDrafts.length * 0.5))) {
         updateAiRun(aiRun, {
           message: 'Đang làm sạch đầu ra để đúng dạng chương truyện...',
           stageLabel: 'Sửa đầu ra',
@@ -15845,7 +15962,7 @@ CHỈ trả JSON thuần, không bọc markdown.
           }))
           .filter((item) => item.hits.length > 0);
 
-      if (forbiddenPhrases.length) {
+      if (autoCritiqueEnabled && forbiddenPhrases.length) {
         let violating = collectForbiddenHits(chapterDrafts);
         if (violating.length > 0) {
           updateAiRun(aiRun, {
