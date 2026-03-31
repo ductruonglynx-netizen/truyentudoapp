@@ -32,6 +32,41 @@ export const WRITER_RELEASE_NOTES: ReleaseNote[] = [
     ],
   },
   {
+    version: '0.1e',
+    dateLabel: '2026-03-29',
+    title: 'Nâng cấp ổn định dữ liệu và đồng bộ nhiều thiết bị',
+    items: [
+      'Tăng độ ổn định khi làm việc với truyện dài: lưu dữ liệu an toàn hơn để giảm lỗi đầy bộ nhớ cục bộ khi thao tác liên tục.',
+      'Cải thiện khôi phục dữ liệu khi có sự cố: app ưu tiên tìm mốc gần nhất để trả lại trạng thái làm việc nhanh hơn.',
+      'Nâng đồng bộ tài khoản theo hướng ít ghi đè nhầm hơn khi dùng cùng một tài khoản trên nhiều thiết bị.',
+      'Giảm nháy/giật trong các thao tác nền bằng cách làm mượt nhịp đồng bộ và giảm cập nhật dư thừa.',
+      'Cải thiện hiển thị chương khi đọc: đoạn thoại và đoạn hệ thống được tách rõ hơn để dễ theo dõi.',
+    ],
+  },
+  {
+    version: '0.1d',
+    dateLabel: '2026-03-29',
+    title: 'Làm gọn trung tâm sao lưu và tăng khả năng phục hồi',
+    items: [
+      'Đơn giản hóa giao diện sao lưu theo phong cách tối giản, ưu tiên các nút thao tác chính để người dùng phổ thông dùng nhanh hơn.',
+      'Tối ưu cơ chế sao lưu cục bộ để tránh lưu trùng và giảm nguy cơ phình dữ liệu không cần thiết.',
+      'Tăng độ tin cậy khi khôi phục: nếu mốc cục bộ lỗi, hệ thống tự chuyển sang mốc gần nhất có thể dùng được.',
+      'Cải thiện nhịp autosync theo hướng mượt hơn: khi có nhiều thay đổi liên tiếp, app gộp đợt để giảm rung lắc giao diện.',
+    ],
+  },
+  {
+    version: '0.1c',
+    dateLabel: '2026-03-28',
+    title: 'Đi lại điều hướng và URL cho trải nghiệm đọc liền mạch hơn',
+    items: [
+      'Chuẩn hóa URL theo kiểu dễ hiểu: Trang chủ `/`, trang truyện `/:storySlug`, trang đọc `/:storySlug/:chapterSlug`.',
+      'Mỗi truyện có slug ID riêng để link ổn định hơn và hạn chế đụng nhau giữa các truyện tên gần giống.',
+      'Sửa hành vi Back đúng thứ tự đọc: từ trang chương quay về trang truyện, quay thêm lần nữa mới về trang chủ.',
+      'Bổ sung breadcrumb để quay lại từng tầng nhanh, đặc biệt hữu ích khi đọc trên điện thoại.',
+      'Hoàn thiện xử lý link sai (404) và giữ khả năng mở lại link cũ để tránh gãy trải nghiệm.',
+    ],
+  },
+  {
     version: '0.1b',
     dateLabel: '2026-03-28',
     title: 'Sửa vài lỗi nhỏ và thêm lớp bảo vệ dữ liệu',
