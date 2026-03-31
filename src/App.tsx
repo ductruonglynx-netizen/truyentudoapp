@@ -10401,6 +10401,8 @@ interface TranslateStoryModalProps {
     useDictionary: boolean,
     chapteringMode: 'auto' | 'chars',
     charsPerChapter: number,
+    chapterRangeStart: number,
+    chapterRangeEnd: number,
     autoSafeModeEnabled: boolean,
     checkpointEveryChunks: number,
   }) => void;
@@ -10511,6 +10513,8 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
   const [chapteringMode, setChapteringMode] = useState<'auto' | 'chars'>('auto');
   const [charsPerChapter, setCharsPerChapter] = useState(3000);
+  const [chapterRangeStart, setChapterRangeStart] = useState(1);
+  const [chapterRangeEnd, setChapterRangeEnd] = useState(1);
   const [safetySettings, setSafetySettings] = useState<TranslationSafetyProfileSettings>(() => loadTranslationSafetyProfileSettings());
 
   const sourceAnalysis = React.useMemo(() => {
@@ -10531,6 +10535,19 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
     if (!isOpen) return;
     setChapteringMode(sourceAnalysis.hasClearChapterStructure ? 'auto' : 'chars');
   }, [isOpen, sourceAnalysis.hasClearChapterStructure]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const total = Math.max(1, estimatedChapterCount || 1);
+    setChapterRangeStart((prev) => Math.max(1, Math.min(total, prev || 1)));
+    setChapterRangeEnd((prev) => Math.max(1, Math.min(total, prev || total)));
+  }, [isOpen, estimatedChapterCount]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (chapterRangeStart <= chapterRangeEnd) return;
+    setChapterRangeEnd(chapterRangeStart);
+  }, [chapterRangeStart, chapterRangeEnd, isOpen]);
 
   const estimatedChapterCount = React.useMemo(() => {
     if (!sourceAnalysis.charCount) return 0;
@@ -10617,6 +10634,52 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
               </p>
               <p className="mt-1 text-xs text-slate-500">
                 Dự kiến sẽ tạo khoảng <span className="font-semibold">{estimatedChapterCount}</span> chương để dịch.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-4 space-y-3">
+              <p className="text-sm font-bold text-indigo-900">Phạm vi chương cần dịch</p>
+              <p className="text-xs text-indigo-800">
+                Bạn có thể dịch theo khoảng chương mong muốn. Ví dụ: file 30 chương chỉ dịch từ chương 10 đến 20.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                  Từ chương
+                  <input
+                    type="number"
+                    min={1}
+                    max={Math.max(1, estimatedChapterCount || 1)}
+                    step={1}
+                    value={chapterRangeStart}
+                    onChange={(e) => {
+                      const total = Math.max(1, estimatedChapterCount || 1);
+                      const next = Math.max(1, Math.min(total, Number(e.target.value) || 1));
+                      setChapterRangeStart(next);
+                      if (next > chapterRangeEnd) setChapterRangeEnd(next);
+                    }}
+                    className="w-full rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800"
+                  />
+                </label>
+                <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                  Đến chương
+                  <input
+                    type="number"
+                    min={1}
+                    max={Math.max(1, estimatedChapterCount || 1)}
+                    step={1}
+                    value={chapterRangeEnd}
+                    onChange={(e) => {
+                      const total = Math.max(1, estimatedChapterCount || 1);
+                      const next = Math.max(1, Math.min(total, Number(e.target.value) || total));
+                      setChapterRangeEnd(next);
+                      if (next < chapterRangeStart) setChapterRangeStart(next);
+                    }}
+                    className="w-full rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800"
+                  />
+                </label>
+              </div>
+              <p className="text-xs text-indigo-700">
+                Sẽ dịch khoảng <span className="font-bold">{Math.max(1, chapterRangeEnd - chapterRangeStart + 1)}</span> chương trong phạm vi đã chọn.
               </p>
             </div>
 
@@ -10742,6 +10805,8 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
               useDictionary,
               chapteringMode,
               charsPerChapter,
+              chapterRangeStart,
+              chapterRangeEnd,
               autoSafeModeEnabled: safetySettings.autoSafeModeEnabled,
               checkpointEveryChunks: safetySettings.checkpointEveryChunks,
             })}
@@ -14195,6 +14260,8 @@ const AppContent = () => {
     useDictionary: boolean,
     chapteringMode: 'auto' | 'chars',
     charsPerChapter: number,
+    chapterRangeStart: number,
+    chapterRangeEnd: number,
     autoSafeModeEnabled: boolean,
     checkpointEveryChunks: number,
   }) => {
@@ -14302,13 +14369,20 @@ const AppContent = () => {
       const translationUnits = useManualChapterSplit
         ? buildChapterTranslationUnitsByChars(translateFileContent, segmentCharLimit, manualCharsPerChapter)
         : buildChapterTranslationUnits(translateFileContent, segmentCharLimit);
-      const effectiveUnits = translationUnits.length
+      let effectiveUnits = translationUnits.length
         ? translationUnits
         : [{
             title: 'Chương 1',
             source: String(translateFileContent || '').trim(),
             segments: splitLargeTextByParagraphs(String(translateFileContent || '').trim(), segmentCharLimit),
           }];
+      const totalDetectedUnits = effectiveUnits.length;
+      const safeRangeStart = Math.max(1, Math.min(totalDetectedUnits, Math.round(Number(options.chapterRangeStart) || 1)));
+      const safeRangeEnd = Math.max(safeRangeStart, Math.min(totalDetectedUnits, Math.round(Number(options.chapterRangeEnd) || totalDetectedUnits)));
+      effectiveUnits = effectiveUnits.slice(safeRangeStart - 1, safeRangeEnd);
+      if (!effectiveUnits.length) {
+        throw new Error('Không có chương nào trong phạm vi bạn đã chọn để dịch.');
+      }
       const totalSegments =
         effectiveUnits.reduce((acc, unit) => acc + unit.segments.filter((segment) => segment.trim().length >= 30).length, 0) ||
         effectiveUnits.length;
@@ -14338,6 +14412,7 @@ const AppContent = () => {
             : turboMode
             ? 'File lớn nên hệ thống sẽ tự chia đoạn và ưu tiên tốc độ.'
             : 'Chưa thấy mốc chương rõ ràng, hệ thống sẽ tự chia đoạn để dịch ổn định hơn.';
+      const rangeMessage = `Phạm vi dịch: chương ${safeRangeStart} đến ${safeRangeEnd} (trên tổng ${totalDetectedUnits} chương).`;
       const translationProfileNote = extremeFileMode
         ? 'Đang dùng chế độ an toàn cao cho file rất lớn: giảm kích thước lô, dịch tuần tự và hạn chế prompt phình to.'
         : hugeFileMode
@@ -14354,6 +14429,8 @@ const AppContent = () => {
         mode: translateLoadProfile.mode,
         chapteringMode: useManualChapterSplit ? 'chars' : 'auto',
         charsPerChapter: useManualChapterSplit ? manualCharsPerChapter : 0,
+        chapterRangeStart: safeRangeStart,
+        chapterRangeEnd: safeRangeEnd,
         provider: ai.provider,
         model: ai.model,
         dictionary: storyTranslationMemory.map((item) => `${item.original}=>${item.translation}`),
@@ -14400,7 +14477,7 @@ const AppContent = () => {
       updateAiRun(aiRun, {
         message: 'Đang chạy Pha 1/4: Phân tích cấu trúc local...',
         stageLabel: 'Pha 1/4 · Cấu trúc',
-        detail: `${translationPreparationMessage} ${preparationLabel}${translationProfileNote ? ` ${translationProfileNote}` : ''} ${autoProfileDetail} ${autoProfileReasons} Nhận diện ${structureAnalysis.chapterCount} chương, ${structureAnalysis.paragraphCount} đoạn, ${structureAnalysis.dialogueCount} hội thoại, ${structureAnalysis.namedEntities.length} tên riêng và ${structureAnalysis.timeMarkers.length} mốc thời gian.`,
+        detail: `${translationPreparationMessage} ${rangeMessage} ${preparationLabel}${translationProfileNote ? ` ${translationProfileNote}` : ''} ${autoProfileDetail} ${autoProfileReasons} Nhận diện ${structureAnalysis.chapterCount} chương, ${structureAnalysis.paragraphCount} đoạn, ${structureAnalysis.dialogueCount} hội thoại, ${structureAnalysis.namedEntities.length} tên riêng và ${structureAnalysis.timeMarkers.length} mốc thời gian.`,
         progress: { completed: processedSegments, total: Math.max(totalSegments, 1) },
       });
       if (resumedCheckpoint) {
@@ -15115,6 +15192,7 @@ const AppContent = () => {
       const pipelineNotes = [
         'Pipeline dịch 4 pha đã chạy:',
         `1) Cấu trúc local: ${structureAnalysis.chapterCount} chương, ${structureAnalysis.paragraphCount} đoạn, ${structureAnalysis.dialogueCount} hội thoại.`,
+        `Phạm vi đã dịch: chương ${safeRangeStart}-${safeRangeEnd} trên tổng ${totalDetectedUnits} chương đã nhận diện.`,
         `2) Tri thức: Story Bible ${storyBible.chapterSummaries.length} chương / ${storyBible.arcSummaries.length} arc.`,
         `3) Dịch: ${processedSegments}/${totalSegments} đoạn, concurrency tối đa ${translationConcurrency}, degrade mode ${degradeModeActive ? 'bật' : 'tắt'}.`,
         `4) QA nhất quán: phát hiện ${qaIssueCount} cảnh báo cục bộ và đã xử lý hậu kỳ.`,
