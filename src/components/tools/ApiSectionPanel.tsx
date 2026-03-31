@@ -40,6 +40,28 @@ const GENERATION_HINTS: Record<string, string> = {
   rateLimitDelay: 'Chèn khoảng chờ giữa các call khi dùng proxy/custom endpoint để giảm lỗi 429.',
   fullThinkingPrompt: 'Thêm khung thinking 12 bước cho tác vụ dài/chất lượng cao; token tăng đáng kể.',
 };
+type GenerationNumericField =
+  | 'temperature'
+  | 'topP'
+  | 'topK'
+  | 'maxOutputTokens'
+  | 'contextWindowTokens'
+  | 'seed';
+
+function buildGenerationNumberDraft(config: GenerationConfig): Record<GenerationNumericField, string> {
+  return {
+    temperature: String(config.temperature),
+    topP: String(config.topP),
+    topK: String(config.topK),
+    maxOutputTokens: String(config.maxOutputTokens),
+    contextWindowTokens: String(config.contextWindowTokens),
+    seed: String(config.seed),
+  };
+}
+
+function parseLocaleNumber(raw: string): number {
+  return Number(String(raw || '').trim().replace(',', '.'));
+}
 
 function toWsUrl(url: string): string {
   const u = String(url || '').trim();
@@ -213,6 +235,9 @@ export function ApiSectionPanel({
   const [draftOpenRouterCustomModel, setDraftOpenRouterCustomModel] = useState(false);
   const [storedOpenRouterCustomModels, setStoredOpenRouterCustomModels] = useState<Record<string, boolean>>({});
   const [openGenerationHint, setOpenGenerationHint] = useState<string | null>(null);
+  const [generationNumberDraft, setGenerationNumberDraft] = useState<Record<GenerationNumericField, string>>(
+    () => buildGenerationNumberDraft(generationConfig),
+  );
   const lastSyncedRelayUrlCodeRef = React.useRef('');
   const imageProviderMeta = IMAGE_AI_PROVIDER_META[imageAiProvider];
   const imageModelOptions = imageProviderMeta.models;
@@ -280,6 +305,17 @@ export function ApiSectionPanel({
     });
   }, [apiVault, listedOpenRouterModels]);
 
+  useEffect(() => {
+    setGenerationNumberDraft(buildGenerationNumberDraft(generationConfig));
+  }, [
+    generationConfig.temperature,
+    generationConfig.topP,
+    generationConfig.topK,
+    generationConfig.maxOutputTokens,
+    generationConfig.contextWindowTokens,
+    generationConfig.seed,
+  ]);
+
   const relayConnectUrl = useMemo(() => {
     const code = relayCode || '';
     return code ? buildRelaySocketUrl(relaySocketBase, code) : '';
@@ -341,6 +377,28 @@ export function ApiSectionPanel({
         {GENERATION_HINTS[hintKey]}
       </p>
     ) : null;
+  const updateGenerationDraftField = (field: GenerationNumericField, value: string) => {
+    setGenerationNumberDraft((prev) => ({ ...prev, [field]: value }));
+  };
+  const commitGenerationDraftField = (field: GenerationNumericField) => {
+    const raw = String(generationNumberDraft[field] || '').trim();
+    if (!raw) {
+      setGenerationNumberDraft(buildGenerationNumberDraft(generationConfig));
+      return;
+    }
+    const parsed = parseLocaleNumber(raw);
+    if (!Number.isFinite(parsed)) {
+      setGenerationNumberDraft(buildGenerationNumberDraft(generationConfig));
+      return;
+    }
+    onGenerationConfigPatch({ [field]: parsed } as Partial<GenerationConfig>);
+  };
+  const handleGenerationNumberKeyDown = (field: GenerationNumericField, event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    commitGenerationDraftField(field);
+    event.currentTarget.blur();
+  };
   return (
     <div className="max-w-5xl mx-auto pt-28 pb-12 px-4 md:px-6 space-y-6">
       <div className="flex items-center gap-3">
@@ -625,12 +683,12 @@ export function ApiSectionPanel({
               {renderGenerationHelpButton('temperature')}
             </div>
             <input
-              type="number"
-              min={0}
-              max={2}
-              step={0.01}
-              value={generationConfig.temperature}
-              onChange={(e) => onGenerationConfigPatch({ temperature: Number(e.target.value) })}
+              type="text"
+              inputMode="decimal"
+              value={generationNumberDraft.temperature}
+              onChange={(e) => updateGenerationDraftField('temperature', e.target.value)}
+              onBlur={() => commitGenerationDraftField('temperature')}
+              onKeyDown={(e) => handleGenerationNumberKeyDown('temperature', e)}
               className="tf-input mt-2"
             />
             {renderGenerationHint('temperature')}
@@ -641,12 +699,12 @@ export function ApiSectionPanel({
               {renderGenerationHelpButton('topP')}
             </div>
             <input
-              type="number"
-              min={0}
-              max={1}
-              step={0.01}
-              value={generationConfig.topP}
-              onChange={(e) => onGenerationConfigPatch({ topP: Number(e.target.value) })}
+              type="text"
+              inputMode="decimal"
+              value={generationNumberDraft.topP}
+              onChange={(e) => updateGenerationDraftField('topP', e.target.value)}
+              onBlur={() => commitGenerationDraftField('topP')}
+              onKeyDown={(e) => handleGenerationNumberKeyDown('topP', e)}
               className="tf-input mt-2"
             />
             {renderGenerationHint('topP')}
@@ -657,12 +715,12 @@ export function ApiSectionPanel({
               {renderGenerationHelpButton('topK')}
             </div>
             <input
-              type="number"
-              min={1}
-              max={400}
-              step={1}
-              value={generationConfig.topK}
-              onChange={(e) => onGenerationConfigPatch({ topK: Number(e.target.value) })}
+              type="text"
+              inputMode="numeric"
+              value={generationNumberDraft.topK}
+              onChange={(e) => updateGenerationDraftField('topK', e.target.value)}
+              onBlur={() => commitGenerationDraftField('topK')}
+              onKeyDown={(e) => handleGenerationNumberKeyDown('topK', e)}
               className="tf-input mt-2"
             />
             {renderGenerationHint('topK')}
@@ -673,12 +731,12 @@ export function ApiSectionPanel({
               {renderGenerationHelpButton('maxOutputTokens')}
             </div>
             <input
-              type="number"
-              min={64}
-              max={131072}
-              step={1}
-              value={generationConfig.maxOutputTokens}
-              onChange={(e) => onGenerationConfigPatch({ maxOutputTokens: Number(e.target.value) })}
+              type="text"
+              inputMode="numeric"
+              value={generationNumberDraft.maxOutputTokens}
+              onChange={(e) => updateGenerationDraftField('maxOutputTokens', e.target.value)}
+              onBlur={() => commitGenerationDraftField('maxOutputTokens')}
+              onKeyDown={(e) => handleGenerationNumberKeyDown('maxOutputTokens', e)}
               className="tf-input mt-2"
             />
             {renderGenerationHint('maxOutputTokens')}
@@ -689,12 +747,12 @@ export function ApiSectionPanel({
               {renderGenerationHelpButton('contextWindowTokens')}
             </div>
             <input
-              type="number"
-              min={4096}
-              max={262144}
-              step={256}
-              value={generationConfig.contextWindowTokens}
-              onChange={(e) => onGenerationConfigPatch({ contextWindowTokens: Number(e.target.value) })}
+              type="text"
+              inputMode="numeric"
+              value={generationNumberDraft.contextWindowTokens}
+              onChange={(e) => updateGenerationDraftField('contextWindowTokens', e.target.value)}
+              onBlur={() => commitGenerationDraftField('contextWindowTokens')}
+              onKeyDown={(e) => handleGenerationNumberKeyDown('contextWindowTokens', e)}
               className="tf-input mt-2"
             />
             {renderGenerationHint('contextWindowTokens')}
@@ -705,12 +763,12 @@ export function ApiSectionPanel({
               {renderGenerationHelpButton('seed')}
             </div>
             <input
-              type="number"
-              min={-1}
-              max={2147483647}
-              step={1}
-              value={generationConfig.seed}
-              onChange={(e) => onGenerationConfigPatch({ seed: Number(e.target.value) })}
+              type="text"
+              inputMode="numeric"
+              value={generationNumberDraft.seed}
+              onChange={(e) => updateGenerationDraftField('seed', e.target.value)}
+              onBlur={() => commitGenerationDraftField('seed')}
+              onKeyDown={(e) => handleGenerationNumberKeyDown('seed', e)}
               className="tf-input mt-2"
             />
             {renderGenerationHint('seed')}
