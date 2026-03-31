@@ -1,7 +1,8 @@
-export const APP_VERSION_SEMVER = '0.1.0-e';
+export const APP_VERSION_SEMVER = '1.0.0';
 
 export function formatAppVersionLabel(version: string): string {
   const normalized = String(version || '').trim().toLowerCase();
+  if (normalized === '1.0.0' || normalized === '1.0') return '1.0';
   if (normalized === '0.1.0-e') return '0.1e';
   if (normalized === '0.1.0-d') return '0.1d';
   if (normalized === '0.1.0-c') return '0.1c';

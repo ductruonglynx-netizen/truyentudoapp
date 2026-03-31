@@ -2517,6 +2517,26 @@ interface LocalTranslationQaResult {
   totalIssues: number;
 }
 
+interface TranslationReleaseGateIssue {
+  code: 'residual_cjk' | 'mixed_language_line' | 'empty_chapter' | 'chapter_order';
+  severity: 'error' | 'warn';
+  message: string;
+  chapterOrder?: number;
+  sample?: string;
+}
+
+interface TranslationReleaseGateReport {
+  pass: boolean;
+  stats: {
+    chapterCount: number;
+    cjkChars: number;
+    cjkRatio: number;
+    mixedLineCount: number;
+  };
+  blockingIssues: TranslationReleaseGateIssue[];
+  warningIssues: TranslationReleaseGateIssue[];
+}
+
 function trimTextByTokenBudget(text: string, tokenBudget: number): string {
   const safeBudget = Math.max(120, Math.floor(tokenBudget));
   const maxChars = safeBudget * 4;
@@ -2925,6 +2945,110 @@ function runLocalTranslationConsistencyQa(input: {
     missingDictionaryTerms,
     forbiddenPhraseHits,
     totalIssues: missingDictionaryTerms.length + forbiddenPhraseHits.length,
+  };
+}
+
+function countCjkChars(text: string): number {
+  return (String(text || '').match(/[\u3400-\u9FFF]/g) || []).length;
+}
+
+function collectMixedLanguageLines(text: string, limit = 12): string[] {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter((line) => line.length >= 14);
+  const output: string[] = [];
+  for (const line of lines) {
+    const hasCjk = /[\u3400-\u9FFF]/.test(line);
+    const hasLatin = /[\p{Script=Latin}]/u.test(line);
+    if (!hasCjk || !hasLatin) continue;
+    output.push(line.slice(0, 200));
+    if (output.length >= Math.max(1, limit)) break;
+  }
+  return output;
+}
+
+function runTranslationReleaseGate(chapters: Chapter[]): TranslationReleaseGateReport {
+  const issues: TranslationReleaseGateIssue[] = [];
+  const chapterList = Array.isArray(chapters) ? chapters : [];
+  const mergedText = chapterList.map((chapter) => String(chapter?.content || '')).join('\n');
+  const cjkChars = countCjkChars(mergedText);
+  const nonWhitespaceChars = String(mergedText).replace(/\s+/g, '').length;
+  const cjkRatio = nonWhitespaceChars > 0 ? cjkChars / nonWhitespaceChars : 0;
+  const mixedLines = collectMixedLanguageLines(mergedText, 20);
+
+  chapterList.forEach((chapter, index) => {
+    const expectedOrder = index + 1;
+    const chapterContent = String(chapter?.content || '');
+    if (Number(chapter?.order || 0) !== expectedOrder) {
+      issues.push({
+        code: 'chapter_order',
+        severity: 'error',
+        message: `Thứ tự chương lỗi: chương ${expectedOrder} đang có order=${chapter?.order ?? 'null'}.`,
+        chapterOrder: expectedOrder,
+      });
+    }
+    if (chapterContent.trim().length < 40) {
+      issues.push({
+        code: 'empty_chapter',
+        severity: 'error',
+        message: `Chương ${expectedOrder} gần như rỗng hoặc quá ngắn.`,
+        chapterOrder: expectedOrder,
+      });
+    }
+    const chapterCjkChars = countCjkChars(chapterContent);
+    if (chapterCjkChars > 0) {
+      issues.push({
+        code: 'residual_cjk',
+        severity: chapterCjkChars >= 3 ? 'error' : 'warn',
+        message: `Chương ${expectedOrder} còn ký tự CJK (${chapterCjkChars}).`,
+        chapterOrder: expectedOrder,
+        sample: (chapterContent.match(/.{0,80}[\u3400-\u9FFF].{0,80}/) || [])[0] || '',
+      });
+    }
+    const chapterMixedLines = collectMixedLanguageLines(chapterContent, 4);
+    if (chapterMixedLines.length > 0) {
+      issues.push({
+        code: 'mixed_language_line',
+        severity: chapterMixedLines.length >= 2 ? 'error' : 'warn',
+        message: `Chương ${expectedOrder} có ${chapterMixedLines.length} dòng trộn Việt + Trung.`,
+        chapterOrder: expectedOrder,
+        sample: chapterMixedLines[0],
+      });
+    }
+  });
+
+  if (cjkChars > 0 && !issues.some((item) => item.code === 'residual_cjk')) {
+    const severity: TranslationReleaseGateIssue['severity'] = cjkChars >= 8 || cjkRatio >= 0.0005 ? 'error' : 'warn';
+    issues.push({
+      code: 'residual_cjk',
+      severity,
+      message: `Phát hiện còn chữ Trung sau dịch (${cjkChars} ký tự, tỷ lệ ${(cjkRatio * 100).toFixed(3)}%).`,
+      sample: (String(mergedText).match(/.{0,80}[\u3400-\u9FFF].{0,80}/) || [])[0] || '',
+    });
+  }
+
+  if (mixedLines.length > 0 && !issues.some((item) => item.code === 'mixed_language_line')) {
+    issues.push({
+      code: 'mixed_language_line',
+      severity: mixedLines.length >= 2 ? 'error' : 'warn',
+      message: `Phát hiện ${mixedLines.length} dòng trộn tiếng Việt + tiếng Trung.`,
+      sample: mixedLines[0],
+    });
+  }
+
+  const blockingIssues = issues.filter((item) => item.severity === 'error');
+  const warningIssues = issues.filter((item) => item.severity === 'warn');
+  return {
+    pass: blockingIssues.length === 0,
+    stats: {
+      chapterCount: chapterList.length,
+      cjkChars,
+      cjkRatio,
+      mixedLineCount: mixedLines.length,
+    },
+    blockingIssues,
+    warningIssues,
   };
 }
 
@@ -10408,6 +10532,7 @@ interface TranslateStoryModalProps {
   }) => void;
   fileName: string;
   fileContent: string;
+  lastGateReport?: TranslationReleaseGateReport | null;
 }
 
 const AiFileActionModal = ({
@@ -10506,7 +10631,14 @@ const AiFileActionModal = ({
   );
 };
 
-const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClose, onConfirm, fileName, fileContent }) => {
+const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({
+  isOpen,
+  onClose,
+  onConfirm,
+  fileName,
+  fileContent,
+  lastGateReport,
+}) => {
   const [isAdult, setIsAdult] = useState(false);
   const [additionalInstructions, setAdditionalInstructions] = useState('');
   const [useDictionary, setUseDictionary] = useState(true);
@@ -10588,6 +10720,36 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
         </div>
 
         <div className="tf-modal-content p-6 md:p-8 overflow-y-auto space-y-8">
+          {lastGateReport ? (
+            <div className={cn(
+              'rounded-2xl border px-4 py-4 space-y-2',
+              lastGateReport.pass ? 'border-emerald-200 bg-emerald-50' : 'border-rose-200 bg-rose-50',
+            )}>
+              <p className={cn(
+                'text-sm font-bold',
+                lastGateReport.pass ? 'text-emerald-800' : 'text-rose-800',
+              )}>
+                QA gate lần chạy gần nhất: {lastGateReport.pass ? 'PASS' : 'FAIL'}
+              </p>
+              <p className={cn(
+                'text-xs',
+                lastGateReport.pass ? 'text-emerald-700' : 'text-rose-700',
+              )}>
+                Chương: {lastGateReport.stats.chapterCount} · CJK: {lastGateReport.stats.cjkChars} ·
+                Dòng trộn ngôn ngữ: {lastGateReport.stats.mixedLineCount}
+              </p>
+              {!lastGateReport.pass ? (
+                <div className="space-y-1">
+                  {lastGateReport.blockingIssues.slice(0, 4).map((issue, idx) => (
+                    <p key={`${issue.code}-${issue.chapterOrder || 0}-${idx}`} className="text-xs text-rose-700">
+                      - {issue.message}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="space-y-4">
             <div className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-4 space-y-3">
               <p className="text-sm font-bold text-indigo-900">Profile an toàn cho file lớn</p>
@@ -13266,6 +13428,7 @@ const AppContent = () => {
   const [showAiFileActionModal, setShowAiFileActionModal] = useState(false);
   const [translateFileContent, setTranslateFileContent] = useState('');
   const [translateFileName, setTranslateFileName] = useState('');
+  const [translationGateLastReport, setTranslationGateLastReport] = useState<TranslationReleaseGateReport | null>(null);
   const [continueFileContent, setContinueFileContent] = useState('');
   const [continueFileName, setContinueFileName] = useState('');
   const [pendingAiFileContent, setPendingAiFileContent] = useState('');
@@ -13394,6 +13557,19 @@ const AppContent = () => {
     if (!exportStory) return;
     try {
       setIsExportingStory(true);
+      if (exportStory.type === 'translated' && Array.isArray(exportStory.chapters) && exportStory.chapters.length > 0) {
+        const exportGateReport = runTranslationReleaseGate(normalizeChaptersForLocal(exportStory.chapters));
+        setTranslationGateLastReport(exportGateReport);
+        if (!exportGateReport.pass) {
+          const summary = exportGateReport.blockingIssues.slice(0, 2).map((item) => item.message).join(' | ');
+          notifyApp({
+            tone: 'error',
+            message: `Chặn xuất file vì bản dịch chưa sạch: ${summary || 'còn lỗi QA gate.'}`,
+            timeoutMs: 5600,
+          });
+          return;
+        }
+      }
       const blob =
         exportFormat === 'epub'
           ? await buildEpubExport(exportStory, exportIncludeToc)
@@ -14267,6 +14443,7 @@ const AppContent = () => {
   }) => {
     if (!user || !translateFileContent) return;
     
+    setTranslationGateLastReport(null);
     setShowTranslateModal(false);
     const aiRun = beginAiRun("Đang chuẩn bị dịch thuật...", {
       stageLabel: 'Khởi tạo dịch',
@@ -15187,6 +15364,137 @@ const AppContent = () => {
         );
       }
 
+      const attemptReleaseGateAutoRepair = async (
+        report: TranslationReleaseGateReport,
+      ): Promise<TranslationReleaseGateReport> => {
+        const chapterOrders = Array.from(
+          new Set(
+            report.blockingIssues
+              .filter((item) => (item.code === 'residual_cjk' || item.code === 'mixed_language_line') && Number(item.chapterOrder))
+              .map((item) => Number(item.chapterOrder))
+              .filter((value) => Number.isFinite(value) && value > 0),
+          ),
+        ).slice(0, hugeFileMode ? 2 : 4);
+        if (!chapterOrders.length) return report;
+
+        updateAiRun(aiRun, {
+          message: 'QA gate đang tự sửa lỗi ngôn ngữ trộn...',
+          stageLabel: 'Pha 4/4 · QA nhất quán',
+          detail: `Đang sửa tự động ${chapterOrders.length} chương bị lẫn ngôn ngữ trước khi lưu.`,
+          progress: { completed: Math.min(processedSegments, totalSegments), total: Math.max(totalSegments, 1) },
+        });
+
+        for (const chapterOrder of chapterOrders) {
+          const chapter = translatedChapters.find((item) => Number(item.order) === chapterOrder);
+          if (!chapter) continue;
+          const sourceUnit = effectiveUnits[Math.max(0, chapterOrder - 1)];
+          const rawParagraphs = String(chapter.content || '')
+            .split(/\n{2,}/)
+            .map((item) => item.trim())
+            .filter(Boolean);
+          if (!rawParagraphs.length) continue;
+
+          const flaggedIndexes = rawParagraphs.reduce<number[]>((acc, para, index) => {
+            const hasCjk = /[\u3400-\u9FFF]/.test(para);
+            const hasMixed = collectMixedLanguageLines(para, 1).length > 0;
+            if (hasCjk || hasMixed) acc.push(index);
+            return acc;
+          }, []).slice(0, 8);
+          if (!flaggedIndexes.length) continue;
+
+          for (const paraIndex of flaggedIndexes) {
+            const paragraph = rawParagraphs[paraIndex];
+            const repairRoute = routeAiExecutionLane({
+              task: 'story_translate',
+              stage: 'quality_gate',
+              provider: ai.provider,
+              profile: runtimeProfileMode,
+              inputChars: paragraph.length,
+              preferredLane: 'quality',
+            });
+            const repairPrompt = prependPromptContract(`
+              Bạn là biên tập viên hậu kỳ bản dịch.
+              Đoạn dưới đang bị lẫn chữ Trung hoặc trộn ngôn ngữ. Hãy chuyển toàn bộ thành tiếng Việt tự nhiên.
+              Không thêm nội dung mới, không rút gọn ý, giữ nguyên tên riêng và xưng hô.
+
+              TỪ ĐIỂN ƯU TIÊN:
+              ${trimTextByTokenBudget(buildScopedDictionaryContext(sourceUnit?.source || '', dictionaryEntries, 24), 220)}
+
+              ĐOẠN CẦN SỬA:
+              ${paragraph}
+
+              Trả về JSON:
+              {
+                "title": "${chapter.title}",
+                "content": "Đoạn đã sửa sạch, chỉ còn tiếng Việt"
+              }
+            `.trim(), {
+              task: 'story_translate',
+              stage: 'quality_gate',
+              promptVersion: translateBlueprint.version,
+              outputSchema: 'translated_segment_json_v1',
+              strictJson: true,
+            });
+            const repairedRaw = await generateGeminiText(ai, repairRoute.lane, repairPrompt, {
+              responseMimeType: 'application/json',
+              maxOutputTokens: ai.provider === 'ollama' ? 1300 : 4200,
+              minOutputChars: Math.max(90, Math.round(paragraph.length * 0.65)),
+              maxRetries: 1,
+              safetySettings: sharedSafetySettings,
+              signal: abortSignal,
+              ...buildTranslateTraceConfig('quality_gate', {
+                lane: repairRoute.lane,
+                routeReason: repairRoute.reason,
+                chapterIndex: chapterOrder - 1,
+                phase: 'qa_gate_auto_repair',
+              }),
+            });
+            const repaired = normalizeAiJsonContent(repairedRaw || '', chapter.title);
+            const cleanedParagraph = improveBracketSystemSpacing(
+              improveDialogueSpacing(
+                applyTranslationDictionaryToText(sourceUnit?.source || '', repaired.content || paragraph, dictionaryEntries),
+              ),
+            ).trim();
+            if (cleanedParagraph) rawParagraphs[paraIndex] = cleanedParagraph;
+          }
+
+          chapter.content = improveBracketSystemSpacing(
+            improveDialogueSpacing(rawParagraphs.join('\n\n')),
+          );
+          chapter.updatedAt = new Date().toISOString();
+        }
+
+        return runTranslationReleaseGate(translatedChapters);
+      };
+
+      let releaseGate = runTranslationReleaseGate(translatedChapters);
+      if (!releaseGate.pass) {
+        releaseGate = await attemptReleaseGateAutoRepair(releaseGate);
+      }
+      setTranslationGateLastReport(releaseGate);
+      if (!releaseGate.pass) {
+        const blockerSummary = releaseGate.blockingIssues
+          .slice(0, 3)
+          .map((item) => item.message)
+          .join(' | ');
+        updateAiRun(aiRun, {
+          message: 'QA gate chặn xuất bản dịch',
+          stageLabel: 'Pha 4/4 · QA nhất quán',
+          detail: blockerSummary || 'Bản dịch chưa đạt gate chất lượng tối thiểu.',
+          progress: { completed: Math.min(processedSegments, totalSegments), total: Math.max(totalSegments, 1) },
+        });
+        throw new Error(
+          `QA gate chặn bản dịch: ${blockerSummary || 'Phát hiện lỗi cấu trúc hoặc còn chữ Trung trong kết quả.'}`,
+        );
+      }
+      if (releaseGate.warningIssues.length > 0) {
+        notifyApp({
+          tone: 'warn',
+          message: `QA gate: còn ${releaseGate.warningIssues.length} cảnh báo nhẹ. Bạn nên rà soát lại trước khi publish.`,
+          timeoutMs: 4200,
+        });
+      }
+
       // Save to local storage so it shows up in the UI
       const localChapters = normalizeChaptersForLocal(translatedChapters);
       const pipelineNotes = [
@@ -15196,6 +15504,7 @@ const AppContent = () => {
         `2) Tri thức: Story Bible ${storyBible.chapterSummaries.length} chương / ${storyBible.arcSummaries.length} arc.`,
         `3) Dịch: ${processedSegments}/${totalSegments} đoạn, concurrency tối đa ${translationConcurrency}, degrade mode ${degradeModeActive ? 'bật' : 'tắt'}.`,
         `4) QA nhất quán: phát hiện ${qaIssueCount} cảnh báo cục bộ và đã xử lý hậu kỳ.`,
+        `Gate trước khi lưu: PASS (CJK=${releaseGate.stats.cjkChars}, mixed-lines=${releaseGate.stats.mixedLineCount}, cảnh báo=${releaseGate.warningIssues.length}).`,
       ].join('\n');
       const mergedStoryPromptNotes = attachStoryBibleToNotes(pipelineNotes, storyBible);
       createAndStoreStory(({ storyId, storySlug, now }) => ({
@@ -17596,12 +17905,13 @@ ${JSON.stringify(violatingPayload)}
         fileName={continueFileName}
       />
 
-      <TranslateStoryModal 
+      <TranslateStoryModal
         isOpen={showTranslateModal}
         onClose={() => setShowTranslateModal(false)}
         onConfirm={handleTranslateStory}
         fileName={translateFileName}
         fileContent={translateFileContent}
+        lastGateReport={translationGateLastReport}
       />
 
       <AppToastStack toasts={appToasts} onDismiss={dismissToast} />
