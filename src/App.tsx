@@ -10538,13 +10538,6 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
 
   useEffect(() => {
     if (!isOpen) return;
-    const total = Math.max(1, estimatedChapterCount || 1);
-    setChapterRangeStart((prev) => Math.max(1, Math.min(total, prev || 1)));
-    setChapterRangeEnd((prev) => Math.max(1, Math.min(total, prev || total)));
-  }, [isOpen, estimatedChapterCount]);
-
-  useEffect(() => {
-    if (!isOpen) return;
     if (chapterRangeStart <= chapterRangeEnd) return;
     setChapterRangeEnd(chapterRangeStart);
   }, [chapterRangeStart, chapterRangeEnd, isOpen]);
@@ -10560,6 +10553,13 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
     }
     return 1;
   }, [chapteringMode, charsPerChapter, fileContent, sourceAnalysis.charCount, sourceAnalysis.detectedChapterCount, sourceAnalysis.hasClearChapterStructure]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const total = Math.max(1, estimatedChapterCount || 1);
+    setChapterRangeStart((prev) => Math.max(1, Math.min(total, prev || 1)));
+    setChapterRangeEnd((prev) => Math.max(1, Math.min(total, prev || total)));
+  }, [isOpen, estimatedChapterCount]);
 
   if (!isOpen) return null;
 
