@@ -8,9 +8,7 @@ export interface GenerationConfig {
   enableGeminiWebSearch: boolean;
   reasoningLevel: GenerationReasoningLevel;
   showThinking: boolean;
-  useReasoningWorker: boolean;
   inlineImages: boolean;
-  useImageWorker: boolean;
   enableStreaming: boolean;
   autoCritique: boolean;
   multiDraft: boolean;
@@ -28,9 +26,7 @@ export const DEFAULT_GENERATION_CONFIG: GenerationConfig = {
   enableGeminiWebSearch: false,
   reasoningLevel: 'high',
   showThinking: false,
-  useReasoningWorker: false,
   inlineImages: false,
-  useImageWorker: false,
   enableStreaming: true,
   autoCritique: true,
   multiDraft: false,
@@ -75,9 +71,7 @@ export function sanitizeGenerationConfig(input?: Partial<GenerationConfig> | Rec
     enableGeminiWebSearch: toBoolean(raw.enableGeminiWebSearch, fallback.enableGeminiWebSearch),
     reasoningLevel,
     showThinking: toBoolean(raw.showThinking, fallback.showThinking),
-    useReasoningWorker: toBoolean(raw.useReasoningWorker, fallback.useReasoningWorker),
     inlineImages: toBoolean(raw.inlineImages, fallback.inlineImages),
-    useImageWorker: toBoolean(raw.useImageWorker, fallback.useImageWorker),
     enableStreaming: toBoolean(raw.enableStreaming, fallback.enableStreaming),
     autoCritique: toBoolean(raw.autoCritique, fallback.autoCritique),
     multiDraft: toBoolean(raw.multiDraft, fallback.multiDraft),
