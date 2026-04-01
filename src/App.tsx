@@ -4176,10 +4176,44 @@ async function mapWithConcurrency<T, R>(
 }
 
 function countWords(text: string): number {
-  return String(text || '')
-    .trim()
+  const normalized = String(text || '').trim();
+  if (!normalized) return 0;
+
+  const whitespaceWords = normalized
     .split(/\s+/)
     .filter((word) => word.length > 0).length;
+
+  // CJK (Trung/Nhật/Hàn) thường không có khoảng trắng giữa từ, nên chỉ split theo space sẽ sai nặng.
+  const cjkMatches = normalized.match(/[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u3040-\u30FF\uAC00-\uD7AF]/g) || [];
+  const cjkCharCount = cjkMatches.length;
+  const cjkRatio = cjkCharCount / Math.max(1, normalized.length);
+
+  // Nếu văn bản không thiên về CJK thì giữ cách đếm truyền thống.
+  if (cjkCharCount < 120 || cjkRatio < 0.22) {
+    return whitespaceWords;
+  }
+
+  // Ưu tiên word segmentation native nếu runtime hỗ trợ.
+  if (typeof Intl !== 'undefined' && typeof (Intl as typeof Intl & { Segmenter?: unknown }).Segmenter === 'function') {
+    try {
+      const SegmenterCtor = (Intl as typeof Intl & { Segmenter: new (locale?: string, options?: Intl.SegmenterOptions) => Intl.Segmenter }).Segmenter;
+      const segmenter = new SegmenterCtor('zh', { granularity: 'word' });
+      let segmentedWords = 0;
+      for (const chunk of segmenter.segment(normalized)) {
+        if (chunk.isWordLike) segmentedWords += 1;
+      }
+      if (segmentedWords > 0) {
+        // Cộng thêm phần whitespace words để không hụt cụm Latin độc lập.
+        return Math.max(whitespaceWords, segmentedWords + Math.round(whitespaceWords * 0.08));
+      }
+    } catch {
+      // fallback bên dưới
+    }
+  }
+
+  // Fallback gần đúng: 1 từ CJK ~ 1.6 ký tự CJK.
+  const estimatedCjkWords = Math.max(1, Math.round(cjkCharCount / 1.6));
+  return Math.max(whitespaceWords, estimatedCjkWords + Math.round(whitespaceWords * 0.1));
 }
 
 interface AutoContentLoadProfile {
