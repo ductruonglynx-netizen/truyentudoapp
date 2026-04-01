@@ -15297,6 +15297,101 @@ const AppContent = () => {
         };
       };
 
+      const containsCjkChars = (value: string): boolean => /[\u3400-\u9FFF\uF900-\uFAFF]/.test(String(value || ''));
+      const chapterTitleCache = new Map<string, string>();
+      const resolveChapterOrderForTitle = (sourceTitle: string, fallbackOrder: number): number => {
+        const cleaned = cleanChapterHeading(sourceTitle);
+        const chapterMatch =
+          cleaned.match(/^第\s*([0-9０-９一二三四五六七八九十百千万億亿萬萬兩两零〇IVXLCDMivxlcdm]+)\s*[章节回卷部集篇]/i) ||
+          cleaned.match(/^(?:chương|chuong|chapter|hồi|hoi)\s*([0-9ivxlcdm]+)/i);
+        if (chapterMatch?.[1]) {
+          const parsed = parseChapterOrderToken(chapterMatch[1]);
+          if (parsed && Number.isFinite(parsed)) return parsed;
+        }
+        return Math.max(1, fallbackOrder);
+      };
+      const sanitizeVietnameseChapterTitle = (rawTitle: string, fallbackOrder: number): string => {
+        const normalized = String(rawTitle || '').replace(/\s+/g, ' ').trim();
+        if (!normalized) return `Chương ${Math.max(1, fallbackOrder)}`;
+        if (containsCjkChars(normalized)) return `Chương ${Math.max(1, fallbackOrder)}`;
+        return normalized;
+      };
+      const ensureVietnameseChapterTitle = async (params: {
+        sourceTitle: string;
+        translatedTitle: string;
+        chapterOrder: number;
+      }): Promise<string> => {
+        const current = String(params.translatedTitle || '').trim();
+        const source = String(params.sourceTitle || '').trim();
+        const fallbackOrder = resolveChapterOrderForTitle(source || current, params.chapterOrder);
+        if (!containsCjkChars(current)) {
+          return sanitizeVietnameseChapterTitle(current, fallbackOrder);
+        }
+
+        const cacheKey = `${source}__${current}`.trim();
+        const cached = chapterTitleCache.get(cacheKey);
+        if (cached) return sanitizeVietnameseChapterTitle(cached, fallbackOrder);
+
+        const titleRoute = routeAiExecutionLane({
+          task: 'story_translate',
+          stage: 'quality_gate',
+          provider: ai.provider,
+          profile: runtimeProfileMode,
+          inputChars: Math.max(source.length, current.length),
+          preferredLane: 'fast',
+        });
+
+        const titlePrompt = prependPromptContract(
+          `
+          Bạn là dịch giả Trung-Việt. Chỉ dịch TIÊU ĐỀ CHƯƠNG sang tiếng Việt tự nhiên.
+          Bắt buộc giữ số chương chính xác.
+          Không được giữ nguyên tiếng Trung.
+          Không giải thích, không thêm câu dư.
+
+          Tiêu đề gốc:
+          ${source || current}
+
+          Trả về JSON:
+          {
+            "title": "Tiêu đề tiếng Việt"
+          }
+          `.trim(),
+          {
+            task: 'story_translate',
+            stage: 'quality_gate',
+            promptVersion: translateBlueprint.version,
+            outputSchema: 'translated_segment_json_v1',
+            strictJson: true,
+          },
+        );
+
+        try {
+          const titleRaw = await generateGeminiText(ai, titleRoute.lane, titlePrompt, {
+            responseMimeType: 'application/json',
+            maxOutputTokens: 220,
+            minOutputChars: 8,
+            maxRetries: 1,
+            safetySettings: sharedSafetySettings,
+            signal: abortSignal,
+            ...buildTranslateTraceConfig('quality_gate', {
+              lane: titleRoute.lane,
+              routeReason: titleRoute.reason,
+              phase: 'chapter_title_only',
+              chapterOrder: params.chapterOrder,
+            }),
+          });
+          const parsed = normalizeAiJsonContent(titleRaw || '', `Chương ${fallbackOrder}`);
+          const dictionaryApplied = applyTranslationDictionaryToText(source || current, parsed.title || '', dictionaryEntries);
+          const resolved = sanitizeVietnameseChapterTitle(dictionaryApplied || parsed.title || '', fallbackOrder);
+          chapterTitleCache.set(cacheKey, resolved);
+          return resolved;
+        } catch {
+          const fallback = sanitizeVietnameseChapterTitle(current, fallbackOrder);
+          chapterTitleCache.set(cacheKey, fallback);
+          return fallback;
+        }
+      };
+
       const translateSingleChapter = async (unit: ChapterTranslationUnit, chapterIndex: number): Promise<Chapter | null> => {
         const sourceSegments = unit.segments.length ? unit.segments : [unit.source];
         const meaningfulEntries = sourceSegments
@@ -15465,6 +15560,11 @@ const AppContent = () => {
 
         const mergedChapterContent = translatedSegments.join('\n\n').trim();
         if (!mergedChapterContent) return null;
+        translatedTitle = await ensureVietnameseChapterTitle({
+          sourceTitle: String(unit.title || '').trim(),
+          translatedTitle,
+          chapterOrder: chapterIndex + 1,
+        });
         checkpointChapterStates[chapterCheckpointKey] = {
           title: translatedTitle,
           segments: [...translatedSegments],
