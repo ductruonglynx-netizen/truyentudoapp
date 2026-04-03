@@ -46,6 +46,7 @@ import {
   WifiOff,
   Sun,
   Moon,
+  Search,
   ImagePlus,
   Database,
 } from 'lucide-react';
@@ -5798,8 +5799,11 @@ interface PublicStoryFeedItem {
   type?: 'original' | 'translated' | 'continued';
   genre?: string;
   chapterCount: number;
+  expectedChapters?: number;
+  expectedWordCount?: number;
   isAdult?: boolean;
   updatedAt: string;
+  createdAt?: string;
 }
 
 type BreadcrumbItem = {
@@ -9315,6 +9319,7 @@ const StoryDetail = ({
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
   const [chapterRenderLimit, setChapterRenderLimit] = useState(CHAPTER_RENDER_BATCH_SIZE);
+  const [chapterSearchTerm, setChapterSearchTerm] = useState('');
   const displayGenre = parseStoryGenreAndPrompt(story.genre || '', story.storyPromptNotes || '').genreLabel || 'Chưa phân loại';
 
   const getRenderableChapterContent = (content: string) => {
@@ -9420,7 +9425,26 @@ const StoryDetail = ({
 
   useEffect(() => {
     setChapterRenderLimit(CHAPTER_RENDER_BATCH_SIZE);
+    setChapterSearchTerm('');
   }, [story.id]);
+
+  const sortedChapterList = React.useMemo(
+    () => [...(story.chapters || [])].sort((a, b) => a.order - b.order),
+    [story.chapters],
+  );
+
+  const chapterSearchNormalized = chapterSearchTerm.trim().toLowerCase();
+  const filteredChapterList = React.useMemo(() => {
+    if (!chapterSearchNormalized) return sortedChapterList;
+    return sortedChapterList.filter((chapter) => {
+      const displayTitle = getDisplayChapterTitle(chapter).toLowerCase();
+      const chapterAlias = `chuong ${chapter.order}`;
+      const chapterAliasVi = `chương ${chapter.order}`;
+      return displayTitle.includes(chapterSearchNormalized)
+        || chapterAlias.includes(chapterSearchNormalized)
+        || chapterAliasVi.includes(chapterSearchNormalized);
+    });
+  }, [chapterSearchNormalized, sortedChapterList]);
 
   const persistUpdatedStory = (updatedStory: Story): void => {
     const stories = storage.getStories();
@@ -9801,10 +9825,28 @@ const StoryDetail = ({
                 {totalWords.toLocaleString()} chữ
               </span>
             </div>
+            <div className="mb-4 flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <Search className="h-4 w-4 text-slate-400" />
+              <input
+                value={chapterSearchTerm}
+                onChange={(event) => setChapterSearchTerm(event.target.value)}
+                placeholder="Tìm nhanh chương theo số hoặc tên..."
+                className="w-full bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none"
+              />
+              {chapterSearchTerm ? (
+                <button
+                  type="button"
+                  onClick={() => setChapterSearchTerm('')}
+                  className="rounded-lg px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+                >
+                  Xóa
+                </button>
+              ) : null}
+            </div>
             <div className="space-y-2">
-              {story.chapters && story.chapters.length > 0 ? (
+              {sortedChapterList.length > 0 ? (
                 <>
-                  {[...story.chapters].sort((a, b) => a.order - b.order).slice(0, chapterRenderLimit).map((chapter) => {
+                  {(chapterSearchNormalized ? filteredChapterList : filteredChapterList.slice(0, chapterRenderLimit)).map((chapter) => {
                     const chapterRowContent = (
                       <>
                         <div className="flex items-center gap-4">
@@ -9858,14 +9900,19 @@ const StoryDetail = ({
                       </div>
                     );
                   })}
-                  {story.chapters.length > chapterRenderLimit ? (
+                  {!chapterSearchNormalized && filteredChapterList.length > chapterRenderLimit ? (
                     <button
                       type="button"
                       onClick={() => setChapterRenderLimit((prev) => prev + CHAPTER_RENDER_BATCH_SIZE)}
                       className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50"
                     >
-                      Tải thêm chương ({story.chapters.length - chapterRenderLimit} còn lại)
+                      Tải thêm chương ({filteredChapterList.length - chapterRenderLimit} còn lại)
                     </button>
+                  ) : null}
+                  {chapterSearchNormalized && filteredChapterList.length === 0 ? (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-5 text-center text-sm text-slate-500">
+                      Không tìm thấy chương phù hợp với từ khóa bạn nhập.
+                    </div>
                   ) : null}
                 </>
               ) : (
@@ -12713,7 +12760,7 @@ const AppContent = () => {
 
       let query = supabase
         .from(SUPABASE_NORMALIZED_TABLES.stories)
-        .select('story_id,slug,user_id,title,introduction,cover_image_url,type,genre,is_public,is_adult,updated_at')
+        .select('story_id,slug,user_id,title,introduction,cover_image_url,type,genre,is_public,is_adult,expected_chapters,expected_word_count,created_at,updated_at')
         .eq('is_public', true)
         .order('updated_at', { ascending: false })
         .limit(PUBLIC_STORY_FEED_LIMIT);
@@ -12750,7 +12797,10 @@ const AppContent = () => {
         type: (row.type === 'translated' || row.type === 'continued') ? row.type : 'original',
         genre: row.genre ? String(row.genre) : '',
         chapterCount: chapterCountMap[String(row.story_id || '')] || 0,
+        expectedChapters: Number(row.expected_chapters || 0),
+        expectedWordCount: Number(row.expected_word_count || 0),
         isAdult: Boolean(row.is_adult),
+        createdAt: String(row.created_at || ''),
         updatedAt: String(row.updated_at || new Date().toISOString()),
       })).filter((item) => item.id);
 
@@ -13762,6 +13812,8 @@ const AppContent = () => {
   const [publicFeedLoading, setPublicFeedLoading] = useState(false);
   const [publicFeedError, setPublicFeedError] = useState('');
   const [loadingPublicStoryId, setLoadingPublicStoryId] = useState<string | null>(null);
+  const [publicFeedGenreFilter, setPublicFeedGenreFilter] = useState('all');
+  const [publicFeedSort, setPublicFeedSort] = useState<'updated' | 'chapters' | 'title'>('updated');
   const [publicStoryCacheVersion, setPublicStoryCacheVersion] = useState(0);
   const [showAIStoryModal, setShowAIStoryModal] = useState(false);
   const [showAIContinueModal, setShowAIContinueModal] = useState(false);
@@ -13792,6 +13844,97 @@ const AppContent = () => {
     if (readerFeedTab !== 'public') return;
     void refreshPublicStoryFeed();
   }, [appMode, readerFeedTab, refreshPublicStoryFeed]);
+
+  const publicFeedGenreOptions = React.useMemo(() => {
+    const optionsMap = new Map<string, string>();
+    publicStoryFeed.forEach((item) => {
+      const genre = String(item.genre || '').trim();
+      if (!genre) return;
+      const key = genre.toLowerCase();
+      if (!optionsMap.has(key)) {
+        optionsMap.set(key, genre);
+      }
+    });
+    return Array.from(optionsMap.values()).sort((a, b) => a.localeCompare(b, 'vi', { sensitivity: 'base' }));
+  }, [publicStoryFeed]);
+
+  const publicFeedFilteredStories = React.useMemo(() => {
+    const byGenre = publicStoryFeed.filter((item) => {
+      if (publicFeedGenreFilter === 'all') return true;
+      return String(item.genre || '').trim().toLowerCase() === publicFeedGenreFilter.toLowerCase();
+    });
+
+    const getUpdatedMs = (item: PublicStoryFeedItem) => {
+      const ms = new Date(item.updatedAt || '').getTime();
+      return Number.isFinite(ms) ? ms : 0;
+    };
+
+    const sorted = [...byGenre];
+    if (publicFeedSort === 'chapters') {
+      sorted.sort((a, b) => {
+        if (b.chapterCount !== a.chapterCount) return b.chapterCount - a.chapterCount;
+        return getUpdatedMs(b) - getUpdatedMs(a);
+      });
+      return sorted;
+    }
+    if (publicFeedSort === 'title') {
+      sorted.sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), 'vi', { sensitivity: 'base' }));
+      return sorted;
+    }
+    sorted.sort((a, b) => getUpdatedMs(b) - getUpdatedMs(a));
+    return sorted;
+  }, [publicFeedGenreFilter, publicFeedSort, publicStoryFeed]);
+
+  const publicFeedSections = React.useMemo(() => {
+    const getUpdatedMs = (item: PublicStoryFeedItem) => {
+      const ms = new Date(item.updatedAt || '').getTime();
+      return Number.isFinite(ms) ? ms : 0;
+    };
+    const now = Date.now();
+    const isCompleted = (item: PublicStoryFeedItem) => {
+      const expected = Math.max(0, Number(item.expectedChapters || 0));
+      return expected > 0 && item.chapterCount >= expected;
+    };
+
+    const latest = [...publicFeedFilteredStories]
+      .sort((a, b) => getUpdatedMs(b) - getUpdatedMs(a))
+      .slice(0, 9);
+
+    const hot = [...publicFeedFilteredStories]
+      .sort((a, b) => {
+        const scoreA = a.chapterCount * 4 + (a.isAdult ? 0.5 : 0);
+        const scoreB = b.chapterCount * 4 + (b.isAdult ? 0.5 : 0);
+        if (scoreB !== scoreA) return scoreB - scoreA;
+        return getUpdatedMs(b) - getUpdatedMs(a);
+      })
+      .slice(0, 9);
+
+    const completed = [...publicFeedFilteredStories]
+      .filter(isCompleted)
+      .sort((a, b) => getUpdatedMs(b) - getUpdatedMs(a))
+      .slice(0, 9);
+
+    const suggested = [...publicFeedFilteredStories]
+      .sort((a, b) => {
+        const introA = Math.min(300, String(a.introduction || '').length);
+        const introB = Math.min(300, String(b.introduction || '').length);
+        const chapterA = Math.min(120, Number(a.chapterCount || 0) * 3);
+        const chapterB = Math.min(120, Number(b.chapterCount || 0) * 3);
+        const coverA = a.coverImageUrl ? 20 : 0;
+        const coverB = b.coverImageUrl ? 20 : 0;
+        const ageDaysA = Math.max(0, (now - getUpdatedMs(a)) / 86400000);
+        const ageDaysB = Math.max(0, (now - getUpdatedMs(b)) / 86400000);
+        const recencyA = Math.max(0, 120 - Math.floor(ageDaysA * 2));
+        const recencyB = Math.max(0, 120 - Math.floor(ageDaysB * 2));
+        const scoreA = introA + chapterA + coverA + recencyA;
+        const scoreB = introB + chapterB + coverB + recencyB;
+        if (scoreB !== scoreA) return scoreB - scoreA;
+        return getUpdatedMs(b) - getUpdatedMs(a);
+      })
+      .slice(0, 9);
+
+    return { latest, hot, completed, suggested };
+  }, [publicFeedFilteredStories]);
 
   useEffect(() => {
     const stories = storage.getStories();
@@ -17321,6 +17464,92 @@ ${JSON.stringify(violatingPayload)}
       return date.toLocaleDateString('vi-VN');
     };
 
+    const renderPublicStoryCard = (item: PublicStoryFeedItem) => {
+      const isLoading = loadingPublicStoryId === item.id;
+      return (
+        <article
+          key={item.id}
+          className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-900/10"
+        >
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="line-clamp-2 text-xl font-serif font-bold text-slate-900">{item.title}</h3>
+              <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                {item.genre || 'Chưa phân loại'}
+              </p>
+            </div>
+            {item.isAdult ? (
+              <span className="inline-flex shrink-0 items-center rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-red-600">
+                18+
+              </span>
+            ) : null}
+          </div>
+
+          {item.coverImageUrl ? (
+            <div className="mb-4 overflow-hidden rounded-2xl border border-slate-100 bg-slate-100">
+              <img
+                src={item.coverImageUrl}
+                alt={`Bìa truyện ${item.title}`}
+                className="h-44 w-full object-cover object-center"
+                loading="lazy"
+              />
+            </div>
+          ) : null}
+
+          <p className="line-clamp-3 text-sm leading-relaxed text-slate-600">
+            {item.introduction || 'Chưa có giới thiệu ngắn.'}
+          </p>
+
+          <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4 text-[11px] font-semibold text-slate-500">
+            <span>{item.chapterCount} chương</span>
+            <span>Cập nhật {formatPublicUpdatedAt(item.updatedAt)}</span>
+          </div>
+
+          <button
+            onClick={() => void handleOpenPublicStory(item)}
+            disabled={isLoading}
+            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <BookOpen className="h-4 w-4" />}
+            Đọc truyện
+          </button>
+        </article>
+      );
+    };
+
+    const renderPublicSection = (
+      sectionTitle: string,
+      sectionHint: string,
+      icon: React.ReactNode,
+      items: PublicStoryFeedItem[],
+    ) => (
+      <section className="mb-8">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+              {icon}
+            </span>
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">{sectionTitle}</h3>
+              <p className="text-xs text-slate-500">{sectionHint}</p>
+            </div>
+          </div>
+          <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-500">
+            {items.length} truyện
+          </span>
+        </div>
+        {items.length > 0 ? (
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+            {items.map((item) => renderPublicStoryCard(item))}
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-500">
+            Chưa có truyện phù hợp với bộ lọc hiện tại.
+          </div>
+        )}
+      </section>
+    );
+
     return (
       <motion.div
         key="reader-home"
@@ -17414,60 +17643,47 @@ ${JSON.stringify(violatingPayload)}
               </div>
             ) : null}
             {hasSupabase && publicStoryFeed.length > 0 ? (
-              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
-                {publicStoryFeed.map((item) => {
-                  const isLoading = loadingPublicStoryId === item.id;
-                  return (
-                    <article
-                      key={item.id}
-                      className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-900/10"
-                    >
-                      <div className="mb-4 flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <h3 className="line-clamp-2 text-xl font-serif font-bold text-slate-900">{item.title}</h3>
-                          <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                            {item.genre || 'Chưa phân loại'}
-                          </p>
-                        </div>
-                        {item.isAdult ? (
-                          <span className="inline-flex shrink-0 items-center rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-red-600">
-                            18+
-                          </span>
-                        ) : null}
-                      </div>
-
-                      {item.coverImageUrl ? (
-                        <div className="mb-4 overflow-hidden rounded-2xl border border-slate-100 bg-slate-100">
-                          <img
-                            src={item.coverImageUrl}
-                            alt={`Bìa truyện ${item.title}`}
-                            className="h-44 w-full object-cover object-center"
-                            loading="lazy"
-                          />
-                        </div>
-                      ) : null}
-
-                      <p className="line-clamp-3 text-sm leading-relaxed text-slate-600">
-                        {item.introduction || 'Chưa có giới thiệu ngắn.'}
-                      </p>
-
-                      <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4 text-[11px] font-semibold text-slate-500">
-                        <span>{item.chapterCount} chương</span>
-                        <span>Cập nhật {formatPublicUpdatedAt(item.updatedAt)}</span>
-                      </div>
-
-                      <button
-                        onClick={() => void handleOpenPublicStory(item)}
-                        disabled={isLoading}
-                        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <BookOpen className="h-4 w-4" />}
-                        Đọc truyện
-                      </button>
-                    </article>
-                  );
-                })}
-              </div>
+              <>
+                <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div className="text-sm text-slate-600">
+                      Đang hiển thị <span className="font-bold text-slate-900">{publicFeedFilteredStories.length}</span> truyện từ kho công khai.
+                    </div>
+                    <div className="flex flex-col gap-3 sm:flex-row">
+                      <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                        <Search className="h-4 w-4 text-slate-400" />
+                        <span>Thể loại</span>
+                        <select
+                          value={publicFeedGenreFilter}
+                          onChange={(event) => setPublicFeedGenreFilter(event.target.value)}
+                          className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm font-medium text-slate-800 outline-none focus:border-indigo-300"
+                        >
+                          <option value="all">Tất cả</option>
+                          {publicFeedGenreOptions.map((genre) => (
+                            <option key={genre} value={genre.toLowerCase()}>{genre}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                        <span>Sắp xếp</span>
+                        <select
+                          value={publicFeedSort}
+                          onChange={(event) => setPublicFeedSort(event.target.value as 'updated' | 'chapters' | 'title')}
+                          className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm font-medium text-slate-800 outline-none focus:border-indigo-300"
+                        >
+                          <option value="updated">Mới cập nhật</option>
+                          <option value="chapters">Nhiều chương</option>
+                          <option value="title">Tên A-Z</option>
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+                {renderPublicSection('Mới cập nhật', 'Các truyện vừa có cập nhật gần nhất.', <Clock className="h-4 w-4" />, publicFeedSections.latest)}
+                {renderPublicSection('Đang hot', 'Ưu tiên truyện có tiến độ chương cao và hoạt động tốt.', <Zap className="h-4 w-4" />, publicFeedSections.hot)}
+                {renderPublicSection('Hoàn thành', 'Truyện đã đạt đủ số chương theo kế hoạch tác giả đặt ra.', <Check className="h-4 w-4" />, publicFeedSections.completed)}
+                {renderPublicSection('Đề cử', 'Gợi ý đọc nhanh dựa trên độ hoàn thiện và chất lượng mô tả.', <Sparkles className="h-4 w-4" />, publicFeedSections.suggested)}
+              </>
             ) : null}
           </div>
         )}
