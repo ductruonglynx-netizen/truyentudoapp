@@ -9708,17 +9708,78 @@ const StoryDetail = ({
   const formatContent = (content: string) => {
     const normalized = getRenderableChapterContent(content);
     if (!normalized) return '';
-    const withParagraphs = normalized
+    const canonical = normalized
       .replace(/\r\n?/g, '\n')
-      // Tách rõ các đoạn hệ thống dạng [ ... ] [ ... ] để đọc không bị dính.
       .replace(/]\s+\[/g, ']\n[')
-      // Khi có câu thoại mới mở ngoặc kép sau một câu hoàn chỉnh, tách thành đoạn mới.
-      .replace(/([.!?…]["”'’»]*)\s+(?=["“'‘«])/g, '$1\n\n')
-      // Tách nhẹ theo nhịp kể để giảm hiện tượng dính một khối dài.
-      .replace(/([.!?…]["”'’»]*)\s+([A-ZÀ-Ỹ])/g, '$1\n\n$2')
+      .replace(/\u00A0/g, ' ')
+      .replace(/[ \t]+\n/g, '\n')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
-    return improveBracketSystemSpacing(withParagraphs);
+
+    const hasStructuredParagraphs = canonical.split(/\n{2,}/).filter((item) => item.trim().length > 0).length >= 3;
+    if (hasStructuredParagraphs) {
+      return improveBracketSystemSpacing(canonical);
+    }
+
+    const rawLines = canonical
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const isDenseSingleBlock = rawLines.length <= 2 && getWordCount(canonical) >= 220;
+    if (!isDenseSingleBlock) {
+      return improveBracketSystemSpacing(rawLines.join('\n\n'));
+    }
+
+    const sentenceParts = canonical
+      .replace(/\s+/g, ' ')
+      .split(/(?<=[.!?…]["”'’»]*)\s+/u)
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    const paragraphs: string[] = [];
+    let buffer: string[] = [];
+    let wordBudget = 0;
+
+    const flushBuffer = () => {
+      if (!buffer.length) return;
+      paragraphs.push(buffer.join(' ').trim());
+      buffer = [];
+      wordBudget = 0;
+    };
+
+    const isDialogueLike = (sentence: string) => {
+      const source = sentence.trim();
+      return (
+        /^["“'‘«]/.test(source)
+        || /^[-–—]\s*["“'‘«]/.test(source)
+        || /(?:nói|đáp|hỏi|thầm|quát|kêu|gào|lẩm bẩm|thì thầm)\s*[:：]?\s*["“'‘«]/i.test(source)
+      );
+    };
+
+    const isSystemNotice = (sentence: string) => /^\[[^\]]{1,220}\]$/.test(sentence.trim());
+
+    for (const sentence of sentenceParts) {
+      const sentenceWords = getWordCount(sentence);
+      const dialogueLike = isDialogueLike(sentence);
+      const systemNotice = isSystemNotice(sentence);
+
+      if ((dialogueLike || systemNotice) && buffer.length > 0) {
+        flushBuffer();
+      }
+
+      buffer.push(sentence);
+      wordBudget += sentenceWords;
+
+      const hardLimit = dialogueLike || systemNotice ? 45 : 90;
+      if (wordBudget >= hardLimit) {
+        flushBuffer();
+      }
+    }
+    flushBuffer();
+
+    const rebuilt = paragraphs.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
+    return improveBracketSystemSpacing(rebuilt || canonical);
   };
 
   const getWordCount = (text: string) => {
