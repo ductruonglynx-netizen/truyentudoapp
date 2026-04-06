@@ -13031,6 +13031,8 @@ const AppContent = () => {
   const [isExportingStory, setIsExportingStory] = useState(false);
   const profileAvatarInputRef = useRef<HTMLInputElement>(null);
   const backupImportInputRef = useRef<HTMLInputElement>(null);
+  const readerSearchInputRef = useRef<HTMLInputElement>(null);
+  const readerDiscoveryControlsRef = useRef<HTMLDivElement>(null);
   const activeAiRunRef = useRef<ActiveAiRun | null>(null);
   const toastTimeoutsRef = useRef<Map<string, number>>(new Map());
   const workspaceSyncRef = useRef({
@@ -15656,6 +15658,32 @@ const AppContent = () => {
     setIsCreating(false);
     navigate(nextMode === 'creator' ? '/studio' : '/');
   }, [maintenanceGlobalActive, maintenanceReaderActive, maintenanceStudioActive, navigate]);
+
+  const openReaderFeedFromNavbar = useCallback((tab: 'mine' | 'public') => {
+    if (appMode !== 'reader') {
+      setAppMode('reader');
+    }
+    setReaderFeedTab(tab);
+    setSelectedStory(null);
+    setEditingStory(null);
+    setIsCreating(false);
+    navigate('/');
+  }, [appMode, navigate]);
+
+  const focusReaderSearchFromNavbar = useCallback(() => {
+    if (appMode !== 'reader') {
+      setAppMode('reader');
+    }
+    setSelectedStory(null);
+    setEditingStory(null);
+    setIsCreating(false);
+    navigate('/');
+    window.setTimeout(() => {
+      readerDiscoveryControlsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      readerSearchInputRef.current?.focus();
+      readerSearchInputRef.current?.select();
+    }, 80);
+  }, [appMode, navigate]);
 
   const applyReaderPrefsToDom = useCallback((prefs: ReaderPrefs) => {
     const root = document.documentElement;
@@ -18429,30 +18457,17 @@ ${JSON.stringify(violatingPayload)}
             </button>
           </div>
           <div className="mt-5 sm:mt-6 flex flex-wrap items-center gap-2 sm:gap-3">
-            <button
-              onClick={() => setReaderFeedTab('mine')}
+            <span
               className={cn(
-                'inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs sm:text-sm font-bold transition-colors',
-                readerFeedTab === 'mine'
-                  ? 'border-indigo-600 bg-indigo-600 text-white'
-                  : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:text-indigo-700',
-              )}
-            >
-              <Library className="h-4 w-4" />
-              Truyện của bạn
-            </button>
-            <button
-              onClick={() => setReaderFeedTab('public')}
-              className={cn(
-                'inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs sm:text-sm font-bold transition-colors',
+                'inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs sm:text-sm font-bold',
                 readerFeedTab === 'public'
                   ? 'border-indigo-600 bg-indigo-600 text-white'
-                  : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:text-indigo-700',
+                  : 'border-emerald-200 bg-emerald-50 text-emerald-700',
               )}
             >
-              <Users className="h-4 w-4" />
-              Truyện công khai
-            </button>
+              {readerFeedTab === 'public' ? <Users className="h-4 w-4" /> : <Library className="h-4 w-4" />}
+              {readerFeedTab === 'public' ? 'Đang xem: Khám phá' : 'Đang xem: Tủ truyện'}
+            </span>
             {readerFeedTab === 'public' ? (
               <button
                 onClick={() => void refreshPublicStoryFeed()}
@@ -18464,11 +18479,12 @@ ${JSON.stringify(violatingPayload)}
               </button>
             ) : null}
           </div>
-          <div className="mt-4 rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
+          <div ref={readerDiscoveryControlsRef} className="mt-4 rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
               <label className="lg:col-span-3 inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
                 <Search className="h-4 w-4 text-slate-400" />
                 <input
+                  ref={readerSearchInputRef}
                   value={readerQuery}
                   onChange={(event) => setReaderQuery(event.target.value)}
                   onKeyDown={(event) => {
@@ -19594,6 +19610,16 @@ ${JSON.stringify(violatingPayload)}
         }}
         appMode={appMode}
         onSwitchAppMode={handleSwitchAppMode}
+        readerNavKey={
+          appMode === 'reader'
+            ? (readerQuery.trim()
+              ? 'reader-search'
+              : (readerFeedTab === 'public' ? 'reader-public' : 'reader-mine'))
+            : undefined
+        }
+        onOpenReaderMine={() => openReaderFeedFromNavbar('mine')}
+        onOpenReaderPublic={() => openReaderFeedFromNavbar('public')}
+        onOpenReaderSearch={focusReaderSearchFromNavbar}
         themeMode={themeMode}
         onToggleTheme={handleToggleTheme}
         viewportMode={viewportMode}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { BookOpen, Users, Settings, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Library, History } from 'lucide-react';
+import { BookOpen, Users, Settings, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Library, History, Search } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -35,6 +35,10 @@ interface NavbarProps {
   profile: UiProfile;
   appMode: AppMode;
   onSwitchAppMode: (mode: AppMode) => void;
+  readerNavKey?: 'reader-mine' | 'reader-public' | 'reader-search';
+  onOpenReaderMine?: () => void;
+  onOpenReaderPublic?: () => void;
+  onOpenReaderSearch?: () => void;
   finopsWarning?: string;
   authEmail?: string;
   versionLabel?: string;
@@ -58,6 +62,10 @@ export function Navbar({
   profile,
   appMode,
   onSwitchAppMode,
+  readerNavKey,
+  onOpenReaderMine,
+  onOpenReaderPublic,
+  onOpenReaderSearch,
   finopsWarning,
   authEmail,
   versionLabel,
@@ -82,17 +90,21 @@ export function Navbar({
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   const isDark = themeMode === 'dark';
-  const navItems = useMemo(
-    () => appMode === 'reader'
-      ? [{ key: 'stories', label: 'Trang chủ', icon: BookOpen, action: onHome }] as const
-      : [
-          { key: 'stories', label: 'Trang chủ', icon: BookOpen, action: onHome },
-          { key: 'api', label: 'API', icon: Zap, action: () => setView('api') },
-          { key: 'tools', label: 'Công cụ', icon: Settings, action: () => setView('tools') },
-          { key: 'characters', label: 'Nhân vật', icon: Users, action: () => setView('characters') },
-        ] as const,
-    [appMode, onHome, setView],
-  );
+  const navItems = useMemo(() => {
+    if (appMode === 'reader') {
+      return [
+        { key: 'reader-mine', label: 'Tủ truyện', icon: Library, action: onOpenReaderMine || onHome },
+        { key: 'reader-public', label: 'Khám phá', icon: Users, action: onOpenReaderPublic || onHome },
+        { key: 'reader-search', label: 'Tìm kiếm', icon: Search, action: onOpenReaderSearch || onHome },
+      ] as const;
+    }
+    return [
+      { key: 'stories', label: 'Trang chủ', icon: BookOpen, action: onHome },
+      { key: 'api', label: 'API', icon: Zap, action: () => setView('api') },
+      { key: 'tools', label: 'Công cụ', icon: Settings, action: () => setView('tools') },
+      { key: 'characters', label: 'Nhân vật', icon: Users, action: () => setView('characters') },
+    ] as const;
+  }, [appMode, onHome, onOpenReaderMine, onOpenReaderPublic, onOpenReaderSearch, setView]);
   const quickActions = useMemo(
     () => [
       ...(isMobile
@@ -156,7 +168,8 @@ export function Navbar({
   const normalizedAuthEmail = String(authEmail || '').trim().toLowerCase();
   const isAdminAccount = normalizedAuthEmail === 'ductruong.lynx@gmail.com';
   const profileDisplayLabel = isAdminAccount ? 'ADMIN' : profile.displayName;
-  const activeIndex = navItems.findIndex((item) => item.key === currentView);
+  const activeNavKey = appMode === 'reader' ? (readerNavKey || 'reader-mine') : currentView;
+  const activeIndex = navItems.findIndex((item) => item.key === activeNavKey);
   const hasSingleNavItem = navItems.length <= 1;
   const indicatorStyle = {
     width: `${100 / navItems.length}%`,
@@ -380,10 +393,10 @@ export function Navbar({
                 onClick={() => runAction(action)}
                 className={cn(
                   'relative z-10 flex items-center justify-center gap-2 px-3 md:px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300 transform-gpu hover:-translate-y-0.5',
-                  currentView === key ? activeButtonClass : inactiveButtonClass,
+                  activeNavKey === key ? activeButtonClass : inactiveButtonClass,
                 )}
                 title={label}
-                aria-current={currentView === key}
+                aria-current={activeNavKey === key}
               >
                 <Icon className="w-4 h-4" /> <span className="hidden sm:inline">{label}</span>
               </button>
