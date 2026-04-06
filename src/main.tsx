@@ -43,7 +43,7 @@ createRoot(document.getElementById('root')!).render(
       fallback={(
         <div className="min-h-screen flex items-center justify-center bg-[#F6F7F4] text-[#1F2933]">
           <div className="rounded-xl border border-[#D9E2EC] bg-white px-4 py-3 text-sm font-semibold">
-            Loading workspace...
+            Đang mở dữ liệu của bạn...
           </div>
         </div>
       )}
