@@ -402,6 +402,8 @@ const UI_VIEWPORT_MODE_KEY = 'ui_viewport_mode_v1';
 const APP_MODE_KEY = 'app_mode_v1';
 const READER_PREFS_KEY = 'reader_prefs_v1';
 const READER_ACTIVITY_KEY = 'reader_activity_v1';
+const READER_SEARCH_HISTORY_KEY = 'reader_search_history_v1';
+const READER_FILTER_PRESETS_KEY = 'reader_filter_presets_v1';
 const STORIES_UPDATED_EVENT = 'stories:updated';
 const WORKSPACE_RECOVERY_KEY = 'truyenforge:workspace-recovery-v1';
 const ACCOUNT_CLOUD_AUTOSYNC_ENABLED = readEnvFlag('VITE_ACCOUNT_AUTOSYNC', true);
@@ -432,6 +434,25 @@ const STORY_IMPORT_MAX_CHAPTERS_PER_STORY = 1200;
 const STORY_IMPORT_MAX_CHARACTERS = 6000;
 const IMAGE_PROVIDER_WARNING_COOLDOWN_MS = 2 * 60 * 1000;
 const PUBLIC_STORY_FEED_LIMIT = 48;
+const READER_SEARCH_HISTORY_LIMIT = 12;
+const READER_FILTER_PRESET_LIMIT = 8;
+const READER_GENRE_BASE_OPTIONS = [
+  'Tiên hiệp',
+  'Huyền huyễn',
+  'Kiếm hiệp',
+  'Đô thị',
+  'Ngôn tình',
+  'Đam mỹ',
+  'Bách hợp',
+  'Hệ thống',
+  'Trọng sinh',
+  'Xuyên không',
+  'Trinh thám',
+  'Kinh dị',
+  'Hài hước',
+  'Lịch sử',
+  'Quân sự',
+];
 
 interface MaintenanceRuntimeState {
   signature: string;
@@ -5917,6 +5938,169 @@ function listReaderActivityHistory(map: Record<string, ReaderStoryActivity>, lim
     .slice(0, Math.max(1, limit));
 }
 
+function normalizeSearchText(value: string): string {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/đ/g, 'd')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function splitGenreTags(rawGenre: string | undefined): string[] {
+  const source = String(rawGenre || '').trim();
+  if (!source) return [];
+  return source
+    .split(/[,;/|]+/g)
+    .map((item) => item.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function matchesReaderQuery(query: string, chunks: Array<string | undefined>): boolean {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return true;
+  const haystack = normalizeSearchText(chunks.filter(Boolean).join(' '));
+  return haystack.includes(normalizedQuery);
+}
+
+function resolveReaderStatus(chapterCount: number, expectedChapters?: number): 'ongoing' | 'completed' {
+  const expected = Math.max(0, Number(expectedChapters || 0));
+  if (expected > 0 && chapterCount >= expected) return 'completed';
+  return 'ongoing';
+}
+
+function resolveReaderLengthBucket(chapterCount: number, expectedWordCount?: number): ReaderLengthFilter {
+  const expectedWords = Math.max(0, Number(expectedWordCount || 0));
+  if (expectedWords >= 300_000 || chapterCount >= 300) return 'epic';
+  if (expectedWords >= 120_000 || chapterCount >= 120) return 'long';
+  if (expectedWords >= 35_000 || chapterCount >= 40) return 'medium';
+  if (chapterCount <= 15 && expectedWords < 35_000) return 'short';
+  return 'medium';
+}
+
+function matchesReaderDiscoveryFilters(
+  item: {
+    title: string;
+    introduction?: string;
+    genre?: string;
+    type?: string;
+    chapterCount: number;
+    expectedChapters?: number;
+    expectedWordCount?: number;
+    isAdult?: boolean;
+  },
+  filters: ReaderDiscoveryFilters,
+): boolean {
+  if (filters.type !== 'all' && String(item.type || 'original') !== filters.type) return false;
+  if (filters.adult === 'adult' && !item.isAdult) return false;
+  if (filters.adult === 'safe' && item.isAdult) return false;
+
+  const status = resolveReaderStatus(item.chapterCount, item.expectedChapters);
+  if (filters.status !== 'all' && status !== filters.status) return false;
+
+  const lengthBucket = resolveReaderLengthBucket(item.chapterCount, item.expectedWordCount);
+  if (filters.length !== 'all' && lengthBucket !== filters.length) return false;
+
+  if (filters.genre !== 'all') {
+    const tagSet = new Set(splitGenreTags(item.genre).map((tag) => normalizeSearchText(tag)));
+    if (!tagSet.has(normalizeSearchText(filters.genre))) return false;
+  }
+
+  return matchesReaderQuery(filters.query, [
+    item.title,
+    item.introduction,
+    item.genre,
+    splitGenreTags(item.genre).join(' '),
+  ]);
+}
+
+function getReaderScopedRecord<T>(key: string, userId: string | null | undefined, fallback: T): T {
+  try {
+    const raw = getScopedStorageItem(key, {
+      allowLegacyFallback: shouldAllowLegacyScopeFallback(),
+    });
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const userKey = getReaderActivityUserKey(userId);
+    const scopedRaw = parsed?.[userKey];
+    return (scopedRaw as T) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function setReaderScopedRecord<T>(key: string, userId: string | null | undefined, value: T): void {
+  try {
+    const raw = getScopedStorageItem(key, {
+      allowLegacyFallback: shouldAllowLegacyScopeFallback(),
+    });
+    const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const userKey = getReaderActivityUserKey(userId);
+    const next = {
+      ...(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}),
+      [userKey]: value,
+    };
+    setScopedStorageItem(key, JSON.stringify(next));
+  } catch {
+    // ignore scoped save errors for optional reader settings
+  }
+}
+
+function loadReaderSearchHistory(userId?: string | null): string[] {
+  const raw = getReaderScopedRecord<unknown>(READER_SEARCH_HISTORY_KEY, userId, []);
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => String(item || '').trim()).filter(Boolean).slice(0, READER_SEARCH_HISTORY_LIMIT);
+}
+
+function saveReaderSearchHistory(userId: string | null | undefined, history: string[]): void {
+  const sanitized = Array.from(new Set((history || []).map((item) => String(item || '').trim()).filter(Boolean)))
+    .slice(0, READER_SEARCH_HISTORY_LIMIT);
+  setReaderScopedRecord(READER_SEARCH_HISTORY_KEY, userId, sanitized);
+}
+
+function loadReaderFilterPresets(userId?: string | null): ReaderFilterPreset[] {
+  const raw = getReaderScopedRecord<unknown>(READER_FILTER_PRESETS_KEY, userId, []);
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((row) => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+      const data = row as Partial<ReaderFilterPreset>;
+      const filters = (data.filters || {}) as Partial<ReaderDiscoveryFilters>;
+      return {
+        id: String(data.id || `preset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+        name: String(data.name || 'Bộ lọc đã lưu').trim() || 'Bộ lọc đã lưu',
+        filters: {
+          query: String(filters.query || '').trim(),
+          genre: String(filters.genre || 'all').trim() || 'all',
+          status: (filters.status === 'ongoing' || filters.status === 'completed') ? filters.status : 'all',
+          adult: (filters.adult === 'safe' || filters.adult === 'adult') ? filters.adult : 'all',
+          length: (filters.length === 'short' || filters.length === 'medium' || filters.length === 'long' || filters.length === 'epic') ? filters.length : 'all',
+          type: (filters.type === 'original' || filters.type === 'translated' || filters.type === 'continued') ? filters.type : 'all',
+          sort: (filters.sort === 'title' || filters.sort === 'chapters' || filters.sort === 'recent' || filters.sort === 'popular') ? filters.sort : 'updated',
+        },
+        createdAt: String(data.createdAt || new Date().toISOString()),
+        updatedAt: String(data.updatedAt || data.createdAt || new Date().toISOString()),
+      } as ReaderFilterPreset;
+    })
+    .filter((item): item is ReaderFilterPreset => Boolean(item))
+    .slice(0, READER_FILTER_PRESET_LIMIT);
+}
+
+function saveReaderFilterPresets(userId: string | null | undefined, presets: ReaderFilterPreset[]): void {
+  const sanitized = (presets || [])
+    .slice(0, READER_FILTER_PRESET_LIMIT)
+    .map((item) => ({
+      id: String(item.id || `preset-${Date.now()}`),
+      name: String(item.name || 'Bộ lọc đã lưu').trim() || 'Bộ lọc đã lưu',
+      filters: item.filters,
+      createdAt: String(item.createdAt || new Date().toISOString()),
+      updatedAt: String(item.updatedAt || new Date().toISOString()),
+    }));
+  setReaderScopedRecord(READER_FILTER_PRESETS_KEY, userId, sanitized);
+}
+
 interface PublicStoryFeedItem {
   id: string;
   slug?: string;
@@ -5933,6 +6117,40 @@ interface PublicStoryFeedItem {
   updatedAt: string;
   createdAt?: string;
 }
+
+type ReaderStatusFilter = 'all' | 'ongoing' | 'completed';
+type ReaderAdultFilter = 'all' | 'safe' | 'adult';
+type ReaderLengthFilter = 'all' | 'short' | 'medium' | 'long' | 'epic';
+type ReaderTypeFilter = 'all' | 'original' | 'translated' | 'continued';
+type ReaderSortMode = 'updated' | 'title' | 'chapters' | 'recent' | 'popular';
+
+interface ReaderDiscoveryFilters {
+  query: string;
+  genre: string;
+  status: ReaderStatusFilter;
+  adult: ReaderAdultFilter;
+  length: ReaderLengthFilter;
+  type: ReaderTypeFilter;
+  sort: ReaderSortMode;
+}
+
+interface ReaderFilterPreset {
+  id: string;
+  name: string;
+  filters: ReaderDiscoveryFilters;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const DEFAULT_READER_DISCOVERY_FILTERS: ReaderDiscoveryFilters = {
+  query: '',
+  genre: 'all',
+  status: 'all',
+  adult: 'all',
+  length: 'all',
+  type: 'all',
+  sort: 'updated',
+};
 
 type BreadcrumbItem = {
   label: string;
@@ -10153,12 +10371,14 @@ const StoryList = ({
   readerActivityMap = {},
   showReaderMeta = false,
   onContinueFromActivity,
+  storiesOverride = null,
 }: {
   onView: (story: Story) => void;
   refreshKey: number;
   readerActivityMap?: Record<string, ReaderStoryActivity>;
   showReaderMeta?: boolean;
   onContinueFromActivity?: (activity: ReaderStoryActivity) => void;
+  storiesOverride?: StoryListItem[] | null;
 }) => {
   const { user } = useAuth();
   const [stories, setStories] = useState<StoryListItem[]>([]);
@@ -10171,10 +10391,15 @@ const StoryList = ({
   const [continuedLimit, setContinuedLimit] = useState(PAGE_SIZE);
 
   useEffect(() => {
+    if (Array.isArray(storiesOverride)) {
+      setStories(storiesOverride);
+      setLoading(false);
+      return;
+    }
     const list = storage.getStoryListItems();
     setStories(list);
     setLoading(false);
-  }, [refreshKey]);
+  }, [refreshKey, storiesOverride]);
 
   const handleDelete = async () => {
     if (!deleteId) return;
@@ -14150,7 +14375,14 @@ const AppContent = () => {
   const [publicFeedError, setPublicFeedError] = useState('');
   const [loadingPublicStoryId, setLoadingPublicStoryId] = useState<string | null>(null);
   const [publicFeedGenreFilter, setPublicFeedGenreFilter] = useState('all');
-  const [publicFeedSort, setPublicFeedSort] = useState<'updated' | 'chapters' | 'title'>('updated');
+  const [publicFeedSort, setPublicFeedSort] = useState<ReaderSortMode>('updated');
+  const [readerQuery, setReaderQuery] = useState(DEFAULT_READER_DISCOVERY_FILTERS.query);
+  const [readerStatusFilter, setReaderStatusFilter] = useState<ReaderStatusFilter>(DEFAULT_READER_DISCOVERY_FILTERS.status);
+  const [readerAdultFilter, setReaderAdultFilter] = useState<ReaderAdultFilter>(DEFAULT_READER_DISCOVERY_FILTERS.adult);
+  const [readerLengthFilter, setReaderLengthFilter] = useState<ReaderLengthFilter>(DEFAULT_READER_DISCOVERY_FILTERS.length);
+  const [readerTypeFilter, setReaderTypeFilter] = useState<ReaderTypeFilter>(DEFAULT_READER_DISCOVERY_FILTERS.type);
+  const [readerSearchHistory, setReaderSearchHistory] = useState<string[]>([]);
+  const [readerFilterPresets, setReaderFilterPresets] = useState<ReaderFilterPreset[]>([]);
   const [publicStoryCacheVersion, setPublicStoryCacheVersion] = useState(0);
   const [showAIStoryModal, setShowAIStoryModal] = useState(false);
   const [showAIContinueModal, setShowAIContinueModal] = useState(false);
@@ -14182,45 +14414,207 @@ const AppContent = () => {
     void refreshPublicStoryFeed();
   }, [appMode, readerFeedTab, refreshPublicStoryFeed]);
 
+  useEffect(() => {
+    setReaderSearchHistory(loadReaderSearchHistory(user?.uid));
+    setReaderFilterPresets(loadReaderFilterPresets(user?.uid));
+  }, [user?.uid]);
+
+  const currentReaderFilters = React.useMemo<ReaderDiscoveryFilters>(() => ({
+    query: readerQuery,
+    genre: publicFeedGenreFilter,
+    status: readerStatusFilter,
+    adult: readerAdultFilter,
+    length: readerLengthFilter,
+    type: readerTypeFilter,
+    sort: publicFeedSort,
+  }), [publicFeedGenreFilter, publicFeedSort, readerAdultFilter, readerLengthFilter, readerQuery, readerStatusFilter, readerTypeFilter]);
+
+  const resetReaderFilters = useCallback(() => {
+    setReaderQuery(DEFAULT_READER_DISCOVERY_FILTERS.query);
+    setPublicFeedGenreFilter(DEFAULT_READER_DISCOVERY_FILTERS.genre);
+    setReaderStatusFilter(DEFAULT_READER_DISCOVERY_FILTERS.status);
+    setReaderAdultFilter(DEFAULT_READER_DISCOVERY_FILTERS.adult);
+    setReaderLengthFilter(DEFAULT_READER_DISCOVERY_FILTERS.length);
+    setReaderTypeFilter(DEFAULT_READER_DISCOVERY_FILTERS.type);
+    setPublicFeedSort(DEFAULT_READER_DISCOVERY_FILTERS.sort);
+  }, []);
+
+  const pushReaderSearchHistory = useCallback((nextQuery: string) => {
+    const cleaned = String(nextQuery || '').trim();
+    if (!cleaned) return;
+    setReaderSearchHistory((prev) => {
+      const next = [cleaned, ...prev.filter((item) => normalizeSearchText(item) !== normalizeSearchText(cleaned))]
+        .slice(0, READER_SEARCH_HISTORY_LIMIT);
+      saveReaderSearchHistory(user?.uid, next);
+      return next;
+    });
+  }, [user?.uid]);
+
+  const saveCurrentReaderFilterPreset = useCallback(() => {
+    const hasActiveFilter =
+      currentReaderFilters.query
+      || currentReaderFilters.genre !== 'all'
+      || currentReaderFilters.status !== 'all'
+      || currentReaderFilters.adult !== 'all'
+      || currentReaderFilters.length !== 'all'
+      || currentReaderFilters.type !== 'all'
+      || currentReaderFilters.sort !== 'updated';
+    if (!hasActiveFilter) {
+      notifyApp({ tone: 'warn', message: 'Chưa có bộ lọc để lưu preset.' });
+      return;
+    }
+    const timestamp = new Date();
+    const quickName =
+      currentReaderFilters.query
+        ? `Từ khóa: ${currentReaderFilters.query.slice(0, 18)}`
+        : `Bộ lọc ${timestamp.toLocaleDateString('vi-VN')}`;
+    const preset: ReaderFilterPreset = {
+      id: `preset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: quickName,
+      filters: currentReaderFilters,
+      createdAt: timestamp.toISOString(),
+      updatedAt: timestamp.toISOString(),
+    };
+    setReaderFilterPresets((prev) => {
+      const next = [preset, ...prev].slice(0, READER_FILTER_PRESET_LIMIT);
+      saveReaderFilterPresets(user?.uid, next);
+      return next;
+    });
+    notifyApp({ tone: 'success', message: 'Đã lưu preset bộ lọc Reader.' });
+  }, [currentReaderFilters, user?.uid]);
+
+  const applyReaderFilterPreset = useCallback((preset: ReaderFilterPreset) => {
+    const filters = preset.filters;
+    setReaderQuery(filters.query || '');
+    setPublicFeedGenreFilter(filters.genre || 'all');
+    setReaderStatusFilter(filters.status || 'all');
+    setReaderAdultFilter(filters.adult || 'all');
+    setReaderLengthFilter(filters.length || 'all');
+    setReaderTypeFilter(filters.type || 'all');
+    setPublicFeedSort(filters.sort || 'updated');
+    if (filters.query) {
+      pushReaderSearchHistory(filters.query);
+    }
+  }, [pushReaderSearchHistory]);
+
+  const removeReaderFilterPreset = useCallback((presetId: string) => {
+    setReaderFilterPresets((prev) => {
+      const next = prev.filter((item) => item.id !== presetId);
+      saveReaderFilterPresets(user?.uid, next);
+      return next;
+    });
+  }, [user?.uid]);
+
+  const mineStoryListItems = React.useMemo(() => {
+    const rows = storage.getStoryListItems();
+    if (!user?.uid) return rows;
+    return rows.filter((item) => String(item.authorId || '').trim() === user.uid);
+  }, [storiesVersion, user?.uid]);
+
   const publicFeedGenreOptions = React.useMemo(() => {
     const optionsMap = new Map<string, string>();
-    publicStoryFeed.forEach((item) => {
-      const genre = String(item.genre || '').trim();
-      if (!genre) return;
-      const key = genre.toLowerCase();
-      if (!optionsMap.has(key)) {
-        optionsMap.set(key, genre);
-      }
+    READER_GENRE_BASE_OPTIONS.forEach((tag) => optionsMap.set(normalizeSearchText(tag), tag));
+    [...publicStoryFeed, ...mineStoryListItems].forEach((item) => {
+      splitGenreTags(item.genre).forEach((genreTag) => {
+        const key = normalizeSearchText(genreTag);
+        if (!key) return;
+        if (!optionsMap.has(key)) optionsMap.set(key, genreTag);
+      });
     });
     return Array.from(optionsMap.values()).sort((a, b) => a.localeCompare(b, 'vi', { sensitivity: 'base' }));
-  }, [publicStoryFeed]);
+  }, [mineStoryListItems, publicStoryFeed]);
 
-  const publicFeedFilteredStories = React.useMemo(() => {
-    const byGenre = publicStoryFeed.filter((item) => {
-      if (publicFeedGenreFilter === 'all') return true;
-      return String(item.genre || '').trim().toLowerCase() === publicFeedGenreFilter.toLowerCase();
-    });
+  const readerFilters = React.useMemo<ReaderDiscoveryFilters>(() => ({
+    query: readerQuery,
+    genre: publicFeedGenreFilter,
+    status: readerStatusFilter,
+    adult: readerAdultFilter,
+    length: readerLengthFilter,
+    type: readerTypeFilter,
+    sort: publicFeedSort,
+  }), [publicFeedGenreFilter, publicFeedSort, readerAdultFilter, readerLengthFilter, readerQuery, readerStatusFilter, readerTypeFilter]);
 
-    const getUpdatedMs = (item: PublicStoryFeedItem) => {
+  const sortReaderItems = useCallback(<T extends { title: string; chapterCount: number; updatedAt?: string; id?: string }>(rows: T[]) => {
+    const sorted = [...rows];
+    const getUpdatedMs = (item: { updatedAt?: string }) => {
       const ms = new Date(item.updatedAt || '').getTime();
       return Number.isFinite(ms) ? ms : 0;
     };
+    const getPopularity = (item: { id?: string; chapterCount: number }) => {
+      const id = String(item.id || '').trim();
+      const activity = id ? readerActivityMap[id] : undefined;
+      const followedBoost = activity?.followed ? 20 : 0;
+      const readBoost = Math.min(20, (activity?.readChapterIds?.length || 0) * 2);
+      return item.chapterCount * 4 + followedBoost + readBoost;
+    };
 
-    const sorted = [...byGenre];
-    if (publicFeedSort === 'chapters') {
+    if (readerFilters.sort === 'title') {
+      sorted.sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), 'vi', { sensitivity: 'base' }));
+      return sorted;
+    }
+    if (readerFilters.sort === 'chapters') {
       sorted.sort((a, b) => {
         if (b.chapterCount !== a.chapterCount) return b.chapterCount - a.chapterCount;
         return getUpdatedMs(b) - getUpdatedMs(a);
       });
       return sorted;
     }
-    if (publicFeedSort === 'title') {
-      sorted.sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), 'vi', { sensitivity: 'base' }));
+    if (readerFilters.sort === 'recent') {
+      sorted.sort((a, b) => getUpdatedMs(b) - getUpdatedMs(a));
+      return sorted;
+    }
+    if (readerFilters.sort === 'popular') {
+      sorted.sort((a, b) => {
+        const scoreDiff = getPopularity(b) - getPopularity(a);
+        if (scoreDiff !== 0) return scoreDiff;
+        return getUpdatedMs(b) - getUpdatedMs(a);
+      });
       return sorted;
     }
     sorted.sort((a, b) => getUpdatedMs(b) - getUpdatedMs(a));
     return sorted;
-  }, [publicFeedGenreFilter, publicFeedSort, publicStoryFeed]);
+  }, [readerActivityMap, readerFilters.sort]);
+
+  const mineFeedFilteredStories = React.useMemo(() => {
+    const metadataFilters: ReaderDiscoveryFilters = { ...readerFilters, query: '' };
+    const hasQuery = Boolean(String(readerFilters.query || '').trim());
+    const filtered = mineStoryListItems.filter((item) => {
+      const readerInput = {
+        title: item.title,
+        introduction: item.introduction,
+        genre: item.genre,
+        type: item.type,
+        chapterCount: item.chapterCount,
+        expectedChapters: item.expectedChapters,
+        expectedWordCount: item.expectedWordCount,
+        isAdult: item.isAdult,
+      };
+      if (!matchesReaderDiscoveryFilters(readerInput, metadataFilters)) return false;
+      if (!hasQuery) return true;
+      if (matchesReaderDiscoveryFilters(readerInput, readerFilters)) return true;
+      const fullStory = storage.getStoryById(item.id);
+      if (!fullStory) return false;
+      return matchesReaderQuery(readerFilters.query, [
+        fullStory.content,
+        ...(Array.isArray(fullStory.chapters) ? fullStory.chapters.slice(0, 80).map((chapter: Chapter) => `${chapter.title || ''}\n${chapter.content || ''}`) : []),
+      ]);
+    });
+    return sortReaderItems(filtered);
+  }, [mineStoryListItems, readerFilters, sortReaderItems]);
+
+  const publicFeedFilteredStories = React.useMemo(() => {
+    const filtered = publicStoryFeed.filter((item) => matchesReaderDiscoveryFilters({
+      title: item.title,
+      introduction: item.introduction,
+      genre: item.genre,
+      type: item.type,
+      chapterCount: item.chapterCount,
+      expectedChapters: item.expectedChapters,
+      expectedWordCount: item.expectedWordCount,
+      isAdult: item.isAdult,
+    }, readerFilters));
+    return sortReaderItems(filtered);
+  }, [publicStoryFeed, readerFilters, sortReaderItems]);
 
   const publicFeedSections = React.useMemo(() => {
     const getUpdatedMs = (item: PublicStoryFeedItem) => {
@@ -14228,26 +14622,23 @@ const AppContent = () => {
       return Number.isFinite(ms) ? ms : 0;
     };
     const now = Date.now();
-    const isCompleted = (item: PublicStoryFeedItem) => {
-      const expected = Math.max(0, Number(item.expectedChapters || 0));
-      return expected > 0 && item.chapterCount >= expected;
-    };
-
     const latest = [...publicFeedFilteredStories]
       .sort((a, b) => getUpdatedMs(b) - getUpdatedMs(a))
       .slice(0, 9);
 
     const hot = [...publicFeedFilteredStories]
       .sort((a, b) => {
-        const scoreA = a.chapterCount * 4 + (a.isAdult ? 0.5 : 0);
-        const scoreB = b.chapterCount * 4 + (b.isAdult ? 0.5 : 0);
+        const activityA = readerActivityMap[a.id];
+        const activityB = readerActivityMap[b.id];
+        const scoreA = a.chapterCount * 4 + (activityA?.followed ? 18 : 0) + Math.min(20, (activityA?.readChapterIds?.length || 0) * 2);
+        const scoreB = b.chapterCount * 4 + (activityB?.followed ? 18 : 0) + Math.min(20, (activityB?.readChapterIds?.length || 0) * 2);
         if (scoreB !== scoreA) return scoreB - scoreA;
         return getUpdatedMs(b) - getUpdatedMs(a);
       })
       .slice(0, 9);
 
     const completed = [...publicFeedFilteredStories]
-      .filter(isCompleted)
+      .filter((item) => resolveReaderStatus(item.chapterCount, item.expectedChapters) === 'completed')
       .sort((a, b) => getUpdatedMs(b) - getUpdatedMs(a))
       .slice(0, 9);
 
@@ -14255,8 +14646,8 @@ const AppContent = () => {
       .sort((a, b) => {
         const introA = Math.min(300, String(a.introduction || '').length);
         const introB = Math.min(300, String(b.introduction || '').length);
-        const chapterA = Math.min(120, Number(a.chapterCount || 0) * 3);
-        const chapterB = Math.min(120, Number(b.chapterCount || 0) * 3);
+        const chapterA = Math.min(140, Number(a.chapterCount || 0) * 3);
+        const chapterB = Math.min(140, Number(b.chapterCount || 0) * 3);
         const coverA = a.coverImageUrl ? 20 : 0;
         const coverB = b.coverImageUrl ? 20 : 0;
         const ageDaysA = Math.max(0, (now - getUpdatedMs(a)) / 86400000);
@@ -14271,7 +14662,62 @@ const AppContent = () => {
       .slice(0, 9);
 
     return { latest, hot, completed, suggested };
-  }, [publicFeedFilteredStories]);
+  }, [publicFeedFilteredStories, readerActivityMap]);
+
+  const publicFeedRelatedStories = React.useMemo(() => {
+    const interestMap = new Map<string, number>();
+    Object.values(readerActivityMap || {}).forEach((entry) => {
+      const scoreBase = (entry.followed ? 5 : 2) + Math.min(4, entry.readChapterIds.length);
+      splitGenreTags(entry.genre).forEach((genreTag) => {
+        const key = normalizeSearchText(genreTag);
+        if (!key) return;
+        interestMap.set(key, (interestMap.get(key) || 0) + scoreBase);
+      });
+    });
+    if (interestMap.size === 0) return [] as PublicStoryFeedItem[];
+    const topGenres = Array.from(interestMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([key]) => key);
+    const related = publicStoryFeed
+      .filter((item) => {
+        if (readerActivityMap[item.id]?.readChapterIds?.length) return false;
+        const tags = splitGenreTags(item.genre).map((tag) => normalizeSearchText(tag));
+        return tags.some((tag) => topGenres.includes(tag));
+      })
+      .sort((a, b) => {
+        const scoreA = splitGenreTags(a.genre)
+          .map((tag) => interestMap.get(normalizeSearchText(tag)) || 0)
+          .reduce((sum, val) => sum + val, 0);
+        const scoreB = splitGenreTags(b.genre)
+          .map((tag) => interestMap.get(normalizeSearchText(tag)) || 0)
+          .reduce((sum, val) => sum + val, 0);
+        if (scoreB !== scoreA) return scoreB - scoreA;
+        return new Date(b.updatedAt || '').getTime() - new Date(a.updatedAt || '').getTime();
+      })
+      .slice(0, 9);
+    return related;
+  }, [publicStoryFeed, readerActivityMap]);
+
+  const readerTrendingGenres = React.useMemo(() => {
+    const source = readerFeedTab === 'mine' ? mineFeedFilteredStories : publicFeedFilteredStories;
+    const counter = new Map<string, { label: string; count: number }>();
+    source.forEach((item) => {
+      splitGenreTags(item.genre).forEach((tag) => {
+        const key = normalizeSearchText(tag);
+        if (!key) return;
+        const current = counter.get(key);
+        if (!current) {
+          counter.set(key, { label: tag, count: 1 });
+          return;
+        }
+        current.count += 1;
+      });
+    });
+    return Array.from(counter.values())
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+  }, [mineFeedFilteredStories, publicFeedFilteredStories, readerFeedTab]);
 
   useEffect(() => {
     const stories = storage.getStories();
@@ -18018,6 +18464,205 @@ ${JSON.stringify(violatingPayload)}
               </button>
             ) : null}
           </div>
+          <div className="mt-4 rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+              <label className="lg:col-span-3 inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                <Search className="h-4 w-4 text-slate-400" />
+                <input
+                  value={readerQuery}
+                  onChange={(event) => setReaderQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      pushReaderSearchHistory(readerQuery);
+                    }
+                  }}
+                  placeholder="Tìm theo tên truyện, giới thiệu, thể loại..."
+                  className="w-full bg-transparent text-sm font-medium text-slate-800 outline-none"
+                />
+                <button
+                  onClick={() => pushReaderSearchHistory(readerQuery)}
+                  className="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-100"
+                >
+                  Lưu từ khóa
+                </button>
+              </label>
+              <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                <span>Thể loại</span>
+                <select
+                  value={publicFeedGenreFilter}
+                  onChange={(event) => setPublicFeedGenreFilter(event.target.value)}
+                  className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm font-medium text-slate-800 outline-none focus:border-indigo-300"
+                >
+                  <option value="all">Tất cả</option>
+                  {publicFeedGenreOptions.map((genre) => (
+                    <option key={genre} value={genre}>{genre}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                <span>Trạng thái</span>
+                <select
+                  value={readerStatusFilter}
+                  onChange={(event) => setReaderStatusFilter(event.target.value as ReaderStatusFilter)}
+                  className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm font-medium text-slate-800 outline-none focus:border-indigo-300"
+                >
+                  <option value="all">Tất cả</option>
+                  <option value="ongoing">Đang ra</option>
+                  <option value="completed">Hoàn thành</option>
+                </select>
+              </label>
+              <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                <span>Độ dài</span>
+                <select
+                  value={readerLengthFilter}
+                  onChange={(event) => setReaderLengthFilter(event.target.value as ReaderLengthFilter)}
+                  className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm font-medium text-slate-800 outline-none focus:border-indigo-300"
+                >
+                  <option value="all">Tất cả</option>
+                  <option value="short">Ngắn</option>
+                  <option value="medium">Vừa</option>
+                  <option value="long">Dài</option>
+                  <option value="epic">Rất dài</option>
+                </select>
+              </label>
+              <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                <span>Loại truyện</span>
+                <select
+                  value={readerTypeFilter}
+                  onChange={(event) => setReaderTypeFilter(event.target.value as ReaderTypeFilter)}
+                  className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm font-medium text-slate-800 outline-none focus:border-indigo-300"
+                >
+                  <option value="all">Tất cả</option>
+                  <option value="original">Sáng tác</option>
+                  <option value="translated">Dịch</option>
+                  <option value="continued">Viết tiếp</option>
+                </select>
+              </label>
+              <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                <span>Mức nội dung</span>
+                <select
+                  value={readerAdultFilter}
+                  onChange={(event) => setReaderAdultFilter(event.target.value as ReaderAdultFilter)}
+                  className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm font-medium text-slate-800 outline-none focus:border-indigo-300"
+                >
+                  <option value="all">Tất cả</option>
+                  <option value="safe">Bình thường</option>
+                  <option value="adult">18+</option>
+                </select>
+              </label>
+              <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                <span>Sắp xếp</span>
+                <select
+                  value={publicFeedSort}
+                  onChange={(event) => setPublicFeedSort(event.target.value as ReaderSortMode)}
+                  className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm font-medium text-slate-800 outline-none focus:border-indigo-300"
+                >
+                  <option value="updated">Mới cập nhật</option>
+                  <option value="recent">Mới đọc gần đây</option>
+                  <option value="popular">Phổ biến</option>
+                  <option value="chapters">Nhiều chương</option>
+                  <option value="title">Tên A-Z</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                onClick={resetReaderFilters}
+                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100"
+              >
+                Reset bộ lọc
+              </button>
+              <button
+                onClick={saveCurrentReaderFilterPreset}
+                className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100"
+              >
+                Lưu preset
+              </button>
+              <span className="text-xs text-slate-500">
+                {readerFeedTab === 'mine'
+                  ? `Hiển thị ${mineFeedFilteredStories.length}/${mineStoryListItems.length} truyện`
+                  : `Hiển thị ${publicFeedFilteredStories.length}/${publicStoryFeed.length} truyện`}
+              </span>
+            </div>
+
+            {publicFeedGenreOptions.length > 0 ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {publicFeedGenreOptions.slice(0, 12).map((genre) => (
+                  <button
+                    key={`genre-chip-${genre}`}
+                    onClick={() => setPublicFeedGenreFilter(genre)}
+                    className={cn(
+                      'rounded-full border px-3 py-1 text-xs font-semibold transition-colors',
+                      publicFeedGenreFilter === genre
+                        ? 'border-indigo-600 bg-indigo-600 text-white'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-indigo-700',
+                    )}
+                  >
+                    {genre}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {readerTrendingGenres.length > 0 ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Thể loại nổi bật</span>
+                {readerTrendingGenres.map((item) => (
+                  <button
+                    key={`trend-${item.label}`}
+                    onClick={() => setPublicFeedGenreFilter(item.label)}
+                    className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                  >
+                    {item.label} · {item.count}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {readerSearchHistory.length > 0 ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Tìm gần đây</span>
+                {readerSearchHistory.slice(0, 8).map((history) => (
+                  <button
+                    key={`search-history-${history}`}
+                    onClick={() => {
+                      setReaderQuery(history);
+                      pushReaderSearchHistory(history);
+                    }}
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:border-indigo-200 hover:text-indigo-700"
+                  >
+                    {history}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {readerFilterPresets.length > 0 ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Preset</span>
+                {readerFilterPresets.map((preset) => (
+                  <div key={preset.id} className="inline-flex items-center overflow-hidden rounded-full border border-slate-200 bg-white">
+                    <button
+                      onClick={() => applyReaderFilterPreset(preset)}
+                      className="px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700"
+                      title={preset.name}
+                    >
+                      {preset.name}
+                    </button>
+                    <button
+                      onClick={() => removeReaderFilterPreset(preset.id)}
+                      className="border-l border-slate-200 px-2 py-1 text-xs font-bold text-slate-500 hover:bg-rose-50 hover:text-rose-600"
+                      title="Xóa preset"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {readerFeedTab === 'mine' ? (
@@ -18094,6 +18739,7 @@ ${JSON.stringify(violatingPayload)}
             ) : null}
             <StoryList
               refreshKey={storiesVersion}
+              storiesOverride={mineFeedFilteredStories}
               onView={(story) => {
                 setSelectedStory(story);
                 navigate(`/${resolveStorySlug(story)}`);
@@ -18131,40 +18777,20 @@ ${JSON.stringify(violatingPayload)}
             {hasSupabase && publicStoryFeed.length > 0 ? (
               <>
                 <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div className="text-sm text-slate-600">
+                  <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
+                    <span>
                       Đang hiển thị <span className="font-bold text-slate-900">{publicFeedFilteredStories.length}</span> truyện từ kho công khai.
-                    </div>
-                    <div className="flex flex-col gap-3 sm:flex-row">
-                      <label className="inline-flex w-full sm:w-auto items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
-                        <Search className="h-4 w-4 text-slate-400" />
-                        <span>Thể loại</span>
-                        <select
-                          value={publicFeedGenreFilter}
-                          onChange={(event) => setPublicFeedGenreFilter(event.target.value)}
-                          className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm font-medium text-slate-800 outline-none focus:border-indigo-300"
-                        >
-                          <option value="all">Tất cả</option>
-                          {publicFeedGenreOptions.map((genre) => (
-                            <option key={genre} value={genre.toLowerCase()}>{genre}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="inline-flex w-full sm:w-auto items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
-                        <span>Sắp xếp</span>
-                        <select
-                          value={publicFeedSort}
-                          onChange={(event) => setPublicFeedSort(event.target.value as 'updated' | 'chapters' | 'title')}
-                          className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm font-medium text-slate-800 outline-none focus:border-indigo-300"
-                        >
-                          <option value="updated">Mới cập nhật</option>
-                          <option value="chapters">Nhiều chương</option>
-                          <option value="title">Tên A-Z</option>
-                        </select>
-                      </label>
-                    </div>
+                    </span>
+                    {publicFeedRelatedStories.length > 0 ? (
+                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                        Có {publicFeedRelatedStories.length} truyện đề xuất theo gu đọc của bạn
+                      </span>
+                    ) : null}
                   </div>
                 </div>
+                {publicFeedRelatedStories.length > 0 ? (
+                  renderPublicSection('Cùng gu bạn hay đọc', 'Đề xuất từ thể loại bạn theo dõi/đọc gần đây.', <Heart className="h-4 w-4" />, publicFeedRelatedStories)
+                ) : null}
                 {renderPublicSection('Mới cập nhật', 'Các truyện vừa có cập nhật gần nhất.', <Clock className="h-4 w-4" />, publicFeedSections.latest)}
                 {renderPublicSection('Đang hot', 'Ưu tiên truyện có tiến độ chương cao và hoạt động tốt.', <Zap className="h-4 w-4" />, publicFeedSections.hot)}
                 {renderPublicSection('Hoàn thành', 'Truyện đã đạt đủ số chương theo kế hoạch tác giả đặt ra.', <Check className="h-4 w-4" />, publicFeedSections.completed)}

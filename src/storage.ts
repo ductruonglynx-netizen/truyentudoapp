@@ -53,6 +53,8 @@ export interface StoryListItem {
   isAdult: boolean;
   isAI: boolean;
   coverImageUrl: string;
+  expectedChapters: number;
+  expectedWordCount: number;
   createdAt: string;
   updatedAt: string;
   chapterCount: number;
@@ -269,6 +271,8 @@ function toStoryListItem(story: any): StoryListItem {
     isAdult: Boolean(normalized.isAdult),
     isAI: Boolean(normalized.isAI),
     coverImageUrl: normalizeCoverImageUrl(normalized.coverImageUrl),
+    expectedChapters: Math.max(0, Number(normalized.expectedChapters || 0)),
+    expectedWordCount: Math.max(0, Number(normalized.expectedWordCount || 0)),
     createdAt: normalizeDate(normalized.createdAt),
     updatedAt: normalizeDate(normalized.updatedAt),
     chapterCount: Array.isArray(normalized.chapters) ? normalized.chapters.length : 0,
