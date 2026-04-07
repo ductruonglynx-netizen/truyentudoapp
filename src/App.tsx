@@ -9853,7 +9853,10 @@ const StoryDetail = ({
   breadcrumbs?: BreadcrumbItem[],
   isReadOnly?: boolean,
 }) => {
-  const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null);
+  const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(() => {
+    if (!forcedChapterId) return null;
+    return (story.chapters || []).find((chapter) => chapter.id === forcedChapterId) || null;
+  });
   const [isEditingChapter, setIsEditingChapter] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
@@ -10042,14 +10045,20 @@ const StoryDetail = ({
     setSelectedChapter(chapter);
   };
 
-  useEffect(() => {
-    if (!forcedChapterId) {
-      setSelectedChapter(null);
-      return;
-    }
+  useLayoutEffect(() => {
+    if (!forcedChapterId) return;
     const nextChapter = (story.chapters || []).find((chapter) => chapter.id === forcedChapterId) || null;
-    setSelectedChapter(nextChapter);
+    setSelectedChapter((prev) => {
+      if (!nextChapter) return null;
+      if (prev?.id === nextChapter.id) return prev;
+      return nextChapter;
+    });
   }, [forcedChapterId, story.chapters]);
+
+  useEffect(() => {
+    if (forcedChapterId) return;
+    setSelectedChapter(null);
+  }, [forcedChapterId, story.id]);
 
   useEffect(() => {
     setChapterRenderLimit(CHAPTER_RENDER_BATCH_SIZE);
