@@ -10626,7 +10626,7 @@ const StoryList = ({
                         <img
                           src={story.coverImageUrl}
                           alt={`Bìa truyện ${story.title}`}
-                          className="w-full h-full object-cover object-center"
+                          className="w-full h-full object-contain object-center"
                           loading="lazy"
                         />
                       </div>
@@ -18440,7 +18440,7 @@ ${JSON.stringify(violatingPayload)}
               <img
                 src={item.coverImageUrl}
                 alt={`Bìa truyện ${item.title}`}
-                className="h-40 sm:h-44 w-full object-cover object-center"
+                className="h-40 sm:h-44 w-full object-contain object-center"
                 loading="lazy"
               />
             </div>
