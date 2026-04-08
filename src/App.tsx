@@ -10033,13 +10033,16 @@ const StoryDetail = ({
 
   const normalizeChapterTitleForDisplay = (raw: string) => {
     if (!raw) return '';
-    return raw
+    const normalized = raw
       .normalize('NFC')
       .replace(/[\u200B-\u200D\uFEFF]/g, '')
       .replace(/([A-Za-zÀ-Ỹà-ỹĐđ])\s+([a-zà-ỹđ])(?=[A-ZÀ-ỸĐ])/g, '$1$2')
-      .replace(/([a-zà-ỹđ])([A-ZÀ-ỸĐ])/g, '$1 $2')
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
       .replace(/\s+/g, ' ')
       .trim();
+    return normalized
+      .replace(/\bch\s*ương\b/gi, 'chương')
+      .replace(/\bch\s*uong\b/gi, 'chuong');
   };
 
   const getDisplayChapterTitle = (chapter: Chapter) => {
@@ -10048,9 +10051,15 @@ const StoryDetail = ({
     const parsedTitle = String(parsed?.title || '').trim();
     const isGenericTitle = /^chương\s*\d+$/i.test(baseTitle) || /^chapter\s*\d+$/i.test(baseTitle);
     if (parsedTitle && (!baseTitle || isGenericTitle)) {
-      return normalizeChapterTitleForDisplay(parsedTitle);
+      const fixed = normalizeChapterTitleForDisplay(parsedTitle);
+      const chapterNumberMatch = normalizeSearchText(fixed).match(/^chuong\s+(\d+)$/i);
+      if (chapterNumberMatch?.[1]) return `Chương ${chapterNumberMatch[1]}`;
+      return fixed;
     }
-    return normalizeChapterTitleForDisplay(baseTitle || parsedTitle || `Chương ${chapter.order || ''}`.trim());
+    const fixed = normalizeChapterTitleForDisplay(baseTitle || parsedTitle || `Chương ${chapter.order || ''}`.trim());
+    const chapterNumberMatch = normalizeSearchText(fixed).match(/^chuong\s+(\d+)$/i);
+    if (chapterNumberMatch?.[1]) return `Chương ${chapterNumberMatch[1]}`;
+    return fixed;
   };
 
   const formatContent = (content: string) => {
