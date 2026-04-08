@@ -7,18 +7,36 @@ import { TFAlert } from "./common/TFAlert";
 import { storage } from "../../storage";
 import { notifyApp } from "../../notifications";
 import { VietphraseWorkbench } from "./VietphraseWorkbench";
+import {
+  applyWebGpuCapabilityResult,
+  applyWebGpuStabilityResult,
+  countWebGpuWeekOneCompletedTasks,
+  loadWebGpuWeekOneState,
+  runWebGpuCapabilityCheck,
+  runWebGpuStabilityCheck,
+  saveWebGpuWeekOneState,
+  updateWebGpuWeekOneTaskStatus,
+  type WebGpuWeekOneTaskStatus,
+} from "../../webgpu/weekOne";
 
 const toolsTabs = [
   { key: "translate", label: "Hỗ trợ Dịch" },
   { key: "write", label: "Hỗ trợ Viết (Writer Pro)" },
   { key: "upload-convert", label: "Tải truyện & Convert" },
   { key: "prompt", label: "Kho Prompt" },
+  { key: "webgpu-week1", label: "WebGPU Tuần 1" },
 ];
 
 const toolModeBadges = [
   "Phản hồi tức thì",
   "Chạy cục bộ",
   "Không gọi model AI",
+];
+
+const webGpuTaskStatuses: Array<{ value: WebGpuWeekOneTaskStatus; label: string }> = [
+  { value: "todo", label: "Chưa làm" },
+  { value: "in_progress", label: "Đang làm" },
+  { value: "done", label: "Hoàn thành" },
 ];
 
 type ToolsPageProps = {
@@ -81,9 +99,24 @@ export const ToolsPage: React.FC<ToolsPageProps> = ({ onBack, onRequireAuth }) =
   const [ideaBrief, setIdeaBrief] = React.useState("");
   const [ideaResult, setIdeaResult] = React.useState("");
   const [styleDraft, setStyleDraft] = React.useState("");
+  const [webGpuWeekOneState, setWebGpuWeekOneState] = React.useState(() => loadWebGpuWeekOneState());
+  const [isCheckingCapability, setIsCheckingCapability] = React.useState(false);
+  const [isCheckingStability, setIsCheckingStability] = React.useState(false);
 
   const refreshDictionary = React.useCallback(() => {
     setDictionaryRows(storage.getTranslationNames());
+  }, []);
+
+  React.useEffect(() => {
+    saveWebGpuWeekOneState(webGpuWeekOneState);
+  }, [webGpuWeekOneState]);
+
+  const completedWeekOneTasks = countWebGpuWeekOneCompletedTasks(webGpuWeekOneState);
+  const totalWeekOneTasks = Math.max(1, webGpuWeekOneState.tasks.length);
+  const weekOneProgress = Math.round((completedWeekOneTasks * 100) / totalWeekOneTasks);
+
+  const updateWebGpuTask = React.useCallback((taskId: string, status: WebGpuWeekOneTaskStatus) => {
+    setWebGpuWeekOneState((prev) => updateWebGpuWeekOneTaskStatus(prev, taskId, status));
   }, []);
 
   return (
@@ -278,6 +311,160 @@ export const ToolsPage: React.FC<ToolsPageProps> = ({ onBack, onRequireAuth }) =
             </TFButton>
           </div>
           <TFAlert tone="success">Kho Prompt ở đây là bộ nhớ cục bộ của thiết bị. Prompt đã lưu sẽ được giữ lại kể cả khi đóng/mở lại modal.</TFAlert>
+        </section>
+      )}
+
+      {tab === "webgpu-week1" && (
+        <section className="space-y-4">
+          <div className="tf-card p-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold">Kiến trúc Tuần 1</h3>
+                <p className="tf-body">
+                  Theo dõi 4 mốc bắt buộc trước khi bật WebGPU rộng rãi: scope, KPI, flag, stability.
+                </p>
+              </div>
+              <span className="rounded-full border border-cyan-300/20 bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-100">
+                {completedWeekOneTasks}/{totalWeekOneTasks} mốc
+              </span>
+            </div>
+            <div className="space-y-2">
+              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800/70">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 transition-all duration-300"
+                  style={{ width: `${weekOneProgress}%` }}
+                />
+              </div>
+              <p className="text-xs text-slate-300">Tiến trình hiện tại: {weekOneProgress}%</p>
+            </div>
+            <div className="space-y-3">
+              {webGpuWeekOneState.tasks.map((task) => (
+                <div key={task.id} className="rounded-2xl border border-white/10 bg-slate-950/30 p-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="font-semibold text-slate-100">{task.title}</h4>
+                    <span className="text-[11px] text-slate-400">
+                      Cập nhật {new Date(task.updatedAt).toLocaleString("vi-VN")}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-300">{task.description}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {webGpuTaskStatuses.map((option) => (
+                      <button
+                        key={`${task.id}-${option.value}`}
+                        onClick={() => updateWebGpuTask(task.id, option.value)}
+                        className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+                          task.status === option.value
+                            ? "bg-cyan-500 text-slate-950"
+                            : "border border-white/15 bg-slate-900/50 text-slate-300 hover:border-cyan-300/40 hover:text-cyan-100"
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="tf-card p-4 space-y-3">
+              <h3 className="text-lg font-semibold">Kiểm tra khả năng WebGPU</h3>
+              <p className="tf-body">
+                Kiểm tra secure context, feature flag, adapter và giới hạn bộ đệm trước khi chạy thật.
+              </p>
+              {webGpuWeekOneState.capability ? (
+                <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-3 text-sm text-slate-200 space-y-1">
+                  <p><strong>Trạng thái:</strong> {webGpuWeekOneState.capability.status}</p>
+                  <p>{webGpuWeekOneState.capability.summary}</p>
+                  {webGpuWeekOneState.capability.adapterName ? (
+                    <p><strong>Adapter:</strong> {webGpuWeekOneState.capability.adapterName}</p>
+                  ) : null}
+                  {webGpuWeekOneState.capability.maxBufferSize ? (
+                    <p><strong>maxBufferSize:</strong> {webGpuWeekOneState.capability.maxBufferSize}</p>
+                  ) : null}
+                  {webGpuWeekOneState.capability.errorMessage ? (
+                    <p className="text-rose-300"><strong>Lỗi:</strong> {webGpuWeekOneState.capability.errorMessage}</p>
+                  ) : null}
+                </div>
+              ) : (
+                <TFAlert tone="warn">Chưa có dữ liệu kiểm tra capability.</TFAlert>
+              )}
+              <div className="flex justify-end">
+                <TFButton
+                  variant="primary"
+                  disabled={isCheckingCapability}
+                  onClick={async () => {
+                    setIsCheckingCapability(true);
+                    try {
+                      const report = await runWebGpuCapabilityCheck();
+                      setWebGpuWeekOneState((prev) => applyWebGpuCapabilityResult(prev, report));
+                      notifyApp({ tone: report.status === "ready" ? "success" : "info", message: report.summary });
+                    } catch (error) {
+                      notifyApp({
+                        tone: "error",
+                        message: error instanceof Error ? error.message : "Kiểm tra capability thất bại.",
+                      });
+                    } finally {
+                      setIsCheckingCapability(false);
+                    }
+                  }}
+                >
+                  {isCheckingCapability ? "Đang kiểm tra..." : "Chạy capability check"}
+                </TFButton>
+              </div>
+            </div>
+
+            <div className="tf-card p-4 space-y-3">
+              <h3 className="text-lg font-semibold">Kiểm tra ổn định (smoke)</h3>
+              <p className="tf-body">
+                Chạy nhiều vòng copy buffer trên queue GPU để phát hiện fail sớm khi rollout.
+              </p>
+              {webGpuWeekOneState.stability ? (
+                <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-3 text-sm text-slate-200 space-y-1">
+                  <p><strong>Kết quả:</strong> {webGpuWeekOneState.stability.success ? "PASS" : "FAIL"}</p>
+                  <p>{webGpuWeekOneState.stability.message}</p>
+                  <p>
+                    <strong>Vòng chạy:</strong> {webGpuWeekOneState.stability.iterationsCompleted}/
+                    {webGpuWeekOneState.stability.iterationsRequested}
+                  </p>
+                  <p><strong>Trung bình:</strong> {webGpuWeekOneState.stability.avgIterationMs} ms/vòng</p>
+                  <p><strong>Thông lượng:</strong> {webGpuWeekOneState.stability.throughputOpsPerSecond} ops/s</p>
+                  {webGpuWeekOneState.stability.errorMessage ? (
+                    <p className="text-rose-300"><strong>Lỗi:</strong> {webGpuWeekOneState.stability.errorMessage}</p>
+                  ) : null}
+                </div>
+              ) : (
+                <TFAlert tone="warn">Chưa có dữ liệu kiểm tra stability.</TFAlert>
+              )}
+              <div className="flex justify-end">
+                <TFButton
+                  variant="primary"
+                  disabled={isCheckingStability}
+                  onClick={async () => {
+                    setIsCheckingStability(true);
+                    try {
+                      const report = await runWebGpuStabilityCheck();
+                      setWebGpuWeekOneState((prev) => applyWebGpuStabilityResult(prev, report));
+                      notifyApp({
+                        tone: report.success ? "success" : "warn",
+                        message: report.message,
+                      });
+                    } catch (error) {
+                      notifyApp({
+                        tone: "error",
+                        message: error instanceof Error ? error.message : "Stability check thất bại.",
+                      });
+                    } finally {
+                      setIsCheckingStability(false);
+                    }
+                  }}
+                >
+                  {isCheckingStability ? "Đang kiểm tra..." : "Chạy stability smoke"}
+                </TFButton>
+              </div>
+            </div>
+          </div>
         </section>
       )}
 
