@@ -10166,8 +10166,52 @@ const StoryDetail = ({
     const sanitizeChapterLeadNoise = (raw: string, chapterTitle?: string) => {
       const lines = String(raw || '').replace(/\r\n?/g, '\n').split('\n');
       const titleNorm = normalizeSearchText(chapterTitle || '');
+      const storyTitleNorm = normalizeSearchText(story.title || '');
+      const genreTokens = [
+        'tien hiep',
+        'ngon tinh',
+        'vong du',
+        'huyen huyen',
+        'quan su',
+        'quan truong',
+        'do thi',
+        'trong sinh',
+        'xuyen khong',
+        'di gioi',
+        'di nang',
+        'linh di',
+        'trinh tham',
+        'nguoc',
+        'sac hiep',
+        'hai huoc',
+        'mat the',
+        'hien dai',
+        'he thong',
+        'lich su',
+        'phan phai',
+        'khoa huyen',
+        'hong hoang',
+        'dong nhan',
+      ];
+      const looksLikeGenreCloud = (headNorm: string) => {
+        if (!headNorm || headNorm.length < 30) return false;
+        const tokenCount = genreTokens.reduce((acc, token) => (headNorm.includes(token) ? acc + 1 : acc), 0);
+        return tokenCount >= 5;
+      };
+      const isWebsitePromoLine = (head: string, headNorm: string) => {
+        if (!headNorm) return false;
+        const raw = String(head || '').toLowerCase();
+        if (raw.includes('microsoft word') && raw.includes('.mht')) return true;
+        if (headNorm === 'tien vuc' || headNorm === 'the loai') return true;
+        if (looksLikeGenreCloud(headNorm)) return true;
+        if (/(?:^| )danh sach(?: |$)/.test(headNorm) && /truyen/.test(headNorm)) return true;
+        if (/(?:truyen vip|truyen mien phi|truyen da hoan|truyen moi cap nhat)/.test(headNorm)) return true;
+        if (/(?:trang ca nhan|tai khoan|dang nhap|dang ky)/.test(headNorm)) return true;
+        if (/^hi[, ]+[a-z0-9_.-]+$/i.test(head)) return true;
+        return false;
+      };
       let removed = 0;
-      while (lines.length > 0 && removed < 8) {
+      while (lines.length > 0 && removed < 40) {
         const head = String(lines[0] || '').trim();
         if (!head) {
           lines.shift();
@@ -10179,14 +10223,26 @@ const StoryDetail = ({
         const isMetaHeading = /^(muc luc|table of contents|toc|source|nguon)$/.test(headNorm);
         const isDuplicatedChapterLine = /^((chuong|chapter)\s*\d+)/.test(headNorm) && /(online|dich|full|tap|\(|\)|-)/.test(headNorm);
         const isDuplicatedTitle = Boolean(titleNorm) && (headNorm === titleNorm || headNorm.endsWith(titleNorm));
-        if (isCoverNoise || isMetaHeading || isDuplicatedChapterLine || isDuplicatedTitle) {
+        const isDuplicatedStoryTitle = Boolean(storyTitleNorm) && (headNorm === storyTitleNorm || headNorm.endsWith(storyTitleNorm));
+        const isPromoNoise = isWebsitePromoLine(head, headNorm);
+        if (isCoverNoise || isMetaHeading || isDuplicatedChapterLine || isDuplicatedTitle || isDuplicatedStoryTitle || isPromoNoise) {
           lines.shift();
           removed += 1;
           continue;
         }
         break;
       }
-      return lines.join('\n').trim();
+      const filtered = lines.filter((line, index) => {
+        if (index > 120) return true;
+        const trimmed = String(line || '').trim();
+        if (!trimmed) return true;
+        const headNorm = normalizeSearchText(trimmed);
+        if (!headNorm) return true;
+        const isDuplicatedStoryTitle = Boolean(storyTitleNorm) && (headNorm === storyTitleNorm || headNorm.endsWith(storyTitleNorm));
+        if (isDuplicatedStoryTitle) return false;
+        return !isWebsitePromoLine(trimmed, headNorm);
+      });
+      return filtered.join('\n').trim();
     };
 
     const canonical = sanitizeChapterLeadNoise(normalized, selectedChapter?.title || '')
