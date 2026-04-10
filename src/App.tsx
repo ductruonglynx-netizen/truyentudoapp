@@ -13673,6 +13673,7 @@ const AppContent = () => {
   const [backupSnapshots, setBackupSnapshots] = useState<BackupSnapshot[]>([]);
   const [backupHistoryReady, setBackupHistoryReady] = useState(false);
   const [backupBusyAction, setBackupBusyAction] = useState('');
+  const [showBackupMoreActions, setShowBackupMoreActions] = useState(false);
   const [accountLastSyncedAt, setAccountLastSyncedAt] = useState('');
   const [accountSyncQueueStats, setAccountSyncQueueStats] = useState<WorkspaceSyncQueueStats>({
     pending: 0,
@@ -14431,6 +14432,7 @@ const AppContent = () => {
   }, []);
 
   const closeBackupCenter = useCallback(() => {
+    setShowBackupMoreActions(false);
     setShowBackupCenterModal(false);
     void refreshBackupHistory();
   }, [refreshBackupHistory]);
@@ -19017,6 +19019,25 @@ ${JSON.stringify(violatingPayload)}
   const latestBackupAt = backupSettings.lastSuccessfulBackupAt || latestBackup?.createdAt || '';
   const backupWarningMessage = buildBackupWarningMessage(latestBackupAt, backupSettings.staleAfterHours);
   const driveConfigured = hasGoogleDriveBackupConfig();
+  const accountSyncReady = Boolean(user && hasSupabase && ACCOUNT_CLOUD_AUTOSYNC_ENABLED);
+  const syncHasError = accountSyncQueueStats.failed > 0;
+  const syncIsBusy = accountSyncQueueStats.pending > 0 || accountSyncQueueStats.running > 0;
+  const backupStatusIcon = syncHasError ? '🔴' : syncIsBusy ? '🟡' : '🟢';
+  const backupStatusToneClass = syncHasError
+    ? 'text-rose-200'
+    : syncIsBusy
+      ? 'text-amber-200'
+      : 'text-slate-300';
+  const driveStatusSummary = driveBinding
+    ? `Đã liên kết với ${driveBinding.email}`
+    : 'Chưa liên kết Google Drive';
+  const syncStatusSummary = !accountSyncReady
+    ? 'Đồng bộ tài khoản chưa sẵn sàng'
+    : syncHasError
+      ? `${accountSyncQueueStats.failed} lỗi đồng bộ`
+      : syncIsBusy
+        ? 'Đang đồng bộ...'
+        : 'Đồng bộ ổn định';
 
   const routeTransitionClass = navigationType === 'POP' ? 'tf-route-pop' : 'tf-route-push';
   const oauthConsentRedirectTarget = `/${location.search}${location.hash}`;
@@ -20292,10 +20313,16 @@ ${JSON.stringify(violatingPayload)}
             <div className="space-y-4 overflow-y-auto pr-1 sm:pr-2 max-h-[calc(92vh-2.25rem)]">
             <div className="space-y-3 pr-14">
               <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Sao lưu & khôi phục</p>
-              <h3 className="text-2xl font-bold">Sao lưu và khôi phục dữ liệu</h3>
-              <p className="text-sm text-slate-400 max-w-3xl">
-                Bản tối giản: chỉ giữ thao tác quan trọng để tránh rối. Khi đã liên kết Drive, liên kết đó sẽ được khóa cố định cho tài khoản và app tự dùng lại ở các lần đăng nhập sau.
-              </p>
+              <div className="flex items-center gap-2">
+                <h3 className="text-2xl font-bold">Sao lưu và khôi phục dữ liệu</h3>
+                <span
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/12 bg-slate-900/55 text-slate-300"
+                  title="Liên kết Drive chỉ cần thiết lập một lần cho mỗi tài khoản."
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </span>
+              </div>
+              <p className="text-sm text-slate-400 max-w-3xl">Giữ thao tác chính gọn, phần nâng cao để trong tùy chọn.</p>
             </div>
 
             {backupWarningMessage ? (
@@ -20311,43 +20338,18 @@ ${JSON.stringify(violatingPayload)}
             ) : null}
 
             <div className="rounded-2xl border border-white/10 bg-slate-900/45 p-4 space-y-3">
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                <span className="rounded-full bg-indigo-500/15 px-3 py-1 font-semibold text-indigo-100">
-                  Mốc gần nhất: {latestBackupAt ? formatBackupTimestamp(latestBackupAt) : 'Chưa có'}
-                </span>
-                <span className={cn(
-                  'rounded-full px-3 py-1 font-semibold',
-                  driveBinding ? 'bg-emerald-500/15 text-emerald-200' : 'bg-slate-800 text-slate-300'
-                )}>
-                  Drive: {driveBinding ? 'Đã liên kết' : 'Chưa liên kết'}
-                </span>
-                <span className={cn(
-                  'rounded-full px-3 py-1 font-semibold',
-                  user && hasSupabase && ACCOUNT_CLOUD_AUTOSYNC_ENABLED ? 'bg-cyan-500/15 text-cyan-200' : 'bg-slate-800 text-slate-300'
-                )}>
-                  Đồng bộ tài khoản: {user && hasSupabase && ACCOUNT_CLOUD_AUTOSYNC_ENABLED ? 'Đang bật' : 'Tạm chưa sẵn sàng'}
-                </span>
-                <span className={cn(
-                  'rounded-full px-3 py-1 font-semibold',
-                  accountSyncQueueStats.failed > 0
-                    ? 'bg-rose-500/15 text-rose-200'
-                    : accountSyncQueueStats.pending > 0 || accountSyncQueueStats.running > 0
-                      ? 'bg-amber-500/15 text-amber-200'
-                      : 'bg-emerald-500/15 text-emerald-200'
-                )}>
-                  Trạng thái đồng bộ: {accountSyncQueueStats.failed > 0
-                    ? `${accountSyncQueueStats.failed} lỗi`
-                    : accountSyncQueueStats.pending > 0 || accountSyncQueueStats.running > 0
-                      ? `${accountSyncQueueStats.pending + accountSyncQueueStats.running} đang chờ`
-                      : 'Ổn định'}
-                </span>
-              </div>
+              <p className={cn('text-sm', backupStatusToneClass)}>
+                {backupStatusIcon} {driveStatusSummary} | {syncStatusSummary}
+              </p>
+              <p className="text-xs text-slate-400">
+                Mốc gần nhất: {latestBackupAt ? formatBackupTimestamp(latestBackupAt) : 'Chưa có'}
+              </p>
               {accountSyncQueueStats.failed > 0 && accountSyncQueueStats.nextRetryAt ? (
                 <p className="text-xs text-rose-200">
                   Hệ thống sẽ tự thử lại lúc {formatBackupTimestamp(accountSyncQueueStats.nextRetryAt)}.
                 </p>
               ) : null}
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   className="tf-btn tf-btn-primary"
                   onClick={handleBackupNow}
@@ -20355,38 +20357,63 @@ ${JSON.stringify(violatingPayload)}
                 >
                   {backupBusyAction === 'backup-now' ? 'Đang sao lưu...' : 'Sao lưu ngay'}
                 </button>
-                <button
-                  className="tf-btn tf-btn-ghost"
-                  onClick={handleDownloadCurrentBackupJson}
-                  disabled={isExporting}
-                >
-                  {isExporting ? 'Đang chuẩn bị...' : 'Tải file sao lưu'}
-                </button>
-                <button
-                  className="tf-btn tf-btn-ghost"
-                  onClick={() => backupImportInputRef.current?.click()}
-                  disabled={isImporting}
-                >
-                  {isImporting ? 'Đang đọc file...' : 'Khôi phục từ file'}
-                </button>
-                <button
-                  className="tf-btn tf-btn-ghost"
-                  onClick={() => void handleManualAccountSync()}
-                  disabled={!user || !hasSupabase || backupBusyAction === 'manual-sync'}
-                >
-                  {backupBusyAction === 'manual-sync' ? 'Đang đồng bộ...' : 'Đồng bộ ngay lên tài khoản'}
-                </button>
-                <button
-                  className="tf-btn tf-btn-ghost"
-                  onClick={handleConnectDrive}
-                  disabled={!user || !driveConfigured || Boolean(driveBinding) || backupBusyAction === 'connect-drive'}
-                >
-                  {backupBusyAction === 'connect-drive'
-                    ? 'Đang kết nối...'
-                    : driveBinding
-                      ? `Đã khóa với ${driveBinding.email}`
-                      : 'Liên kết Drive (một lần)'}
-                </button>
+                <div className="relative">
+                  <button
+                    className="tf-btn tf-btn-ghost inline-flex items-center gap-1.5"
+                    onClick={() => setShowBackupMoreActions((prev) => !prev)}
+                  >
+                    Tùy chọn khác
+                    <ChevronRight className={cn('h-4 w-4 transition-transform', showBackupMoreActions ? 'rotate-90' : '')} />
+                  </button>
+                  {showBackupMoreActions ? (
+                    <div className="absolute left-0 top-[calc(100%+0.5rem)] z-30 w-72 rounded-2xl border border-white/12 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">
+                      <button
+                        className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-white/10"
+                        onClick={() => {
+                          setShowBackupMoreActions(false);
+                          void handleDownloadCurrentBackupJson();
+                        }}
+                        disabled={isExporting}
+                      >
+                        {isExporting ? 'Đang chuẩn bị file...' : 'Tải file sao lưu'}
+                      </button>
+                      <button
+                        className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-white/10"
+                        onClick={() => {
+                          setShowBackupMoreActions(false);
+                          backupImportInputRef.current?.click();
+                        }}
+                        disabled={isImporting}
+                      >
+                        {isImporting ? 'Đang đọc file...' : 'Khôi phục từ file'}
+                      </button>
+                      <button
+                        className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                        onClick={() => {
+                          setShowBackupMoreActions(false);
+                          void handleManualAccountSync();
+                        }}
+                        disabled={!accountSyncReady || backupBusyAction === 'manual-sync'}
+                      >
+                        {backupBusyAction === 'manual-sync' ? 'Đang đồng bộ...' : 'Đồng bộ ngay lên tài khoản'}
+                      </button>
+                      <button
+                        className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                        onClick={() => {
+                          setShowBackupMoreActions(false);
+                          handleConnectDrive();
+                        }}
+                        disabled={!user || !driveConfigured || Boolean(driveBinding) || backupBusyAction === 'connect-drive'}
+                      >
+                        {backupBusyAction === 'connect-drive'
+                          ? 'Đang kết nối Drive...'
+                          : driveBinding
+                            ? `Đã khóa với ${driveBinding.email}`
+                            : 'Liên kết Drive (một lần)'}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
 
@@ -20394,7 +20421,7 @@ ${JSON.stringify(violatingPayload)}
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h4 className="text-lg font-semibold">Lịch sử sao lưu</h4>
-                    <p className="text-sm text-slate-400">Tại đây bạn có thể xem từng mốc đã lưu, tải về máy hoặc khôi phục lại ngay khi cần.</p>
+                    <p className="text-sm text-slate-400">Chọn một mốc để tải xuống hoặc khôi phục nhanh.</p>
                   </div>
                   <button
                     className="tf-btn tf-btn-ghost"
@@ -20420,27 +20447,25 @@ ${JSON.stringify(violatingPayload)}
                         <div key={snapshot.id} className="rounded-2xl border border-white/10 bg-slate-950/50 p-4 space-y-3">
                           <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                             <div className="space-y-1">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="rounded-full bg-indigo-500/15 px-3 py-1 text-xs font-semibold text-indigo-200">
-                                  {getBackupReasonLabel(snapshot.reason)}
-                                </span>
+                              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                                <span className="font-semibold text-indigo-200">{getBackupReasonLabel(snapshot.reason)}</span>
+                                <span className="text-slate-500">•</span>
                                 <span className={cn(
-                                  'rounded-full px-3 py-1 text-xs font-semibold',
-                                  snapshot.drive?.status === 'uploaded'
-                                    ? 'bg-emerald-500/15 text-emerald-200'
-                                    : snapshot.drive?.status === 'failed'
-                                      ? 'bg-rose-500/15 text-rose-200'
-                                      : 'bg-slate-800 text-slate-300'
+                                  snapshot.drive?.status === 'failed'
+                                    ? 'text-rose-300'
+                                    : snapshot.drive?.status === 'uploaded'
+                                      ? 'text-emerald-300'
+                                      : 'text-slate-400'
                                 )}>
                                   {getDriveStatusLabel(snapshot)}
                                 </span>
                               </div>
                               <p className="text-base font-semibold text-white">{formatBackupTimestamp(snapshot.createdAt)}</p>
-                              <p className="text-sm text-slate-400">
+                              <p className="text-xs text-slate-400/60">
                                 {(snapshot.payload.stories || []).length} truyện · {(snapshot.payload.characters || []).length} nhân vật · {(snapshot.payload.translation_names || []).length} tên dịch
                               </p>
                               {snapshot.drive?.status === 'uploaded' ? (
-                                <p className="text-xs text-emerald-300">Mốc này hiện đã có cả trên máy và trên Google Drive.</p>
+                                <p className="text-xs text-emerald-300/80">Mốc này đã có trên máy và Google Drive.</p>
                               ) : null}
                               {snapshot.drive?.error ? (
                                 <p className="text-xs text-amber-300">
@@ -20453,19 +20478,21 @@ ${JSON.stringify(violatingPayload)}
                                 </p>
                               ) : null}
                             </div>
-                            <div className="flex flex-wrap gap-2">
+                            <div className="flex flex-wrap items-center gap-3 text-xs">
                               <button
-                                className="tf-btn tf-btn-ghost"
+                                className="inline-flex items-center gap-1.5 font-semibold text-cyan-300 underline decoration-transparent underline-offset-4 transition-colors hover:text-cyan-200 hover:decoration-cyan-300"
                                 onClick={() => void handleDownloadBackupSnapshot(snapshot.id)}
                               >
-                                Tải về
+                                <Download className="h-3.5 w-3.5" />
+                                Tải
                               </button>
                               <button
-                                className="tf-btn tf-btn-primary"
+                                className="inline-flex items-center gap-1.5 font-semibold text-indigo-300 underline decoration-transparent underline-offset-4 transition-colors hover:text-indigo-200 hover:decoration-indigo-300 disabled:cursor-not-allowed disabled:opacity-55"
                                 onClick={() => void handleRestoreBackupSnapshot(snapshot.id)}
                                 disabled={restoreBusy}
                               >
-                                {restoreBusy ? 'Đang khôi phục...' : 'Khôi phục mốc này'}
+                                <History className="h-3.5 w-3.5" />
+                                {restoreBusy ? 'Đang khôi phục...' : 'Khôi phục'}
                               </button>
                             </div>
                           </div>
