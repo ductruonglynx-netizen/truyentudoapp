@@ -1,6 +1,6 @@
 import React, { memo } from 'react';
 import { Zap } from 'lucide-react';
-import { shallow } from 'zustand/shallow';
+import { useShallow } from 'zustand/react/shallow';
 import { IMAGE_AI_PROVIDER_META, IMAGE_AI_PROVIDER_ORDER } from '../../imageAiProviders';
 import { useApiStore } from './useApiStore';
 
@@ -16,7 +16,7 @@ export const ImageAiConfigPanel = memo(function ImageAiConfigPanel() {
     setImageAiProvider,
     setImageAiModel,
     saveImageAiConfig,
-  } = useApiStore((state) => ({
+  } = useApiStore(useShallow((state) => ({
     imageAiEnabled: state.imageAi.imageAiEnabled,
     imageAiApiKey: state.imageAi.imageAiApiKey,
     imageAiStatusLabel: state.imageAi.imageAiStatusLabel,
@@ -27,7 +27,7 @@ export const ImageAiConfigPanel = memo(function ImageAiConfigPanel() {
     setImageAiProvider: state.actions.setImageAiProvider,
     setImageAiModel: state.actions.setImageAiModel,
     saveImageAiConfig: state.actions.saveImageAiConfig,
-  }), shallow);
+  })));
 
   const imageProviderMeta = IMAGE_AI_PROVIDER_META[imageAiProvider];
   const imageModelOptions = imageProviderMeta.models;

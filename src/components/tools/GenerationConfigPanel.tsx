@@ -1,7 +1,7 @@
 import React, { memo } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { shallow } from 'zustand/shallow';
+import { useShallow } from 'zustand/react/shallow';
 import type { GenerationConfig } from '../../generationConfig';
 import { GENERATION_HINTS, type GenerationNumericField, useApiStore } from './useApiStore';
 
@@ -19,7 +19,7 @@ export const GenerationConfigPanel = memo(function GenerationConfigPanel() {
     commitGenerationDraftField,
     patchGenerationConfig,
     resetGenerationConfig,
-  } = useApiStore((state) => ({
+  } = useApiStore(useShallow((state) => ({
     generationConfig: state.generation.generationConfig,
     openGenerationHint: state.generation.openGenerationHint,
     generationNumberDraft: state.generation.generationNumberDraft,
@@ -28,7 +28,7 @@ export const GenerationConfigPanel = memo(function GenerationConfigPanel() {
     commitGenerationDraftField: state.actions.commitGenerationDraftField,
     patchGenerationConfig: state.actions.patchGenerationConfig,
     resetGenerationConfig: state.actions.resetGenerationConfig,
-  }), shallow);
+  })));
 
   const renderGenerationHelpButton = (hintKey: keyof typeof GENERATION_HINTS) => (
     <button

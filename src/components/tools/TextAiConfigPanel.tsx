@@ -2,7 +2,7 @@ import React, { memo, useMemo } from 'react';
 import { Trash2, Zap } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { shallow } from 'zustand/shallow';
+import { useShallow } from 'zustand/react/shallow';
 import { API_PROVIDER_META, PROVIDER_LABELS, PROVIDER_MODEL_OPTIONS } from '../../apiVault';
 import { OPENROUTER_CUSTOM_MODEL_OPTION, useApiStore } from './useApiStore';
 
@@ -47,7 +47,7 @@ export const TextAiConfigPanel = memo(function TextAiConfigPanel() {
     deleteApiEntry,
     setStoredApiModel,
     setStoredApiBaseUrl,
-  } = useApiStore((state) => ({
+  } = useApiStore(useShallow((state) => ({
     currentProviderLabel: state.textAi.currentProviderLabel,
     currentModelLabel: state.textAi.currentModelLabel,
     currentStatusLabel: state.textAi.currentStatusLabel,
@@ -76,7 +76,7 @@ export const TextAiConfigPanel = memo(function TextAiConfigPanel() {
     deleteApiEntry: state.actions.deleteApiEntry,
     setStoredApiModel: state.actions.setStoredApiModel,
     setStoredApiBaseUrl: state.actions.setStoredApiBaseUrl,
-  }), shallow);
+  })));
 
   const isDraftOpenRouter = effectiveDraftProvider === 'openrouter';
   const listedOpenRouterModels = PROVIDER_MODEL_OPTIONS.openrouter || [];
