@@ -29,9 +29,12 @@ import type {
 } from './types';
 import {
   buildTranslatedChapterText,
+  clearBulkTranslationCache,
+  clearBulkTranslationCheckpoint,
   hashSource,
   searchTmMatches,
   splitSourceToSegments,
+  translateSegmentsBulk,
   translateWithGlossary,
 } from './translatorEngine';
 import { loadPhase1ApiConfig, maskKey, reorderProviders, savePhase1ApiConfig, type ApiKeyProfile } from './apiConfig';
@@ -60,6 +63,14 @@ export default function Phase1App() {
   const [isTranslating, setIsTranslating] = useState(false);
   const [isTranslatingAll, setIsTranslatingAll] = useState(false);
   const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
+  const [bulkTelemetry, setBulkTelemetry] = useState({
+    cacheHits: 0,
+    failures: 0,
+    retries: 0,
+    avgLatencyMs: 0,
+    p95LatencyMs: 0,
+    processed: 0,
+  });
   const [suggestions, setSuggestions] = useState<SegmentSuggestion[]>([]);
   const [parallelComparisons, setParallelComparisons] = useState<Array<{ provider: string; model: string; text: string; latencyMs: number }>>([]);
   const [failoverTrail, setFailoverTrail] = useState<string[]>([]);
@@ -340,40 +351,61 @@ export default function Phase1App() {
     if (!segments.length) return;
     setIsTranslatingAll(true);
     setBulkProgress({ done: 0, total: segments.length });
+    setBulkTelemetry({
+      cacheHits: 0,
+      failures: 0,
+      retries: 0,
+      avgLatencyMs: 0,
+      p95LatencyMs: 0,
+      processed: 0,
+    });
 
     try {
-      for (let i = 0; i < segments.length; i += 1) {
-        const seg = segments[i];
-        const result = await translateWithGlossary({
-          sourceText: seg.text,
-          glossary: state.glossary,
-          tone: state.tone,
-          parallelMode: apiConfig.parallelMode,
-        });
+      const summary = await translateSegmentsBulk({
+        segments,
+        glossary: state.glossary,
+        tone: state.tone,
+        parallelMode: apiConfig.parallelMode,
+        concurrency: apiConfig.parallelMode ? 6 : 4,
+        preserveExisting: state.translations,
+        onProgress: (progress) => {
+          setBulkProgress({ done: progress.done, total: progress.total });
+          setBulkTelemetry((prev) => ({
+            ...prev,
+            cacheHits: progress.cacheHits,
+            failures: progress.failures,
+            retries: progress.retries,
+          }));
+        },
+      });
 
-        const options = result.alternatives.map((text, idx) => ({
-          text,
-          violations: result.violationsByOption[idx] || [],
-        }));
-
-        const firstClean = options.find((o) => o.violations.length === 0);
-        const chosen = firstClean || options[0];
-
-        if (chosen?.text) {
-          setState((prev) =>
-            setSegmentTranslation(
-              prev,
-              seg.id,
-              chosen.text,
-              result.provider,
-              chosen.violations.length ? 'pending' : 'translated',
-            ),
-          );
-        }
-
-        setBulkProgress({ done: i + 1, total: segments.length });
-        if (result.usage) setUsage(result.usage);
+      const translatedRows = Object.values(summary.results).filter((row) => row.text.trim());
+      if (translatedRows.length > 0) {
+        setProvider(translatedRows[translatedRows.length - 1]?.provider || 'N/A');
       }
+
+      setState((prev) => {
+        let next = prev;
+        translatedRows.forEach((row) => {
+          next = setSegmentTranslation(next, row.segmentId, row.text, row.provider, row.status);
+        });
+        return next;
+      });
+
+      setBulkTelemetry((prev) => ({
+        ...prev,
+        processed: summary.processed,
+        cacheHits: summary.cacheHits,
+        failures: summary.failures,
+        retries: summary.retries,
+        avgLatencyMs: summary.avgLatencyMs,
+        p95LatencyMs: summary.p95LatencyMs,
+      }));
+
+      if (summary.failures === 0) {
+        clearBulkTranslationCheckpoint(summary.jobKey);
+      }
+      setUsage(getUsageSnapshot());
     } finally {
       setIsTranslatingAll(false);
     }
@@ -469,6 +501,23 @@ export default function Phase1App() {
             </button>
             <button className="phase1-ghost-btn" onClick={onExportChapter} disabled={!stats.translated}>
               <Download className="h-4 w-4" /> Export TXT
+            </button>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <span className="phase1-pill">Processed: {bulkTelemetry.processed}</span>
+            <span className="phase1-pill">Cache hit: {bulkTelemetry.cacheHits}</span>
+            <span className="phase1-pill">Retry: {bulkTelemetry.retries}</span>
+            <span className="phase1-pill">Fail: {bulkTelemetry.failures}</span>
+            <span className="phase1-pill">Avg: {bulkTelemetry.avgLatencyMs}ms</span>
+            <span className="phase1-pill">P95: {bulkTelemetry.p95LatencyMs}ms</span>
+            <button
+              className="phase1-ghost-btn"
+              onClick={() => {
+                clearBulkTranslationCache();
+                setBulkTelemetry((prev) => ({ ...prev, cacheHits: 0 }));
+              }}
+            >
+              Clear translation cache
             </button>
           </div>
         </section>

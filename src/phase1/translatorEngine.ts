@@ -1,6 +1,152 @@
 import { type GlossaryTerm, findGlossaryViolations, translateSegment } from '../phase0/aiGateway';
 import type { Phase1GlossaryEntry, TmMatch } from './types';
 
+const BULK_TRANSLATION_CACHE_KEY = 'phase1_translation_cache_v1';
+const BULK_TRANSLATION_CHECKPOINT_PREFIX = 'phase1_translation_checkpoint_v1:';
+const BULK_CACHE_LIMIT = 5000;
+
+interface BulkCacheRecord {
+  key: string;
+  text: string;
+  provider: string;
+  status: 'translated' | 'pending';
+  updatedAt: string;
+}
+
+interface BulkCheckpoint {
+  jobKey: string;
+  total: number;
+  doneIds: string[];
+  updatedAt: string;
+}
+
+export interface BulkTranslateProgress {
+  done: number;
+  total: number;
+  cacheHits: number;
+  failures: number;
+  retries: number;
+}
+
+export interface BulkTranslateResultItem {
+  segmentId: string;
+  text: string;
+  provider: string;
+  status: 'translated' | 'pending';
+  latencyMs: number;
+  fromCache: boolean;
+  retries: number;
+}
+
+export interface BulkTranslateSummary {
+  jobKey: string;
+  results: Record<string, BulkTranslateResultItem>;
+  processed: number;
+  cacheHits: number;
+  failures: number;
+  retries: number;
+  avgLatencyMs: number;
+  p95LatencyMs: number;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function readJsonStorage<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJsonStorage(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore quota/storage errors to avoid breaking translation flow.
+  }
+}
+
+function normalizeGlossaryForSignature(glossary: Phase1GlossaryEntry[]): string {
+  return glossary
+    .map((row) => `${row.source.trim()}=>${row.target.trim()}`)
+    .filter((row) => row !== '=>')
+    .sort()
+    .join('|');
+}
+
+function buildBulkJobKey(input: {
+  segments: SourceSegment[];
+  glossary: Phase1GlossaryEntry[];
+  tone: string;
+  parallelMode: boolean;
+}): string {
+  const basis = [
+    input.segments.map((segment) => `${segment.id}:${segment.text}`).join('\n'),
+    normalizeGlossaryForSignature(input.glossary),
+    input.tone,
+    input.parallelMode ? 'parallel' : 'single',
+  ].join('\n---\n');
+
+  return `job-${hashSource(basis)}`;
+}
+
+function buildSegmentCacheKey(input: {
+  segmentText: string;
+  glossary: Phase1GlossaryEntry[];
+  tone: string;
+  parallelMode: boolean;
+}): string {
+  const basis = [
+    input.segmentText,
+    normalizeGlossaryForSignature(input.glossary),
+    input.tone,
+    input.parallelMode ? 'parallel' : 'single',
+  ].join('\n---\n');
+
+  return hashSource(basis);
+}
+
+function loadBulkCache(): Record<string, BulkCacheRecord> {
+  return readJsonStorage<Record<string, BulkCacheRecord>>(BULK_TRANSLATION_CACHE_KEY, {});
+}
+
+function saveBulkCache(cache: Record<string, BulkCacheRecord>): void {
+  const entries = Object.entries(cache)
+    .sort((a, b) => new Date(b[1].updatedAt).getTime() - new Date(a[1].updatedAt).getTime())
+    .slice(0, BULK_CACHE_LIMIT);
+  writeJsonStorage(BULK_TRANSLATION_CACHE_KEY, Object.fromEntries(entries));
+}
+
+function loadCheckpoint(jobKey: string): BulkCheckpoint {
+  const key = `${BULK_TRANSLATION_CHECKPOINT_PREFIX}${jobKey}`;
+  return readJsonStorage<BulkCheckpoint>(key, {
+    jobKey,
+    total: 0,
+    doneIds: [],
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+function saveCheckpoint(checkpoint: BulkCheckpoint): void {
+  const key = `${BULK_TRANSLATION_CHECKPOINT_PREFIX}${checkpoint.jobKey}`;
+  writeJsonStorage(key, checkpoint);
+}
+
+export function clearBulkTranslationCheckpoint(jobKey: string): void {
+  localStorage.removeItem(`${BULK_TRANSLATION_CHECKPOINT_PREFIX}${jobKey}`);
+}
+
+export function clearBulkTranslationCache(): void {
+  localStorage.removeItem(BULK_TRANSLATION_CACHE_KEY);
+}
+
 export interface SourceSegment {
   id: string;
   text: string;
@@ -125,6 +271,211 @@ export async function translateWithGlossary(input: {
       ...retried.failoverTrail,
       ...(retriedHasClean ? [] : ['glossary_retry:hard_fail']),
     ],
+  };
+}
+
+export async function translateSegmentsBulk(input: {
+  segments: SourceSegment[];
+  glossary: Phase1GlossaryEntry[];
+  tone: string;
+  parallelMode?: boolean;
+  concurrency?: number;
+  maxRetries?: number;
+  baseRetryDelayMs?: number;
+  preserveExisting?: Record<string, { text?: string | null } | undefined>;
+  onProgress?: (progress: BulkTranslateProgress) => void;
+}): Promise<BulkTranslateSummary> {
+  const parallelMode = Boolean(input.parallelMode);
+  const concurrency = Math.max(1, Math.min(input.concurrency || (parallelMode ? 6 : 4), 10));
+  const maxRetries = Math.max(0, Math.min(input.maxRetries ?? 2, 5));
+  const baseRetryDelayMs = Math.max(150, input.baseRetryDelayMs ?? 450);
+
+  const jobKey = buildBulkJobKey({
+    segments: input.segments,
+    glossary: input.glossary,
+    tone: input.tone,
+    parallelMode,
+  });
+
+  const checkpoint = loadCheckpoint(jobKey);
+  const doneIds = new Set(checkpoint.doneIds || []);
+  const results: Record<string, BulkTranslateResultItem> = {};
+  const cache = loadBulkCache();
+  const durations: number[] = [];
+
+  const hasExistingTranslation = (segmentId: string) => Boolean(input.preserveExisting?.[segmentId]?.text?.trim());
+  const skippedByExisting = input.segments.filter((segment) => hasExistingTranslation(segment.id)).length;
+  const skippedByCheckpoint = input.segments.filter((segment) => !hasExistingTranslation(segment.id) && doneIds.has(segment.id)).length;
+
+  let done = skippedByExisting + skippedByCheckpoint;
+  let cacheHits = 0;
+  let failures = 0;
+  let retries = 0;
+
+  const markProgress = () => {
+    input.onProgress?.({
+      done,
+      total: input.segments.length,
+      cacheHits,
+      failures,
+      retries,
+    });
+  };
+
+  const queue = input.segments.filter((segment) => {
+    const existingText = input.preserveExisting?.[segment.id]?.text?.trim();
+    if (existingText) return false;
+    return !doneIds.has(segment.id);
+  });
+
+  markProgress();
+
+  const updateCheckpointForSegment = (segmentId: string) => {
+    doneIds.add(segmentId);
+    saveCheckpoint({
+      jobKey,
+      total: input.segments.length,
+      doneIds: Array.from(doneIds),
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  const runOneSegment = async (segment: SourceSegment): Promise<void> => {
+    const cacheKey = buildSegmentCacheKey({
+      segmentText: segment.text,
+      glossary: input.glossary,
+      tone: input.tone,
+      parallelMode,
+    });
+
+    const cached = cache[cacheKey];
+    if (cached?.text?.trim()) {
+      cacheHits += 1;
+      done += 1;
+      results[segment.id] = {
+        segmentId: segment.id,
+        text: cached.text,
+        provider: cached.provider,
+        status: cached.status,
+        latencyMs: 0,
+        fromCache: true,
+        retries: 0,
+      };
+      updateCheckpointForSegment(segment.id);
+      markProgress();
+      return;
+    }
+
+    let lastError: unknown = null;
+    const startedAt = performance.now();
+
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      try {
+        const translated = await translateWithGlossary({
+          sourceText: segment.text,
+          glossary: input.glossary,
+          tone: input.tone,
+          parallelMode,
+        });
+
+        const options = translated.alternatives.map((text, idx) => ({
+          text,
+          violations: translated.violationsByOption[idx] || [],
+        }));
+
+        const firstClean = options.find((option) => option.violations.length === 0);
+        const chosen = firstClean || options[0];
+        if (!chosen?.text) {
+          throw new Error('No translated option returned');
+        }
+
+        const latencyMs = Math.max(1, Math.round(performance.now() - startedAt));
+        durations.push(latencyMs);
+        done += 1;
+
+        const nextRecord: BulkTranslateResultItem = {
+          segmentId: segment.id,
+          text: chosen.text,
+          provider: translated.provider,
+          status: chosen.violations.length ? 'pending' : 'translated',
+          latencyMs,
+          fromCache: false,
+          retries: attempt,
+        };
+        results[segment.id] = nextRecord;
+
+        cache[cacheKey] = {
+          key: cacheKey,
+          text: chosen.text,
+          provider: translated.provider,
+          status: nextRecord.status,
+          updatedAt: new Date().toISOString(),
+        };
+
+        if (attempt > 0) retries += attempt;
+        updateCheckpointForSegment(segment.id);
+        markProgress();
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxRetries) break;
+        const jitter = Math.floor(Math.random() * 120);
+        const delay = baseRetryDelayMs * (2 ** attempt) + jitter;
+        await sleep(delay);
+      }
+    }
+
+    failures += 1;
+    done += 1;
+    const failedLatencyMs = Math.max(1, Math.round(performance.now() - startedAt));
+    durations.push(failedLatencyMs);
+    results[segment.id] = {
+      segmentId: segment.id,
+      text: '',
+      provider: 'error',
+      status: 'pending',
+      latencyMs: failedLatencyMs,
+      fromCache: false,
+      retries: maxRetries,
+    };
+    markProgress();
+    if (lastError instanceof Error) {
+      // Preserve failed segment for manual retry, but keep pipeline going.
+      console.warn(`Bulk translate failed for ${segment.id}: ${lastError.message}`);
+    }
+  };
+
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, Math.max(queue.length, 1)) }, async () => {
+    while (cursor < queue.length) {
+      const idx = cursor;
+      cursor += 1;
+      const segment = queue[idx];
+      if (!segment) return;
+      await runOneSegment(segment);
+    }
+  });
+
+  await Promise.all(workers);
+  saveBulkCache(cache);
+
+  const sortedDurations = [...durations].sort((a, b) => a - b);
+  const avgLatencyMs = sortedDurations.length
+    ? Math.round(sortedDurations.reduce((sum, value) => sum + value, 0) / sortedDurations.length)
+    : 0;
+  const p95LatencyMs = sortedDurations.length
+    ? sortedDurations[Math.min(sortedDurations.length - 1, Math.floor(sortedDurations.length * 0.95))]
+    : 0;
+
+  return {
+    jobKey,
+    results,
+    processed: queue.length,
+    cacheHits,
+    failures,
+    retries,
+    avgLatencyMs,
+    p95LatencyMs,
   };
 }
 
